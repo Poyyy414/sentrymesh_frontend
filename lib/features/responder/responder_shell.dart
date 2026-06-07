@@ -4,8 +4,10 @@ import 'package:latlong2/latlong.dart';
 
 import '../../app/router.dart';
 import '../../app/theme.dart';
+import '../../core/config/map_tile_config.dart';
 import '../../core/di/injection.dart';
 import '../../core/widgets/custom_button.dart';
+import '../../shared/demo/demo_scenario.dart';
 
 Future<void> _logout(BuildContext context) async {
   await AppDependenciesScope.of(context).authRepository.logout();
@@ -13,10 +15,35 @@ Future<void> _logout(BuildContext context) async {
     return;
   }
 
-  Navigator.of(context).pushNamedAndRemoveUntil(
-    AppRouter.login,
-    (_) => false,
-  );
+  Navigator.of(context).pushNamedAndRemoveUntil(AppRouter.login, (_) => false);
+}
+
+IconData _incidentIcon(DemoIncidentType type) {
+  return switch (type) {
+    DemoIncidentType.flood => Icons.flood,
+    DemoIncidentType.landslide => Icons.warning_amber_rounded,
+    DemoIncidentType.trapped => Icons.personal_injury,
+    DemoIncidentType.roadBlocked => Icons.car_crash,
+    DemoIncidentType.sos => Icons.sos,
+  };
+}
+
+Color _severityColor(String severity) {
+  return switch (severity) {
+    'High' => AppTheme.dangerRed,
+    'Medium' => AppTheme.warningAmber,
+    'Low' => AppTheme.safeGreen,
+    _ => AppTheme.signalBlue,
+  };
+}
+
+String _statusLabel(DemoIncidentStatus status) {
+  return switch (status) {
+    DemoIncidentStatus.active => 'Active',
+    DemoIncidentStatus.dispatched => 'Dispatched',
+    DemoIncidentStatus.enRoute => 'En Route',
+    DemoIncidentStatus.resolved => 'Resolved',
+  };
 }
 
 class ResponderShell extends StatefulWidget {
@@ -107,16 +134,16 @@ class ResponderDashboardScreen extends StatelessWidget {
                 children: [
                   Text(
                     'Hello, Responder Team',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          color: Colors.white,
-                        ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.titleSmall?.copyWith(color: Colors.white),
                   ),
                   const SizedBox(height: 3),
                   Text(
                     'Naga City Command Center',
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                          color: Colors.white70,
-                        ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelMedium?.copyWith(color: Colors.white70),
                   ),
                   const SizedBox(height: 4),
                   Row(
@@ -132,9 +159,9 @@ class ResponderDashboardScreen extends StatelessWidget {
                       const SizedBox(width: 5),
                       Text(
                         'Online',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              color: Colors.white70,
-                            ),
+                        style: Theme.of(
+                          context,
+                        ).textTheme.labelSmall?.copyWith(color: Colors.white70),
                       ),
                     ],
                   ),
@@ -144,32 +171,23 @@ class ResponderDashboardScreen extends StatelessWidget {
           ],
         ),
       ),
-      children: const [
-        _SectionTitle(title: 'Situation Overview', subtitle: 'Today, June 1 - 9:41 AM'),
-        SizedBox(height: 10),
-        _ResponderStatsGrid(),
-        SizedBox(height: 18),
-        _SectionTitle(title: 'Severity Heatmap (Live)', chip: 'High'),
-        SizedBox(height: 10),
-        _HeatmapPreview(),
-        SizedBox(height: 18),
-        _SectionTitle(title: 'Recent Incidents', action: 'View all'),
-        SizedBox(height: 10),
-        _CompactIncidentTile(
-          icon: Icons.flood,
-          title: 'Flooding - San Felipe',
-          subtitle: '15 min ago - 12 people',
-          severity: 'High',
-          severityColor: AppTheme.dangerRed,
+      children: [
+        const _ResponderStatusBanner(),
+        const SizedBox(height: 14),
+        const _SectionTitle(
+          title: 'Situation Overview',
+          subtitle: 'Today, June 1 - 9:41 AM',
         ),
-        SizedBox(height: 8),
-        _CompactIncidentTile(
-          icon: Icons.warning_amber_rounded,
-          title: 'Landslide - Concepcion Pequena',
-          subtitle: '35 min ago - 7 people',
-          severity: 'Medium',
-          severityColor: AppTheme.warningAmber,
-        ),
+        const SizedBox(height: 10),
+        const _ResponderStatsGrid(),
+        const SizedBox(height: 18),
+        const _SectionTitle(title: 'Severity Heatmap (Live)', chip: 'High'),
+        const SizedBox(height: 10),
+        const _HeatmapPreview(),
+        const SizedBox(height: 18),
+        const _SectionTitle(title: 'Recent Incidents', action: 'View all'),
+        const SizedBox(height: 10),
+        const _RecentIncidentsList(),
       ],
     );
   }
@@ -180,63 +198,29 @@ class ActiveIncidentsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final incidents = [
-      _Incident(
-        icon: Icons.flood,
-        title: 'Flooding',
-        location: 'San Felipe, Naga City',
-        meta: '12 people - 15 min ago',
-        severity: 'High',
-        color: AppTheme.dangerRed,
-      ),
-      _Incident(
-        icon: Icons.warning_amber_rounded,
-        title: 'Landslide',
-        location: 'Concepcion Pequena',
-        meta: '7 people - 35 min ago',
-        severity: 'Medium',
-        color: AppTheme.warningAmber,
-      ),
-      _Incident(
-        icon: Icons.personal_injury,
-        title: 'Trapped Individuals',
-        location: 'Pacol, Naga City',
-        meta: '3 people - 45 min ago',
-        severity: 'High',
-        color: AppTheme.dangerRed,
-      ),
-      _Incident(
-        icon: Icons.water_drop,
-        title: 'Flooding',
-        location: 'Tambo, Naga City',
-        meta: '5 people - 1 hr ago',
-        severity: 'Medium',
-        color: AppTheme.warningAmber,
-      ),
-      _Incident(
-        icon: Icons.car_crash,
-        title: 'Road Blocked',
-        location: 'Cararayan, Naga City',
-        meta: 'Reported 2 hrs ago',
-        severity: 'Low',
-        color: AppTheme.safeGreen,
-      ),
-    ];
+    return AnimatedBuilder(
+      animation: DemoScenario.instance,
+      builder: (context, _) {
+        final incidents = DemoScenario.instance.incidents
+            .map(_Incident.fromDemo)
+            .toList();
 
-    return _ResponderPage(
-      header: const _SimpleResponderHeader(
-        title: 'Active Incidents',
-        leadingIcon: Icons.arrow_back,
-        trailingIcon: Icons.filter_alt,
-      ),
-      children: [
-        const _IncidentFilters(),
-        const SizedBox(height: 12),
-        for (final incident in incidents) ...[
-          _IncidentCard(incident: incident),
-          const SizedBox(height: 12),
-        ],
-      ],
+        return _ResponderPage(
+          header: const _SimpleResponderHeader(
+            title: 'Active Incidents',
+            leadingIcon: Icons.arrow_back,
+            trailingIcon: Icons.filter_alt,
+          ),
+          children: [
+            const _IncidentFilters(),
+            const SizedBox(height: 12),
+            for (final incident in incidents) ...[
+              _IncidentCard(incident: incident),
+              const SizedBox(height: 12),
+            ],
+          ],
+        );
+      },
     );
   }
 }
@@ -288,34 +272,83 @@ class ResponderIncidentDetailScreen extends StatelessWidget {
           const SizedBox(height: 14),
           Card(
             child: Column(
-              children: const [
-                _InfoRow(icon: Icons.person, label: 'Reported by', value: 'Community User'),
-                _InfoRow(icon: Icons.groups, label: 'People Need Help', value: '12'),
-                _InfoRow(icon: Icons.schedule, label: 'Status', value: 'Active'),
-                _InfoRow(icon: Icons.signal_cellular_alt, label: 'Signal Strength', value: 'Good'),
+              children: [
+                const _InfoRow(
+                  icon: Icons.person,
+                  label: 'Reported by',
+                  value: 'Community User',
+                ),
+                _InfoRow(
+                  icon: Icons.groups,
+                  label: 'People Need Help',
+                  value: '${incident.people}',
+                ),
+                _InfoRow(
+                  icon: Icons.schedule,
+                  label: 'Status',
+                  value: incident.status,
+                ),
+                const _InfoRow(
+                  icon: Icons.signal_cellular_alt,
+                  label: 'Signal Strength',
+                  value: 'Good',
+                ),
               ],
             ),
           ),
+          const SizedBox(height: 14),
+          const _AiReasoningCard(),
           const SizedBox(height: 16),
           Text('Actions', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 10),
           SentryButton(
             label: 'Dispatch Team',
             icon: Icons.airport_shuttle,
-            onPressed: () {},
+            onPressed: () {
+              DemoScenario.instance.dispatchTeam(incident.id);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Team dispatched to ${incident.location}.'),
+                ),
+              );
+            },
           ),
           const SizedBox(height: 10),
           SentryButton(
             label: 'Navigate to Location',
             icon: Icons.navigation,
             backgroundColor: AppTheme.safeGreen,
-            onPressed: () {},
+            onPressed: () {
+              DemoScenario.instance.markEnRoute(incident.id);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Safe route opened for the response team.'),
+                ),
+              );
+            },
           ),
           const SizedBox(height: 10),
           OutlinedButton.icon(
-            onPressed: () {},
+            onPressed: () {
+              DemoScenario.instance.markEnRoute(incident.id);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Incident marked as on-route.')),
+              );
+            },
             icon: const Icon(Icons.flag),
             label: const Text('Mark as On-Route'),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: () {
+              DemoScenario.instance.resolveIncident(incident.id);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Incident marked resolved.')),
+              );
+              Navigator.of(context).pop();
+            },
+            icon: const Icon(Icons.check_circle_outline),
+            label: const Text('Resolve Incident'),
           ),
         ],
       ),
@@ -344,9 +377,9 @@ class ResponderLiveMapScreen extends StatelessWidget {
                     'Live Map',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: Colors.white,
-                          fontSize: 18,
-                        ),
+                      color: Colors.white,
+                      fontSize: 18,
+                    ),
                   ),
                 ),
                 IconButton(
@@ -361,11 +394,7 @@ class ResponderLiveMapScreen extends StatelessWidget {
             child: Stack(
               children: const [
                 _ResponderMapPreview(height: double.infinity),
-                Positioned(
-                  top: 12,
-                  left: 12,
-                  child: _MapLayerMenu(),
-                ),
+                Positioned(top: 12, left: 12, child: _MapLayerMenu()),
                 Positioned(
                   left: 16,
                   right: 16,
@@ -393,10 +422,30 @@ class ResponderTeamsScreen extends StatelessWidget {
         SizedBox(height: 18),
         _SectionTitle(title: 'Deployed Teams (8)', action: 'View all'),
         SizedBox(height: 10),
-        _TeamTile(name: 'Team Alpha', area: 'San Felipe - 12 min ago', status: 'On Mission', members: 4),
-        _TeamTile(name: 'Team Bravo', area: 'Concepcion - 18 min ago', status: 'On Mission', members: 4),
-        _TeamTile(name: 'Team Charlie', area: 'Pacol - 5 min ago', status: 'En Route', members: 3),
-        _TeamTile(name: 'Team Delta', area: 'Command Center', status: 'Standby', members: 5),
+        _TeamTile(
+          name: 'Team Alpha',
+          area: 'San Felipe - 12 min ago',
+          status: 'On Mission',
+          members: 4,
+        ),
+        _TeamTile(
+          name: 'Team Bravo',
+          area: 'Concepcion - 18 min ago',
+          status: 'On Mission',
+          members: 4,
+        ),
+        _TeamTile(
+          name: 'Team Charlie',
+          area: 'Pacol - 5 min ago',
+          status: 'En Route',
+          members: 3,
+        ),
+        _TeamTile(
+          name: 'Team Delta',
+          area: 'Command Center',
+          status: 'Standby',
+          members: 5,
+        ),
         SizedBox(height: 18),
         _SectionTitle(title: 'Quick Communication'),
         SizedBox(height: 10),
@@ -414,11 +463,26 @@ class ResponderReportsScreen extends StatelessWidget {
     return _ResponderPage(
       header: const _SimpleResponderHeader(title: 'Reports'),
       children: const [
-        _SectionTitle(title: 'Operational Reports', subtitle: 'Responder logs and field summaries'),
+        _SectionTitle(
+          title: 'Response Reports',
+          subtitle: 'Brief updates for the team',
+        ),
         SizedBox(height: 12),
-        _ReportTile(title: 'Situation Report', subtitle: '23 active incidents - 9:41 AM', icon: Icons.summarize),
-        _ReportTile(title: 'Resource Status', subtitle: '8 teams deployed - 92% network status', icon: Icons.inventory_2),
-        _ReportTile(title: 'Communication Log', subtitle: 'Responder advisories and team updates', icon: Icons.forum),
+        _ReportTile(
+          title: 'Situation Report',
+          subtitle: '23 active incidents - 9:41 AM',
+          icon: Icons.summarize,
+        ),
+        _ReportTile(
+          title: 'Team Status',
+          subtitle: '8 teams deployed - network healthy',
+          icon: Icons.inventory_2,
+        ),
+        _ReportTile(
+          title: 'Message History',
+          subtitle: 'Advisories and team updates',
+          icon: Icons.forum,
+        ),
       ],
     );
   }
@@ -480,9 +544,9 @@ class _ResponderHeader extends StatelessWidget {
               Expanded(
                 child: Text(
                   title,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: Colors.white,
-                      ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleMedium?.copyWith(color: Colors.white),
                 ),
               ),
               trailing ?? const SizedBox(width: 48),
@@ -525,9 +589,9 @@ class _SimpleResponderHeader extends StatelessWidget {
               title,
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    color: Colors.white,
-                    fontSize: 18,
-                  ),
+                color: Colors.white,
+                fontSize: 18,
+              ),
             ),
           ),
           IconButton(
@@ -541,24 +605,190 @@ class _SimpleResponderHeader extends StatelessWidget {
   }
 }
 
+class _ResponderStatusBanner extends StatelessWidget {
+  const _ResponderStatusBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: DemoScenario.instance,
+      builder: (context, _) {
+        return Card(
+          color: AppTheme.deepNavy,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: AppTheme.safeGreen.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.sensors, color: AppTheme.safeGreen),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Responder Command Mode',
+                        style: Theme.of(
+                          context,
+                        ).textTheme.titleSmall?.copyWith(color: Colors.white),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        DemoScenario.instance.lastResponderAction,
+                        style: Theme.of(context).textTheme.labelMedium
+                            ?.copyWith(color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                ),
+                const _SeverityPill(label: 'Live', color: AppTheme.safeGreen),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _AiReasoningCard extends StatelessWidget {
+  const _AiReasoningCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: AppTheme.signalBlue.withValues(alpha: 0.06),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: AppTheme.signalBlue.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.psychology,
+                    color: AppTheme.signalBlue,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'AI Flood Prediction',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                const _SeverityPill(label: 'High', color: AppTheme.dangerRed),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const _ReasonLine(
+              label: 'Arrival',
+              value: 'Floodwater may reach San Felipe in about 45 min',
+            ),
+            const _ReasonLine(
+              label: 'Peak',
+              value: 'Expected peak level up to 1.4 m in low-lying streets',
+            ),
+            const _ReasonLine(
+              label: 'Warning',
+              value: 'Flash flood risk window: 30-60 min',
+            ),
+            const _ReasonLine(
+              label: 'Action',
+              value: 'Dispatch before main access road becomes unsafe',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReasonLine extends StatelessWidget {
+  const _ReasonLine({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 58,
+            child: Text(label, style: Theme.of(context).textTheme.labelMedium),
+          ),
+          Expanded(
+            child: Text(value, style: Theme.of(context).textTheme.bodySmall),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ResponderStatsGrid extends StatelessWidget {
   const _ResponderStatsGrid();
 
   @override
   Widget build(BuildContext context) {
-    return GridView.count(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 2,
-      childAspectRatio: 2.25,
-      crossAxisSpacing: 10,
-      mainAxisSpacing: 10,
-      children: const [
-        _StatTile(icon: Icons.crisis_alert, value: '23', label: 'Active Incidents', color: AppTheme.dangerRed),
-        _StatTile(icon: Icons.personal_injury, value: '157', label: 'People Need Help', color: AppTheme.warningAmber),
-        _StatTile(icon: Icons.groups, value: '8', label: 'Teams Deployed', color: AppTheme.signalBlue),
-        _StatTile(icon: Icons.shield, value: '92%', label: 'Network Status', color: AppTheme.safeGreen),
-      ],
+    return AnimatedBuilder(
+      animation: DemoScenario.instance,
+      builder: (context, _) {
+        final scenario = DemoScenario.instance;
+
+        return GridView.count(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisCount: 2,
+          childAspectRatio: 1.85,
+          crossAxisSpacing: 10,
+          mainAxisSpacing: 10,
+          children: [
+            _StatTile(
+              icon: Icons.crisis_alert,
+              value: '${scenario.activeIncidentCount}',
+              label: 'Active Incidents',
+              color: AppTheme.dangerRed,
+            ),
+            _StatTile(
+              icon: Icons.personal_injury,
+              value: '${scenario.peopleNeedHelp}',
+              label: 'People Need Help',
+              color: AppTheme.warningAmber,
+            ),
+            _StatTile(
+              icon: Icons.groups,
+              value: '${scenario.deployedTeams}',
+              label: 'Teams Deployed',
+              color: AppTheme.signalBlue,
+            ),
+            const _StatTile(
+              icon: Icons.shield,
+              value: '92%',
+              label: 'Network Status',
+              color: AppTheme.safeGreen,
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -580,24 +810,60 @@ class _StatTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(10),
         child: Row(
           children: [
             _IconBubble(icon: icon, color: color),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(value, style: Theme.of(context).textTheme.titleLarge),
-                  Text(label, style: Theme.of(context).textTheme.labelSmall),
+                  Text(
+                    label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
                 ],
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _RecentIncidentsList extends StatelessWidget {
+  const _RecentIncidentsList();
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: DemoScenario.instance,
+      builder: (context, _) {
+        final incidents = DemoScenario.instance.incidents.take(3).toList();
+
+        return Column(
+          children: [
+            for (var index = 0; index < incidents.length; index++) ...[
+              _CompactIncidentTile(
+                icon: _incidentIcon(incidents[index].type),
+                title:
+                    '${incidents[index].title} - ${incidents[index].location}',
+                subtitle:
+                    '${incidents[index].timeLabel} - ${incidents[index].people} people - ${_statusLabel(incidents[index].status)}',
+                severity: incidents[index].severity,
+                severityColor: _severityColor(incidents[index].severity),
+              ),
+              if (index != incidents.length - 1) const SizedBox(height: 8),
+            ],
+          ],
+        );
+      },
     );
   }
 }
@@ -624,9 +890,21 @@ class _HeatmapPreview extends StatelessWidget {
           const Positioned(left: 28, top: 38, child: _MapLabel('San Felipe')),
           const Positioned(right: 26, top: 44, child: _MapLabel('Concepcion')),
           const Positioned(right: 50, bottom: 28, child: _MapLabel('Pacol')),
-          const Positioned(left: 42, bottom: 28, child: _HeatSpot(size: 48, color: AppTheme.dangerRed)),
-          const Positioned(left: 92, top: 56, child: _HeatSpot(size: 64, color: AppTheme.warningAmber)),
-          const Positioned(right: 76, top: 46, child: _HeatSpot(size: 52, color: AppTheme.dangerRed)),
+          const Positioned(
+            left: 42,
+            bottom: 28,
+            child: _HeatSpot(size: 48, color: AppTheme.dangerRed),
+          ),
+          const Positioned(
+            left: 92,
+            top: 56,
+            child: _HeatSpot(size: 64, color: AppTheme.warningAmber),
+          ),
+          const Positioned(
+            right: 76,
+            top: 46,
+            child: _HeatSpot(size: 52, color: AppTheme.dangerRed),
+          ),
           Positioned(
             right: 12,
             bottom: 12,
@@ -665,9 +943,7 @@ class _ResponderMapPreview extends StatelessWidget {
         ),
         children: [
           TileLayer(
-            urlTemplate:
-                'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-            subdomains: const ['a', 'b', 'c', 'd'],
+            urlTemplate: MapTileConfig.mapboxSatelliteStreetsUrl,
             userAgentPackageName: 'com.example.sentrymesh_frontend',
           ),
           PolygonLayer(
@@ -794,11 +1070,20 @@ class _IncidentCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(incident.title, style: Theme.of(context).textTheme.titleMedium),
+                    Text(
+                      incident.title,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                     const SizedBox(height: 3),
-                    Text(incident.location, style: Theme.of(context).textTheme.bodySmall),
+                    Text(
+                      incident.location,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                     const SizedBox(height: 4),
-                    Text(incident.meta, style: Theme.of(context).textTheme.labelSmall),
+                    Text(
+                      incident.meta,
+                      style: Theme.of(context).textTheme.labelSmall,
+                    ),
                   ],
                 ),
               ),
@@ -813,20 +1098,41 @@ class _IncidentCard extends StatelessWidget {
 
 class _Incident {
   const _Incident({
+    required this.id,
     required this.icon,
     required this.title,
     required this.location,
     required this.meta,
     required this.severity,
     required this.color,
+    required this.people,
+    required this.status,
   });
 
+  factory _Incident.fromDemo(DemoIncident incident) {
+    return _Incident(
+      id: incident.id,
+      icon: _incidentIcon(incident.type),
+      title: incident.title,
+      location: incident.location,
+      meta:
+          '${incident.people} people - ${incident.timeLabel} - ${_statusLabel(incident.status)}',
+      severity: incident.severity,
+      color: _severityColor(incident.severity),
+      people: incident.people,
+      status: _statusLabel(incident.status),
+    );
+  }
+
+  final String id;
   final IconData icon;
   final String title;
   final String location;
   final String meta;
   final String severity;
   final Color color;
+  final int people;
+  final String status;
 }
 
 class _SectionTitle extends StatelessWidget {
@@ -857,8 +1163,15 @@ class _SectionTitle extends StatelessWidget {
           ),
         ),
         if (action != null)
-          Text(action!, style: const TextStyle(color: AppTheme.signalBlue, fontWeight: FontWeight.w700)),
-        if (chip != null) _SeverityPill(label: chip!, color: AppTheme.dangerRed),
+          Text(
+            action!,
+            style: const TextStyle(
+              color: AppTheme.signalBlue,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        if (chip != null)
+          _SeverityPill(label: chip!, color: AppTheme.dangerRed),
       ],
     );
   }
@@ -895,9 +1208,13 @@ class _FilterChip extends StatelessWidget {
       margin: const EdgeInsets.only(right: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
-        color: selected ? AppTheme.signalBlue.withValues(alpha: 0.12) : Colors.white,
+        color: selected
+            ? AppTheme.signalBlue.withValues(alpha: 0.12)
+            : Colors.white,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: selected ? AppTheme.signalBlue : AppTheme.border),
+        border: Border.all(
+          color: selected ? AppTheme.signalBlue : AppTheme.border,
+        ),
       ),
       child: Text(
         label,
@@ -1128,10 +1445,26 @@ class _MapLayerMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: const [
-        _LayerButton(icon: Icons.crisis_alert, label: 'Incidents', color: AppTheme.dangerRed),
-        _LayerButton(icon: Icons.groups, label: 'Teams', color: AppTheme.signalBlue),
-        _LayerButton(icon: Icons.home, label: 'Evac Centers', color: AppTheme.signalBlue),
-        _LayerButton(icon: Icons.route, label: 'Safe Route', color: AppTheme.safeGreen),
+        _LayerButton(
+          icon: Icons.crisis_alert,
+          label: 'Incidents',
+          color: AppTheme.dangerRed,
+        ),
+        _LayerButton(
+          icon: Icons.groups,
+          label: 'Teams',
+          color: AppTheme.signalBlue,
+        ),
+        _LayerButton(
+          icon: Icons.home,
+          label: 'Evac Centers',
+          color: AppTheme.signalBlue,
+        ),
+        _LayerButton(
+          icon: Icons.route,
+          label: 'Safe Route',
+          color: AppTheme.safeGreen,
+        ),
       ],
     );
   }
@@ -1158,10 +1491,7 @@ class _LayerButton extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(6),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.12),
-            blurRadius: 8,
-          ),
+          BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 8),
         ],
       ),
       child: Row(
@@ -1204,8 +1534,12 @@ class _NavigationPanel extends StatelessWidget {
             const Divider(height: 20),
             Row(
               children: [
-                const Expanded(child: _MiniMetric(value: '12 min', label: 'Est. time')),
-                const Expanded(child: _MiniMetric(value: 'Low', label: 'Traffic')),
+                const Expanded(
+                  child: _MiniMetric(value: '12 min', label: 'Est. time'),
+                ),
+                const Expanded(
+                  child: _MiniMetric(value: 'Low', label: 'Traffic'),
+                ),
                 SizedBox(
                   width: 126,
                   child: SentryButton(
@@ -1273,7 +1607,10 @@ class _SegmentedHeader extends StatelessWidget {
               alignment: Alignment.center,
               child: Text(
                 left,
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
           ),
@@ -1281,7 +1618,10 @@ class _SegmentedHeader extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(right, style: const TextStyle(fontWeight: FontWeight.w700)),
+                Text(
+                  right,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
                 const SizedBox(width: 6),
                 CircleAvatar(
                   radius: 10,
@@ -1321,8 +1661,8 @@ class _TeamTile extends StatelessWidget {
       child: Card(
         child: ListTile(
           leading: CircleAvatar(
-            backgroundColor:
-                (active ? AppTheme.safeGreen : AppTheme.signalBlue).withValues(alpha: 0.12),
+            backgroundColor: (active ? AppTheme.safeGreen : AppTheme.signalBlue)
+                .withValues(alpha: 0.12),
             child: Icon(
               active ? Icons.person_pin_circle : Icons.engineering,
               color: active ? AppTheme.safeGreen : AppTheme.signalBlue,
@@ -1361,10 +1701,26 @@ class _QuickActionGrid extends StatelessWidget {
       crossAxisSpacing: 10,
       childAspectRatio: 1.9,
       children: const [
-        _QuickAction(icon: Icons.campaign, title: 'Broadcast Message', color: AppTheme.signalBlue),
-        _QuickAction(icon: Icons.chat, title: 'Team Chat', color: AppTheme.violet),
-        _QuickAction(icon: Icons.sos, title: 'SOS Requests', color: AppTheme.dangerRed),
-        _QuickAction(icon: Icons.inventory, title: 'Resource Request', color: AppTheme.safeGreen),
+        _QuickAction(
+          icon: Icons.campaign,
+          title: 'Broadcast Message',
+          color: AppTheme.signalBlue,
+        ),
+        _QuickAction(
+          icon: Icons.chat,
+          title: 'Team Chat',
+          color: AppTheme.violet,
+        ),
+        _QuickAction(
+          icon: Icons.sos,
+          title: 'SOS Requests',
+          color: AppTheme.dangerRed,
+        ),
+        _QuickAction(
+          icon: Icons.inventory,
+          title: 'Resource Request',
+          color: AppTheme.safeGreen,
+        ),
       ],
     );
   }
@@ -1394,7 +1750,9 @@ class _QuickAction extends StatelessWidget {
             Expanded(
               child: Text(
                 title,
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(color: color),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(color: color),
               ),
             ),
           ],

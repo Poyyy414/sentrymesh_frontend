@@ -20,6 +20,7 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
   AseanCountry _selectedCountry = AseanCountry.defaultCountry;
   GeoPoint? _userLocation;
   bool _isLocating = false;
+  MapLayerVisibility _layers = const MapLayerVisibility();
 
   @override
   Widget build(BuildContext context) {
@@ -45,9 +46,9 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
                       'Safe Route Map',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            color: Colors.white,
-                            fontSize: 18,
-                          ),
+                        color: Colors.white,
+                        fontSize: 18,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 48),
@@ -60,19 +61,35 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
                   MapView(
                     country: _selectedCountry,
                     userLocation: _userLocation,
+                    layers: _layers,
                   ),
                   Positioned(
                     left: 16,
                     right: 16,
                     top: 14,
-                    child: _MapControls(
-                      selectedCountry: _selectedCountry,
-                      onCountryChanged: (country) {
-                        setState(() {
-                          _selectedCountry = country;
-                          _userLocation = null;
-                        });
-                      },
+                    child: Column(
+                      children: [
+                        _BlackoutMapStatus(userLocation: _userLocation),
+                        const SizedBox(height: 10),
+                        _CountrySelector(
+                          selectedCountry: _selectedCountry,
+                          onChanged: (country) {
+                            setState(() {
+                              _selectedCountry = country;
+                              _userLocation = null;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  Positioned(
+                    top: 132,
+                    left: 16,
+                    right: 16,
+                    child: _MapLayerControls(
+                      layers: _layers,
+                      onChanged: (layers) => setState(() => _layers = layers),
                     ),
                   ),
                   Positioned(
@@ -104,7 +121,15 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
                   SentryButton(
                     label: 'Start Navigation',
                     icon: Icons.navigation,
-                    onPressed: null,
+                    onPressed: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Navigation started. Follow the highlighted safe route.',
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ],
               ),
@@ -130,7 +155,7 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
 
       setState(() => _userLocation = location);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Current location found')),
+        const SnackBar(content: Text('GPS locked. Evacuation route ready.')),
       );
     } on LocationServiceDisabledException {
       if (!mounted) {
@@ -164,7 +189,7 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
   void _showLocationSettingsSnackBar() {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Text('Turn on device location to use this feature'),
+        content: const Text('Turn on device location to use live routing'),
         action: SnackBarAction(
           label: 'Open',
           onPressed: _locationService.openLocationSettings,
@@ -188,7 +213,9 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
   void _showLocationUnavailableSnackBar() {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Text('No GPS fix yet. Try turning location on outdoors.'),
+        content: const Text(
+          'Location is not available yet. You can still view the selected country.',
+        ),
         action: SnackBarAction(
           label: 'Settings',
           onPressed: _locationService.openLocationSettings,
@@ -198,20 +225,38 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
   }
 }
 
-class _MapControls extends StatelessWidget {
-  const _MapControls({
-    required this.selectedCountry,
-    required this.onCountryChanged,
-  });
+class _BlackoutMapStatus extends StatelessWidget {
+  const _BlackoutMapStatus({required this.userLocation});
 
-  final AseanCountry selectedCountry;
-  final ValueChanged<AseanCountry> onCountryChanged;
+  final GeoPoint? userLocation;
 
   @override
   Widget build(BuildContext context) {
-    return _CountrySelector(
-      selectedCountry: selectedCountry,
-      onChanged: onCountryChanged,
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppTheme.deepNavy.withValues(alpha: 0.94),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            const Icon(Icons.offline_bolt, color: AppTheme.safeGreen, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                userLocation == null
+                    ? 'Choose a country or tap locate to see nearby risk areas.'
+                    : 'Your location is ready. Safer paths are highlighted.',
+                style: Theme.of(
+                  context,
+                ).textTheme.labelMedium?.copyWith(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -232,7 +277,10 @@ class _CountrySelector extends StatelessWidget {
       isExpanded: true,
       decoration: InputDecoration(
         prefixIcon: const Icon(Icons.public, size: 20),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 11,
+        ),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(24),
@@ -244,10 +292,7 @@ class _CountrySelector extends StatelessWidget {
         ),
       ),
       items: AseanCountry.countries.map((country) {
-        return DropdownMenuItem(
-          value: country,
-          child: Text(country.name),
-        );
+        return DropdownMenuItem(value: country, child: Text(country.name));
       }).toList(),
       onChanged: (country) {
         if (country != null) {
@@ -258,11 +303,115 @@ class _CountrySelector extends StatelessWidget {
   }
 }
 
-class _LocateButton extends StatelessWidget {
-  const _LocateButton({
-    required this.isLoading,
-    required this.onPressed,
+class _MapLayerControls extends StatelessWidget {
+  const _MapLayerControls({required this.layers, required this.onChanged});
+
+  final MapLayerVisibility layers;
+  final ValueChanged<MapLayerVisibility> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _LayerToggle(
+            label: 'Incidents',
+            icon: Icons.priority_high,
+            selected: layers.incidents,
+            color: AppTheme.dangerRed,
+            onTap: () =>
+                onChanged(layers.copyWith(incidents: !layers.incidents)),
+          ),
+          _LayerToggle(
+            label: 'Flood Risk',
+            icon: Icons.flood,
+            selected: layers.hazards,
+            color: AppTheme.dangerRed,
+            onTap: () => onChanged(layers.copyWith(hazards: !layers.hazards)),
+          ),
+          _LayerToggle(
+            label: 'Safe Routes',
+            icon: Icons.route,
+            selected: layers.safeRoute,
+            color: AppTheme.safeGreen,
+            onTap: () =>
+                onChanged(layers.copyWith(safeRoute: !layers.safeRoute)),
+          ),
+          _LayerToggle(
+            label: 'Evac Centers',
+            icon: Icons.home_rounded,
+            selected: layers.evacuationCenters,
+            color: AppTheme.signalBlue,
+            onTap: () => onChanged(
+              layers.copyWith(evacuationCenters: !layers.evacuationCenters),
+            ),
+          ),
+          _LayerToggle(
+            label: 'Signal Points',
+            icon: Icons.hub,
+            selected: layers.loraNodes,
+            color: AppTheme.deepNavy,
+            onTap: () =>
+                onChanged(layers.copyWith(loraNodes: !layers.loraNodes)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LayerToggle extends StatelessWidget {
+  const _LayerToggle({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.color,
+    required this.onTap,
   });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Material(
+        color: selected ? color : Colors.white,
+        borderRadius: BorderRadius.circular(999),
+        elevation: 2,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                Icon(icon, size: 17, color: selected ? Colors.white : color),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: selected ? Colors.white : AppTheme.textPrimary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LocateButton extends StatelessWidget {
+  const _LocateButton({required this.isLoading, required this.onPressed});
 
   final bool isLoading;
   final VoidCallback onPressed;

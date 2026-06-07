@@ -34,6 +34,11 @@ class MapLegend extends StatelessWidget {
               label: 'Evac center',
               icon: Icons.home_rounded,
             ),
+            _LegendItem(
+              color: AppTheme.deepNavy,
+              label: 'Signal point',
+              icon: Icons.hub,
+            ),
           ],
         ),
       ),
@@ -42,11 +47,7 @@ class MapLegend extends StatelessWidget {
 }
 
 class _LegendItem extends StatelessWidget {
-  const _LegendItem({
-    required this.color,
-    required this.label,
-    this.icon,
-  });
+  const _LegendItem({required this.color, required this.label, this.icon});
 
   final Color color;
   final String label;
@@ -69,7 +70,10 @@ class _LegendItem extends StatelessWidget {
               ? Container(
                   width: 7,
                   height: 7,
-                  decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                  ),
                 )
               : Icon(icon, color: color, size: 11),
         ),

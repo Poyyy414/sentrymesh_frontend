@@ -37,6 +37,7 @@ flutter run --dart-define=SENTRYMESH_API_BASE_URL=http://your-fastapi-host:8000
 ## Mock Auth
 
 Until the FastAPI auth backend is ready, the Flutter app uses frontend-only mock login/register.
+The resident SOS and responder incident queue are connected through an in-memory demo mode, so the judge demo works without a backend.
 
 Seeded accounts:
 
@@ -53,12 +54,31 @@ Registration currently requires:
 - `address`
 - `password`
 
+## Judge Demo Flow
+
+Use this sequence to present the frontend as one disaster-response story:
+
+1. Sign in as the resident user: `user123@gmail.com` / `12345678`.
+2. Show the Emergency Backup Ready status and the AI Flood Forecast on Home.
+3. Tap `SOS` and send the emergency request.
+4. Open the Map tab and toggle `Incidents`, `Flood Risk`, `Safe Routes`, `Evac Centers`, and `Signal Points`.
+5. Logout, then sign in as responder: `responder123@gmail.com` / `12345678`.
+6. Show the responder dashboard receiving the resident request and live heatmap.
+7. Open Active Incidents, tap a high-priority incident, and explain the AI Flood Prediction reasons.
+8. Open Live Map to show routes, resources, evacuation centers, and hazard overlays.
+
 ## Maps
 
-The Safe Route Map uses `flutter_map` with token-free CARTO/OpenStreetMap raster tiles, so the frontend does not need a Mapbox token. Run the app normally:
+The Safe Route Map uses `flutter_map` with Mapbox raster tiles for a cleaner mobile demo. A demo token is already configured in `MapTileConfig`, so the app can run normally:
 
 ```sh
 flutter run
+```
+
+If the Mapbox token is rotated, override it at launch:
+
+```sh
+flutter run --dart-define=MAPBOX_ACCESS_TOKEN=YOUR_PUBLIC_MAPBOX_TOKEN
 ```
 
 The Safe Route Map should receive route and hazard geometry from FastAPI, then render it in Flutter as:

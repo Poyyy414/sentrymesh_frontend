@@ -3,18 +3,57 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../app/theme.dart';
+import '../../../core/config/map_tile_config.dart';
 import '../../../core/services/location_service.dart';
 import '../state/asean_country.dart';
+
+class MapLayerVisibility {
+  const MapLayerVisibility({
+    this.incidents = true,
+    this.hazards = true,
+    this.safeRoute = true,
+    this.evacuationCenters = true,
+    this.loraNodes = true,
+    this.location = true,
+  });
+
+  final bool incidents;
+  final bool hazards;
+  final bool safeRoute;
+  final bool evacuationCenters;
+  final bool loraNodes;
+  final bool location;
+
+  MapLayerVisibility copyWith({
+    bool? incidents,
+    bool? hazards,
+    bool? safeRoute,
+    bool? evacuationCenters,
+    bool? loraNodes,
+    bool? location,
+  }) {
+    return MapLayerVisibility(
+      incidents: incidents ?? this.incidents,
+      hazards: hazards ?? this.hazards,
+      safeRoute: safeRoute ?? this.safeRoute,
+      evacuationCenters: evacuationCenters ?? this.evacuationCenters,
+      loraNodes: loraNodes ?? this.loraNodes,
+      location: location ?? this.location,
+    );
+  }
+}
 
 class MapView extends StatefulWidget {
   const MapView({
     required this.country,
+    required this.layers,
     this.userLocation,
     super.key,
   });
 
   final AseanCountry country;
   final GeoPoint? userLocation;
+  final MapLayerVisibility layers;
 
   @override
   State<MapView> createState() => _MapViewState();
@@ -124,6 +163,23 @@ class _MapViewState extends State<MapView> {
     ];
   }
 
+  List<LatLng> _incidentPoints(LatLng origin) {
+    return [
+      _offset(origin, 0.34, -0.48),
+      _offset(origin, -0.42, 0.38),
+      _offset(origin, 0.66, 0.62),
+    ];
+  }
+
+  List<LatLng> _loraNodes(LatLng origin) {
+    return [
+      _offset(origin, -0.22, -0.55),
+      _offset(origin, 0.18, 0.25),
+      _offset(origin, 0.74, -0.08),
+      _offset(origin, -0.66, 0.78),
+    ];
+  }
+
   List<Polygon> _hazardPolygons(LatLng origin) {
     return [
       Polygon(
@@ -146,8 +202,8 @@ class _MapViewState extends State<MapView> {
           _offset(origin, -1.88, 1.22),
           _offset(origin, -1.96, 0.42),
         ],
-        color: const Color(0xFFF59E0B).withValues(alpha: 0.2),
-        borderColor: const Color(0xFFF59E0B).withValues(alpha: 0.72),
+        color: AppTheme.warningAmber.withValues(alpha: 0.2),
+        borderColor: AppTheme.warningAmber.withValues(alpha: 0.72),
         borderStrokeWidth: 2,
       ),
     ];
@@ -156,8 +212,7 @@ class _MapViewState extends State<MapView> {
   @override
   Widget build(BuildContext context) {
     final userPoint = _userPoint;
-    final routeOrigin = userPoint ?? _countryPoint;
-    final evacuationCenters = _evacuationCenters(routeOrigin);
+    final origin = userPoint ?? _countryPoint;
 
     return FlutterMap(
       mapController: _mapController,
@@ -172,28 +227,27 @@ class _MapViewState extends State<MapView> {
       ),
       children: [
         TileLayer(
-          urlTemplate:
-              'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+          urlTemplate: MapTileConfig.mapboxStreetsUrl,
           userAgentPackageName: 'com.example.sentrymesh_frontend',
-          subdomains: const ['a', 'b', 'c', 'd'],
           maxZoom: 18,
         ),
-        PolygonLayer(polygons: _hazardPolygons(routeOrigin)),
-        PolylineLayer(
-          polylines: [
-            Polyline(
-              points: _safeRoutePoints(routeOrigin),
-              strokeWidth: 7,
-              color: Colors.white.withValues(alpha: 0.92),
-            ),
-            Polyline(
-              points: _safeRoutePoints(routeOrigin),
-              strokeWidth: 4,
-              color: AppTheme.safeGreen,
-            ),
-          ],
-        ),
-        if (userPoint != null)
+        if (widget.layers.hazards) PolygonLayer(polygons: _hazardPolygons(origin)),
+        if (widget.layers.safeRoute)
+          PolylineLayer(
+            polylines: [
+              Polyline(
+                points: _safeRoutePoints(origin),
+                strokeWidth: 7,
+                color: Colors.white.withValues(alpha: 0.92),
+              ),
+              Polyline(
+                points: _safeRoutePoints(origin),
+                strokeWidth: 4,
+                color: AppTheme.safeGreen,
+              ),
+            ],
+          ),
+        if (widget.layers.location && userPoint != null)
           CircleLayer(
             circles: [
               CircleMarker(
@@ -208,27 +262,45 @@ class _MapViewState extends State<MapView> {
           ),
         MarkerLayer(
           markers: [
-            for (final center in evacuationCenters)
-              Marker(
-                point: center,
-                width: 38,
-                height: 38,
-                child: const _EvacuationCenterMarker(),
-              ),
-            if (userPoint != null)
-              Marker(
-                point: userPoint,
-                width: 44,
-                height: 44,
-                child: const _UserLocationMarker(),
-              )
-            else
-              Marker(
-                point: _countryPoint,
-                width: 42,
-                height: 42,
-                child: _CountryCenterMarker(countryCode: widget.country.code),
-              ),
+            if (widget.layers.evacuationCenters)
+              for (final center in _evacuationCenters(origin))
+                Marker(
+                  point: center,
+                  width: 38,
+                  height: 38,
+                  child: const _EvacuationCenterMarker(),
+                ),
+            if (widget.layers.incidents)
+              for (final incident in _incidentPoints(origin))
+                Marker(
+                  point: incident,
+                  width: 40,
+                  height: 40,
+                  child: const _IncidentMarker(),
+                ),
+            if (widget.layers.loraNodes)
+              for (final node in _loraNodes(origin))
+                Marker(
+                  point: node,
+                  width: 34,
+                  height: 34,
+                  child: const _LoRaNodeMarker(),
+                ),
+            if (widget.layers.location)
+              if (userPoint != null)
+                Marker(
+                  point: userPoint,
+                  width: 44,
+                  height: 44,
+                  child: const _UserLocationMarker(),
+                )
+              else
+                Marker(
+                  point: _countryPoint,
+                  width: 42,
+                  height: 42,
+                  child: _CountryCenterMarker(countryCode: widget.country.code),
+                ),
           ],
         ),
         const RichAttributionWidget(
@@ -257,6 +329,46 @@ class _EvacuationCenterMarker extends StatelessWidget {
           border: Border.all(color: Colors.white, width: 2),
         ),
         child: const Icon(Icons.home_rounded, color: Colors.white, size: 20),
+      ),
+    );
+  }
+}
+
+class _IncidentMarker extends StatelessWidget {
+  const _IncidentMarker();
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppTheme.dangerRed,
+      shape: const CircleBorder(),
+      elevation: 3,
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+        ),
+        child: const Icon(Icons.priority_high, color: Colors.white, size: 20),
+      ),
+    );
+  }
+}
+
+class _LoRaNodeMarker extends StatelessWidget {
+  const _LoRaNodeMarker();
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppTheme.deepNavy,
+      shape: const CircleBorder(),
+      elevation: 2,
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+        ),
+        child: const Icon(Icons.hub, color: Colors.white, size: 16),
       ),
     );
   }
