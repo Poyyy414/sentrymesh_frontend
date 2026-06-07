@@ -1,0 +1,318 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+
+import '../../../app/theme.dart';
+import '../../../core/services/location_service.dart';
+import '../state/asean_country.dart';
+
+class MapView extends StatefulWidget {
+  const MapView({
+    required this.country,
+    this.userLocation,
+    super.key,
+  });
+
+  final AseanCountry country;
+  final GeoPoint? userLocation;
+
+  @override
+  State<MapView> createState() => _MapViewState();
+}
+
+class _MapViewState extends State<MapView> {
+  final _mapController = MapController();
+  bool _mapReady = false;
+
+  @override
+  void didUpdateWidget(covariant MapView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_cameraTargetChanged(oldWidget)) {
+      _syncCamera();
+    }
+  }
+
+  bool _cameraTargetChanged(MapView oldWidget) {
+    final oldLocation = oldWidget.userLocation;
+    final newLocation = widget.userLocation;
+
+    return oldWidget.country.code != widget.country.code ||
+        oldLocation?.latitude != newLocation?.latitude ||
+        oldLocation?.longitude != newLocation?.longitude;
+  }
+
+  void _onMapReady() {
+    _mapReady = true;
+    _syncCamera();
+  }
+
+  void _syncCamera() {
+    if (!_mapReady) {
+      return;
+    }
+
+    _mapController.move(_targetPoint, _targetZoom);
+  }
+
+  LatLng get _targetPoint {
+    final location = widget.userLocation;
+
+    return LatLng(
+      location?.latitude ?? widget.country.latitude,
+      location?.longitude ?? widget.country.longitude,
+    );
+  }
+
+  double get _targetZoom {
+    return widget.userLocation == null ? widget.country.zoom : 15;
+  }
+
+  LatLng get _countryPoint {
+    return LatLng(widget.country.latitude, widget.country.longitude);
+  }
+
+  LatLng? get _userPoint {
+    final location = widget.userLocation;
+    if (location == null) {
+      return null;
+    }
+
+    return LatLng(location.latitude, location.longitude);
+  }
+
+  double get _overlayScale {
+    final zoom = _targetZoom;
+    if (zoom >= 14) {
+      return 0.01;
+    }
+    if (zoom >= 10) {
+      return 0.03;
+    }
+    if (zoom >= 7) {
+      return 0.18;
+    }
+    if (zoom >= 5) {
+      return 0.55;
+    }
+    return 1.2;
+  }
+
+  LatLng _offset(LatLng origin, double latitude, double longitude) {
+    final scale = _overlayScale;
+
+    return LatLng(
+      origin.latitude + latitude * scale,
+      origin.longitude + longitude * scale,
+    );
+  }
+
+  List<LatLng> _safeRoutePoints(LatLng origin) {
+    return [
+      _offset(origin, -0.8, -0.9),
+      _offset(origin, -0.35, -0.35),
+      origin,
+      _offset(origin, 0.35, 0.45),
+      _offset(origin, 0.85, 0.95),
+    ];
+  }
+
+  List<LatLng> _evacuationCenters(LatLng origin) {
+    return [
+      _offset(origin, 0.85, 0.95),
+      _offset(origin, -0.62, 0.72),
+      _offset(origin, 0.58, -0.82),
+    ];
+  }
+
+  List<Polygon> _hazardPolygons(LatLng origin) {
+    return [
+      Polygon(
+        points: [
+          _offset(origin, 1.35, -1.25),
+          _offset(origin, 0.76, -0.55),
+          _offset(origin, 0.62, 0.18),
+          _offset(origin, 1.28, 0.52),
+          _offset(origin, 1.72, -0.28),
+        ],
+        color: AppTheme.dangerRed.withValues(alpha: 0.24),
+        borderColor: AppTheme.dangerRed.withValues(alpha: 0.68),
+        borderStrokeWidth: 2,
+      ),
+      Polygon(
+        points: [
+          _offset(origin, -1.42, 0.18),
+          _offset(origin, -0.86, 0.82),
+          _offset(origin, -1.16, 1.48),
+          _offset(origin, -1.88, 1.22),
+          _offset(origin, -1.96, 0.42),
+        ],
+        color: const Color(0xFFF59E0B).withValues(alpha: 0.2),
+        borderColor: const Color(0xFFF59E0B).withValues(alpha: 0.72),
+        borderStrokeWidth: 2,
+      ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final userPoint = _userPoint;
+    final routeOrigin = userPoint ?? _countryPoint;
+    final evacuationCenters = _evacuationCenters(routeOrigin);
+
+    return FlutterMap(
+      mapController: _mapController,
+      options: MapOptions(
+        initialCenter: _targetPoint,
+        initialZoom: _targetZoom,
+        minZoom: 3,
+        maxZoom: 18,
+        backgroundColor: const Color(0xFFE6ECF2),
+        keepAlive: true,
+        onMapReady: _onMapReady,
+      ),
+      children: [
+        TileLayer(
+          urlTemplate:
+              'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+          userAgentPackageName: 'com.example.sentrymesh_frontend',
+          subdomains: const ['a', 'b', 'c', 'd'],
+          maxZoom: 18,
+        ),
+        PolygonLayer(polygons: _hazardPolygons(routeOrigin)),
+        PolylineLayer(
+          polylines: [
+            Polyline(
+              points: _safeRoutePoints(routeOrigin),
+              strokeWidth: 7,
+              color: Colors.white.withValues(alpha: 0.92),
+            ),
+            Polyline(
+              points: _safeRoutePoints(routeOrigin),
+              strokeWidth: 4,
+              color: AppTheme.safeGreen,
+            ),
+          ],
+        ),
+        if (userPoint != null)
+          CircleLayer(
+            circles: [
+              CircleMarker(
+                point: userPoint,
+                radius: 120,
+                useRadiusInMeter: true,
+                color: AppTheme.signalBlue.withValues(alpha: 0.18),
+                borderColor: AppTheme.signalBlue.withValues(alpha: 0.45),
+                borderStrokeWidth: 1.5,
+              ),
+            ],
+          ),
+        MarkerLayer(
+          markers: [
+            for (final center in evacuationCenters)
+              Marker(
+                point: center,
+                width: 38,
+                height: 38,
+                child: const _EvacuationCenterMarker(),
+              ),
+            if (userPoint != null)
+              Marker(
+                point: userPoint,
+                width: 44,
+                height: 44,
+                child: const _UserLocationMarker(),
+              )
+            else
+              Marker(
+                point: _countryPoint,
+                width: 42,
+                height: 42,
+                child: _CountryCenterMarker(countryCode: widget.country.code),
+              ),
+          ],
+        ),
+        const RichAttributionWidget(
+          showFlutterMapAttribution: false,
+          attributions: [
+            TextSourceAttribution('OpenStreetMap contributors, CARTO'),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _EvacuationCenterMarker extends StatelessWidget {
+  const _EvacuationCenterMarker();
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppTheme.signalBlue,
+      shape: const CircleBorder(),
+      elevation: 3,
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+        ),
+        child: const Icon(Icons.home_rounded, color: Colors.white, size: 20),
+      ),
+    );
+  }
+}
+
+class _UserLocationMarker extends StatelessWidget {
+  const _UserLocationMarker();
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppTheme.signalBlue.withValues(alpha: 0.18),
+        shape: BoxShape.circle,
+      ),
+      child: Center(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: AppTheme.signalBlue,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 4),
+            boxShadow: [
+              BoxShadow(
+                color: AppTheme.signalBlue.withValues(alpha: 0.35),
+                blurRadius: 10,
+                spreadRadius: 2,
+              ),
+            ],
+          ),
+          child: const SizedBox(width: 24, height: 24),
+        ),
+      ),
+    );
+  }
+}
+
+class _CountryCenterMarker extends StatelessWidget {
+  const _CountryCenterMarker({required this.countryCode});
+
+  final String countryCode;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      shape: const CircleBorder(),
+      elevation: 2,
+      child: Center(
+        child: Text(
+          countryCode,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: AppTheme.navy,
+                fontWeight: FontWeight.w800,
+              ),
+        ),
+      ),
+    );
+  }
+}
