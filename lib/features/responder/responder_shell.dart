@@ -1,7 +1,10 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../app/assets.dart';
 import '../../app/router.dart';
 import '../../app/theme.dart';
 import '../../core/config/map_tile_config.dart';
@@ -118,14 +121,14 @@ class ResponderDashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return _ResponderPage(
       header: _ResponderHeader(
-        title: 'SentryMesh Responder',
+        title: 'Responder Console',
         trailing: _BellBadge(count: 3),
         child: Row(
           children: [
             const CircleAvatar(
               radius: 26,
               backgroundColor: Colors.white,
-              child: Icon(Icons.engineering, color: AppTheme.navy),
+              backgroundImage: AssetImage(AppAssets.avatarResponder),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -133,14 +136,14 @@ class ResponderDashboardScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Hello, Responder Team',
+                    'Naga City Response Team',
                     style: Theme.of(
                       context,
                     ).textTheme.titleSmall?.copyWith(color: Colors.white),
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    'Naga City Command Center',
+                    'Command Center',
                     style: Theme.of(
                       context,
                     ).textTheme.labelMedium?.copyWith(color: Colors.white70),
@@ -158,7 +161,7 @@ class ResponderDashboardScreen extends StatelessWidget {
                       ),
                       const SizedBox(width: 5),
                       Text(
-                        'Online',
+                        'Ready',
                         style: Theme.of(
                           context,
                         ).textTheme.labelSmall?.copyWith(color: Colors.white70),
@@ -176,12 +179,12 @@ class ResponderDashboardScreen extends StatelessWidget {
         const SizedBox(height: 14),
         const _SectionTitle(
           title: 'Situation Overview',
-          subtitle: 'Today, June 1 - 9:41 AM',
+          subtitle: 'Updated 9:41 AM',
         ),
         const SizedBox(height: 10),
         const _ResponderStatsGrid(),
         const SizedBox(height: 18),
-        const _SectionTitle(title: 'Severity Heatmap (Live)', chip: 'High'),
+        const _SectionTitle(title: 'Live Risk Map', chip: 'High'),
         const SizedBox(height: 10),
         const _HeatmapPreview(),
         const SizedBox(height: 18),
@@ -207,7 +210,7 @@ class ActiveIncidentsScreen extends StatelessWidget {
 
         return _ResponderPage(
           header: const _SimpleResponderHeader(
-            title: 'Active Incidents',
+            title: 'Priority Incidents',
             leadingIcon: Icons.arrow_back,
             trailingIcon: Icons.filter_alt,
           ),
@@ -252,7 +255,7 @@ class ResponderIncidentDetailScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${incident.title} - ${incident.severity} Severity',
+                      '${incident.title} - ${incident.severity} Priority',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     Text(
@@ -290,7 +293,7 @@ class ResponderIncidentDetailScreen extends StatelessWidget {
                 ),
                 const _InfoRow(
                   icon: Icons.signal_cellular_alt,
-                  label: 'Signal Strength',
+                  label: 'Signal Quality',
                   value: 'Good',
                 ),
               ],
@@ -367,7 +370,13 @@ class ResponderLiveMapScreen extends StatelessWidget {
         children: [
           Container(
             height: 60,
-            color: AppTheme.navy,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [AppTheme.deepNavy, AppTheme.navy],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Row(
               children: [
@@ -416,7 +425,7 @@ class ResponderTeamsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _ResponderPage(
-      header: const _SimpleResponderHeader(title: 'Teams & Communication'),
+      header: const _SimpleResponderHeader(title: 'Team Coordination'),
       children: const [
         _SegmentedHeader(left: 'Teams', right: 'Messages', badge: '2'),
         SizedBox(height: 18),
@@ -447,7 +456,7 @@ class ResponderTeamsScreen extends StatelessWidget {
           members: 5,
         ),
         SizedBox(height: 18),
-        _SectionTitle(title: 'Quick Communication'),
+        _SectionTitle(title: 'Quick Actions'),
         SizedBox(height: 10),
         _QuickActionGrid(),
       ],
@@ -530,7 +539,18 @@ class _ResponderHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: AppTheme.navy,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [AppTheme.deepNavy, AppTheme.navy],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        image: DecorationImage(
+          image: AssetImage(AppAssets.headerTopography),
+          fit: BoxFit.cover,
+          opacity: 0.22,
+        ),
+      ),
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
       child: Column(
         children: [
@@ -575,7 +595,13 @@ class _SimpleResponderHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       height: 60,
-      color: AppTheme.navy,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [AppTheme.deepNavy, AppTheme.navy],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
         children: [
@@ -634,7 +660,7 @@ class _ResponderStatusBanner extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Responder Command Mode',
+                        'Command Center Ready',
                         style: Theme.of(
                           context,
                         ).textTheme.titleSmall?.copyWith(color: Colors.white),
@@ -687,11 +713,14 @@ class _AiReasoningCard extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'AI Flood Prediction',
+                    'Flood Forecast Priority',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
-                const _SeverityPill(label: 'High', color: AppTheme.dangerRed),
+                const _SeverityPill(
+                  label: 'High Priority',
+                  color: AppTheme.dangerRed,
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -701,15 +730,15 @@ class _AiReasoningCard extends StatelessWidget {
             ),
             const _ReasonLine(
               label: 'Peak',
-              value: 'Expected peak level up to 1.4 m in low-lying streets',
+              value: 'Water may rise up to 1.4 m in low-lying streets',
             ),
             const _ReasonLine(
               label: 'Warning',
-              value: 'Flash flood risk window: 30-60 min',
+              value: 'Flash flood risk is elevated for the next hour',
             ),
             const _ReasonLine(
               label: 'Action',
-              value: 'Dispatch before main access road becomes unsafe',
+              value: 'Dispatch before the main access road becomes unsafe',
             ),
           ],
         ),
@@ -783,7 +812,7 @@ class _ResponderStatsGrid extends StatelessWidget {
             const _StatTile(
               icon: Icons.shield,
               value: '92%',
-              label: 'Network Status',
+              label: 'Signal Health',
               color: AppTheme.safeGreen,
             ),
           ],
@@ -887,9 +916,15 @@ class _HeatmapPreview extends StatelessWidget {
               ),
             ),
           ),
+          const Positioned.fill(child: CustomPaint(painter: _HeatmapPainter())),
           const Positioned(left: 28, top: 38, child: _MapLabel('San Felipe')),
           const Positioned(right: 26, top: 44, child: _MapLabel('Concepcion')),
           const Positioned(right: 50, bottom: 28, child: _MapLabel('Pacol')),
+          const Positioned(
+            left: 16,
+            top: 18,
+            child: _HeatSpot(size: 74, color: AppTheme.warningAmber),
+          ),
           const Positioned(
             left: 42,
             bottom: 28,
@@ -904,6 +939,11 @@ class _HeatmapPreview extends StatelessWidget {
             right: 76,
             top: 46,
             child: _HeatSpot(size: 52, color: AppTheme.dangerRed),
+          ),
+          const Positioned(
+            right: 20,
+            bottom: 20,
+            child: _HeatSpot(size: 62, color: AppTheme.warningAmber),
           ),
           Positioned(
             right: 12,
@@ -922,6 +962,75 @@ class _HeatmapPreview extends StatelessWidget {
   }
 }
 
+class _HeatmapPainter extends CustomPainter {
+  const _HeatmapPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final roadPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.18)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round;
+
+    final routePaint = Paint()
+      ..color = AppTheme.safeGreen.withValues(alpha: 0.9)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round;
+
+    final riverPaint = Paint()
+      ..color = AppTheme.signalBlue.withValues(alpha: 0.28)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 8
+      ..strokeCap = StrokeCap.round;
+
+    final river = ui.Path()
+      ..moveTo(size.width * 0.05, size.height * 0.2)
+      ..cubicTo(
+        size.width * 0.26,
+        size.height * 0.05,
+        size.width * 0.34,
+        size.height * 0.72,
+        size.width * 0.52,
+        size.height * 0.55,
+      )
+      ..cubicTo(
+        size.width * 0.7,
+        size.height * 0.38,
+        size.width * 0.76,
+        size.height * 0.88,
+        size.width * 0.95,
+        size.height * 0.64,
+      );
+    canvas.drawPath(river, riverPaint);
+
+    for (final y in [0.28, 0.48, 0.68]) {
+      final road = ui.Path()
+        ..moveTo(size.width * 0.04, size.height * y)
+        ..quadraticBezierTo(
+          size.width * 0.42,
+          size.height * (y - 0.08),
+          size.width * 0.96,
+          size.height * (y + 0.04),
+        );
+      canvas.drawPath(road, roadPaint);
+    }
+
+    final route = ui.Path()
+      ..moveTo(size.width * 0.12, size.height * 0.78)
+      ..lineTo(size.width * 0.28, size.height * 0.66)
+      ..lineTo(size.width * 0.38, size.height * 0.5)
+      ..lineTo(size.width * 0.55, size.height * 0.46)
+      ..lineTo(size.width * 0.68, size.height * 0.32)
+      ..lineTo(size.width * 0.86, size.height * 0.26);
+    canvas.drawPath(route, routePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
 class _ResponderMapPreview extends StatelessWidget {
   const _ResponderMapPreview({required this.height});
 
@@ -931,6 +1040,18 @@ class _ResponderMapPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final routePoints = const <LatLng>[
+      LatLng(13.590, 123.175),
+      LatLng(13.598, 123.184),
+      LatLng(13.606, 123.187),
+      LatLng(13.612, 123.198),
+      LatLng(13.6218, 123.1948),
+      LatLng(13.628, 123.204),
+      LatLng(13.636, 123.210),
+      LatLng(13.642, 123.224),
+      LatLng(13.652, 123.220),
+    ];
+
     return SizedBox(
       height: height,
       child: FlutterMap(
@@ -970,27 +1091,48 @@ class _ResponderMapPreview extends StatelessWidget {
                 borderColor: AppTheme.dangerRed,
                 borderStrokeWidth: 2,
               ),
+              Polygon(
+                points: const [
+                  LatLng(13.615, 123.150),
+                  LatLng(13.602, 123.176),
+                  LatLng(13.626, 123.188),
+                  LatLng(13.642, 123.170),
+                ],
+                color: AppTheme.warningAmber.withValues(alpha: 0.18),
+                borderColor: AppTheme.warningAmber.withValues(alpha: 0.72),
+                borderStrokeWidth: 2,
+              ),
+            ],
+          ),
+          CircleLayer(
+            circles: [
+              CircleMarker(
+                point: const LatLng(13.650, 123.202),
+                radius: 82,
+                color: AppTheme.dangerRed.withValues(alpha: 0.12),
+                borderColor: AppTheme.dangerRed.withValues(alpha: 0.25),
+                borderStrokeWidth: 1,
+                useRadiusInMeter: false,
+              ),
+              CircleMarker(
+                point: const LatLng(13.610, 123.230),
+                radius: 68,
+                color: AppTheme.warningAmber.withValues(alpha: 0.14),
+                borderColor: AppTheme.warningAmber.withValues(alpha: 0.28),
+                borderStrokeWidth: 1,
+                useRadiusInMeter: false,
+              ),
             ],
           ),
           PolylineLayer(
             polylines: [
               Polyline(
-                points: const [
-                  LatLng(13.590, 123.175),
-                  LatLng(13.610, 123.190),
-                  LatLng(13.622, 123.205),
-                  LatLng(13.646, 123.230),
-                ],
-                strokeWidth: 6,
+                points: routePoints,
+                strokeWidth: 8,
                 color: Colors.white,
               ),
               Polyline(
-                points: const [
-                  LatLng(13.590, 123.175),
-                  LatLng(13.610, 123.190),
-                  LatLng(13.622, 123.205),
-                  LatLng(13.646, 123.230),
-                ],
+                points: routePoints,
                 strokeWidth: 4,
                 color: AppTheme.safeGreen,
               ),
@@ -1033,7 +1175,7 @@ class _ResponderMapPreview extends StatelessWidget {
           const RichAttributionWidget(
             showFlutterMapAttribution: false,
             attributions: [
-              TextSourceAttribution('OpenStreetMap contributors, CARTO'),
+              TextSourceAttribution('Mapbox, OpenStreetMap contributors'),
             ],
           ),
         ],
@@ -1264,8 +1406,13 @@ class _IconBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CircleAvatar(
-      backgroundColor: color.withValues(alpha: 0.12),
+    return Container(
+      width: 42,
+      height: 42,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+      ),
       child: Icon(icon, color: color, size: 22),
     );
   }
@@ -1457,12 +1604,12 @@ class _MapLayerMenu extends StatelessWidget {
         ),
         _LayerButton(
           icon: Icons.home,
-          label: 'Evac Centers',
+          label: 'Shelters',
           color: AppTheme.signalBlue,
         ),
         _LayerButton(
           icon: Icons.route,
-          label: 'Safe Route',
+          label: 'Safer Route',
           color: AppTheme.safeGreen,
         ),
       ],
@@ -1522,12 +1669,15 @@ class _NavigationPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Navigation', style: Theme.of(context).textTheme.titleSmall),
+            Text(
+              'Route Guidance',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
             const SizedBox(height: 8),
             Row(
               children: [
                 const Icon(Icons.chevron_right, color: AppTheme.textMuted),
-                const Expanded(child: Text('To: San Felipe Incident')),
+                const Expanded(child: Text('San Felipe response area')),
                 Text('4.2 km', style: Theme.of(context).textTheme.titleSmall),
               ],
             ),
@@ -1543,7 +1693,7 @@ class _NavigationPanel extends StatelessWidget {
                 SizedBox(
                   width: 126,
                   child: SentryButton(
-                    label: 'Start',
+                    label: 'Guide',
                     icon: Icons.navigation,
                     onPressed: () {},
                   ),
@@ -1660,9 +1810,14 @@ class _TeamTile extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 10),
       child: Card(
         child: ListTile(
-          leading: CircleAvatar(
-            backgroundColor: (active ? AppTheme.safeGreen : AppTheme.signalBlue)
-                .withValues(alpha: 0.12),
+          leading: Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: (active ? AppTheme.safeGreen : AppTheme.signalBlue)
+                  .withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
             child: Icon(
               active ? Icons.person_pin_circle : Icons.engineering,
               color: active ? AppTheme.safeGreen : AppTheme.signalBlue,
@@ -1703,7 +1858,7 @@ class _QuickActionGrid extends StatelessWidget {
       children: const [
         _QuickAction(
           icon: Icons.campaign,
-          title: 'Broadcast Message',
+          title: 'Broadcast',
           color: AppTheme.signalBlue,
         ),
         _QuickAction(
@@ -1713,12 +1868,12 @@ class _QuickActionGrid extends StatelessWidget {
         ),
         _QuickAction(
           icon: Icons.sos,
-          title: 'SOS Requests',
+          title: 'Emergency',
           color: AppTheme.dangerRed,
         ),
         _QuickAction(
           icon: Icons.inventory,
-          title: 'Resource Request',
+          title: 'Resources',
           color: AppTheme.safeGreen,
         ),
       ],
@@ -1796,9 +1951,17 @@ class _IncidentMarker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CircleAvatar(
-      backgroundColor: AppTheme.dangerRed,
-      child: Icon(icon, color: Colors.white, size: 20),
+    return Material(
+      color: AppTheme.dangerRed,
+      shape: const CircleBorder(),
+      elevation: 3,
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+        ),
+        child: Icon(icon, color: Colors.white, size: 20),
+      ),
     );
   }
 }
@@ -1808,9 +1971,17 @@ class _EvacMarker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const CircleAvatar(
-      backgroundColor: AppTheme.signalBlue,
-      child: Icon(Icons.home, color: Colors.white, size: 20),
+    return Material(
+      color: AppTheme.signalBlue,
+      shape: const CircleBorder(),
+      elevation: 3,
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+        ),
+        child: const Icon(Icons.home, color: Colors.white, size: 20),
+      ),
     );
   }
 }

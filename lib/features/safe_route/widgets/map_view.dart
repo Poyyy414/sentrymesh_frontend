@@ -147,11 +147,17 @@ class _MapViewState extends State<MapView> {
 
   List<LatLng> _safeRoutePoints(LatLng origin) {
     return [
-      _offset(origin, -0.8, -0.9),
-      _offset(origin, -0.35, -0.35),
+      _offset(origin, -0.78, -0.86),
+      _offset(origin, -0.58, -0.72),
+      _offset(origin, -0.52, -0.46),
+      _offset(origin, -0.28, -0.34),
+      _offset(origin, -0.08, -0.18),
       origin,
-      _offset(origin, 0.35, 0.45),
-      _offset(origin, 0.85, 0.95),
+      _offset(origin, 0.16, 0.16),
+      _offset(origin, 0.18, 0.42),
+      _offset(origin, 0.42, 0.55),
+      _offset(origin, 0.58, 0.78),
+      _offset(origin, 0.86, 0.92),
     ];
   }
 
@@ -209,10 +215,40 @@ class _MapViewState extends State<MapView> {
     ];
   }
 
+  List<CircleMarker> _hazardHeatCircles(LatLng origin) {
+    return [
+      CircleMarker(
+        point: _offset(origin, 1.08, -0.48),
+        radius: 72,
+        color: AppTheme.dangerRed.withValues(alpha: 0.14),
+        borderColor: AppTheme.dangerRed.withValues(alpha: 0.26),
+        borderStrokeWidth: 1,
+        useRadiusInMeter: false,
+      ),
+      CircleMarker(
+        point: _offset(origin, 1.36, -0.1),
+        radius: 48,
+        color: AppTheme.warningAmber.withValues(alpha: 0.2),
+        borderColor: AppTheme.warningAmber.withValues(alpha: 0.3),
+        borderStrokeWidth: 1,
+        useRadiusInMeter: false,
+      ),
+      CircleMarker(
+        point: _offset(origin, -1.34, 0.84),
+        radius: 58,
+        color: AppTheme.warningAmber.withValues(alpha: 0.16),
+        borderColor: AppTheme.warningAmber.withValues(alpha: 0.3),
+        borderStrokeWidth: 1,
+        useRadiusInMeter: false,
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final userPoint = _userPoint;
     final origin = userPoint ?? _countryPoint;
+    final routePoints = _safeRoutePoints(origin);
 
     return FlutterMap(
       mapController: _mapController,
@@ -231,17 +267,20 @@ class _MapViewState extends State<MapView> {
           userAgentPackageName: 'com.example.sentrymesh_frontend',
           maxZoom: 18,
         ),
-        if (widget.layers.hazards) PolygonLayer(polygons: _hazardPolygons(origin)),
+        if (widget.layers.hazards)
+          PolygonLayer(polygons: _hazardPolygons(origin)),
+        if (widget.layers.hazards)
+          CircleLayer(circles: _hazardHeatCircles(origin)),
         if (widget.layers.safeRoute)
           PolylineLayer(
             polylines: [
               Polyline(
-                points: _safeRoutePoints(origin),
+                points: routePoints,
                 strokeWidth: 7,
                 color: Colors.white.withValues(alpha: 0.92),
               ),
               Polyline(
-                points: _safeRoutePoints(origin),
+                points: routePoints,
                 strokeWidth: 4,
                 color: AppTheme.safeGreen,
               ),
@@ -269,6 +308,14 @@ class _MapViewState extends State<MapView> {
                   width: 38,
                   height: 38,
                   child: const _EvacuationCenterMarker(),
+                ),
+            if (widget.layers.safeRoute)
+              for (final turn in [routePoints[3], routePoints[7]])
+                Marker(
+                  point: turn,
+                  width: 26,
+                  height: 26,
+                  child: const _RouteTurnMarker(),
                 ),
             if (widget.layers.incidents)
               for (final incident in _incidentPoints(origin))
@@ -306,10 +353,34 @@ class _MapViewState extends State<MapView> {
         const RichAttributionWidget(
           showFlutterMapAttribution: false,
           attributions: [
-            TextSourceAttribution('OpenStreetMap contributors, CARTO'),
+            TextSourceAttribution('Mapbox, OpenStreetMap contributors'),
           ],
         ),
       ],
+    );
+  }
+}
+
+class _RouteTurnMarker extends StatelessWidget {
+  const _RouteTurnMarker();
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      shape: const CircleBorder(),
+      elevation: 2,
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: AppTheme.safeGreen, width: 2),
+        ),
+        child: const Icon(
+          Icons.turn_right,
+          color: AppTheme.safeGreen,
+          size: 14,
+        ),
+      ),
     );
   }
 }
@@ -420,9 +491,9 @@ class _CountryCenterMarker extends StatelessWidget {
         child: Text(
           countryCode,
           style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: AppTheme.navy,
-                fontWeight: FontWeight.w800,
-              ),
+            color: AppTheme.navy,
+            fontWeight: FontWeight.w800,
+          ),
         ),
       ),
     );

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../app/theme.dart';
+
 class AlertListCard extends StatelessWidget {
   const AlertListCard({
     required this.title,
@@ -25,7 +27,7 @@ class AlertListCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      color: backgroundColor,
+      color: Colors.white,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
@@ -37,7 +39,15 @@ class AlertListCard extends StatelessWidget {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(icon, color: color, size: 36),
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(icon, color: color, size: 26),
+                  ),
                   const SizedBox(width: 14),
                   Expanded(
                     child: Column(
@@ -57,12 +67,14 @@ class AlertListCard extends StatelessWidget {
                         const SizedBox(height: 7),
                         Text(
                           location,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Theme.of(context).textTheme.bodyMedium?.color,
-                              ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: AppTheme.textPrimary),
                         ),
                         const SizedBox(height: 4),
-                        Text(description, style: Theme.of(context).textTheme.bodySmall),
+                        Text(
+                          description,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
                       ],
                     ),
                   ),
@@ -72,9 +84,9 @@ class AlertListCard extends StatelessWidget {
               OutlinedButton(
                 onPressed: onTap ?? () {},
                 style: OutlinedButton.styleFrom(
-                  backgroundColor: Colors.white,
+                  backgroundColor: backgroundColor.withValues(alpha: 0.55),
                   foregroundColor: const Color(0xFF0A3A68),
-                  side: const BorderSide(color: Color(0xFFE2E6EC)),
+                  side: BorderSide(color: color.withValues(alpha: 0.18)),
                   minimumSize: const Size.fromHeight(42),
                 ),
                 child: const Text('View Details'),
@@ -104,9 +116,9 @@ class _Badge extends StatelessWidget {
       child: Text(
         label,
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: Colors.white,
-              fontWeight: FontWeight.w800,
-            ),
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
+        ),
       ),
     );
   }

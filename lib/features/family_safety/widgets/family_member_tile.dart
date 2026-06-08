@@ -22,7 +22,7 @@ class FamilyMemberTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         leading: CircleAvatar(
           backgroundColor: color.withValues(alpha: 0.12),
           child: Text(
@@ -33,8 +33,8 @@ class FamilyMemberTile extends StatelessWidget {
             ),
           ),
         ),
-        title: Text('$name ($relationship)'),
-        subtitle: Text(updated),
+        title: Text(name),
+        subtitle: Text('$relationship - $updated'),
         trailing: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
@@ -44,9 +44,9 @@ class FamilyMemberTile extends StatelessWidget {
           child: Text(
             status,
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: color,
-                  fontWeight: FontWeight.w700,
-                ),
+              color: color,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
       ),

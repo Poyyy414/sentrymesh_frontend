@@ -17,24 +17,29 @@ class FamilySafetyScreen extends StatelessWidget {
         child: Column(
           children: [
             Container(
-              height: 60,
-              color: AppTheme.navy,
+              height: 64,
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [AppTheme.deepNavy, AppTheme.navy],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Row(
                 children: [
-                  IconButton(
-                    onPressed: () {},
-                    tooltip: 'Back',
-                    icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  const SizedBox(
+                    width: 48,
+                    child: Icon(Icons.family_restroom, color: Colors.white),
                   ),
                   Expanded(
                     child: Text(
-                      'Family Safety Check',
+                      'Family Safety',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            color: Colors.white,
-                            fontSize: 18,
-                          ),
+                        color: Colors.white,
+                        fontSize: 18,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 48),
@@ -50,6 +55,11 @@ class FamilySafetyScreen extends StatelessWidget {
                   Text(
                     'Family Members',
                     style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    'Quickly see who is safe and who needs attention.',
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: 8),
                   const FamilyMemberTile(

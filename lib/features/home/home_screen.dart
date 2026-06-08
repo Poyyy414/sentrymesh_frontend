@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../app/assets.dart';
 import '../../app/theme.dart';
 import '../../shared/demo/demo_scenario.dart';
 
@@ -27,7 +28,7 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() => _distressSent = true);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Distress ping received by responder dashboard.'),
+          content: Text('Your emergency request is now visible to responders.'),
         ),
       );
     }
@@ -81,7 +82,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   const _AlertTile(
                     icon: Icons.warning_amber_rounded,
                     title: 'Landslide Watch',
-                    subtitle: 'Concepcion Pequena - sensor confidence 87%',
+                    subtitle: 'Concepcion Pequena - avoid steep roads',
                     label: 'Medium',
                     color: AppTheme.warningAmber,
                   ),
@@ -101,7 +102,18 @@ class _HomeHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: AppTheme.navy,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [AppTheme.deepNavy, AppTheme.navy],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        image: DecorationImage(
+          image: AssetImage(AppAssets.headerTopography),
+          fit: BoxFit.cover,
+          opacity: 0.24,
+        ),
+      ),
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -115,7 +127,10 @@ class _HomeHeader extends StatelessWidget {
                   color: Colors.white.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.shield, color: Colors.white),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.asset(AppAssets.appIcon, fit: BoxFit.cover),
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -137,7 +152,7 @@ class _HomeHeader extends StatelessWidget {
                   ],
                 ),
               ),
-              const _RoleBadge(label: 'Demo Live'),
+              const _RoleBadge(label: 'Live'),
             ],
           ),
           const SizedBox(height: 18),
@@ -146,13 +161,7 @@ class _HomeHeader extends StatelessWidget {
               const CircleAvatar(
                 radius: 28,
                 backgroundColor: Colors.white,
-                child: Text(
-                  'JP',
-                  style: TextStyle(
-                    color: AppTheme.navy,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
+                backgroundImage: AssetImage(AppAssets.avatarJohnPaul),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -167,7 +176,7 @@ class _HomeHeader extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      'Typhoon response simulation active.',
+                      'Flood watch is active nearby.',
                       style: Theme.of(
                         context,
                       ).textTheme.bodySmall?.copyWith(color: Colors.white70),
@@ -209,14 +218,14 @@ class _EmergencyStatusBanner extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Emergency Backup Ready',
+                    'Emergency Help Ready',
                     style: Theme.of(
                       context,
                     ).textTheme.titleSmall?.copyWith(color: Colors.white),
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    'You can still send an emergency request if mobile signal is weak.',
+                    'You can send an SOS even when mobile signal is weak.',
                     style: Theme.of(
                       context,
                     ).textTheme.labelMedium?.copyWith(color: Colors.white70),
@@ -287,7 +296,7 @@ class _DisasterStatusCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    distressSent ? 'DISTRESS PING SENT' : 'DISASTER STATUS',
+                    distressSent ? 'REQUEST SENT' : 'YOUR AREA',
                     style: Theme.of(context).textTheme.labelMedium,
                   ),
                   const SizedBox(height: 2),
@@ -323,55 +332,74 @@ class _SosButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: AppTheme.dangerRed,
+      color: Colors.transparent,
       borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onPressed,
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Row(
-            children: [
-              Container(
-                width: 70,
-                height: 70,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 3),
-                ),
-                alignment: Alignment.center,
-                child: const Text(
-                  'SOS',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w900,
+      child: Ink(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          gradient: const LinearGradient(
+            colors: [Color(0xFFE44950), AppTheme.dangerRed],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: AppTheme.dangerRed.withValues(alpha: 0.24),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onPressed,
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Row(
+              children: [
+                Container(
+                  width: 70,
+                  height: 70,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 3),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Text(
+                    'SOS',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Emergency SOS',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.titleLarge?.copyWith(color: Colors.white),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Send your emergency location to responders.',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.white.withValues(alpha: 0.86),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Emergency SOS',
+                        style: Theme.of(
+                          context,
+                        ).textTheme.titleLarge?.copyWith(color: Colors.white),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 4),
+                      Text(
+                        'Send your location and request help now.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.white.withValues(alpha: 0.88),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const Icon(Icons.chevron_right, color: Colors.white),
-            ],
+                const Icon(Icons.chevron_right, color: Colors.white),
+              ],
+            ),
           ),
         ),
       ),
@@ -390,13 +418,10 @@ class _SosFlowSheetState extends State<_SosFlowSheet> {
   int _step = 0;
 
   static const _steps = [
-    ('Location found', 'Your current area is attached to the request.'),
-    ('Signal checked', 'The app is choosing the strongest available path.'),
-    (
-      'Emergency backup ready',
-      'Nearby relay points can help send your request.',
-    ),
-    ('Responder notified', 'Your request appears in the responder dashboard.'),
+    ('Location attached', 'Responders will see your current area.'),
+    ('Best signal selected', 'The app will use the strongest available path.'),
+    ('Backup relay ready', 'Nearby relay points can help send your request.'),
+    ('Responders alerted', 'Your request appears in the responder dashboard.'),
   ];
 
   Future<void> _send() async {
@@ -438,7 +463,7 @@ class _SosFlowSheetState extends State<_SosFlowSheet> {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'Send Disaster Distress Ping',
+                  'Send Emergency Request',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
@@ -456,7 +481,7 @@ class _SosFlowSheetState extends State<_SosFlowSheet> {
           const SizedBox(height: 18),
           ElevatedButton.icon(
             onPressed: _send,
-            icon: const Icon(Icons.hub),
+            icon: const Icon(Icons.send_rounded),
             label: const Text('Send Emergency Request'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.dangerRed,
@@ -522,7 +547,7 @@ class _HazardMetrics extends StatelessWidget {
           child: _MetricCard(
             icon: Icons.cloudy_snowing,
             label: 'Rainfall',
-            value: '1.2 mm/h',
+            value: 'Light',
             color: AppTheme.signalBlue,
           ),
         ),
@@ -575,7 +600,7 @@ class _FloodPredictionCard extends StatelessWidget {
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       Text(
-                        'Plain-language warning for nearby barangays',
+                        'Nearby barangays to watch',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],
@@ -583,6 +608,8 @@ class _FloodPredictionCard extends StatelessWidget {
                 ),
               ],
             ),
+            const SizedBox(height: 14),
+            const _FloodRiskGraphic(),
             const SizedBox(height: 14),
             const _PredictionRow(
               icon: Icons.schedule,
@@ -606,6 +633,54 @@ class _FloodPredictionCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _FloodRiskGraphic extends StatelessWidget {
+  const _FloodRiskGraphic();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: Stack(
+                children: [
+                  Container(height: 12, color: const Color(0xFFE7EDF5)),
+                  FractionallySizedBox(
+                    widthFactor: 0.62,
+                    child: Container(
+                      height: 12,
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [AppTheme.safeGreen, AppTheme.warningAmber],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            'Watch',
+            style: Theme.of(
+              context,
+            ).textTheme.labelMedium?.copyWith(color: AppTheme.warningAmber),
+          ),
+        ],
       ),
     );
   }

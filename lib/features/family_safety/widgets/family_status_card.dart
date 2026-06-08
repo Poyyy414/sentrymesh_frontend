@@ -13,7 +13,20 @@ class FamilyStatusCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Your Status', style: Theme.of(context).textTheme.titleSmall),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Your Status',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                Text(
+                  'Updated 7:45 AM',
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
+              ],
+            ),
             const SizedBox(height: 14),
             Row(
               children: [
@@ -34,12 +47,12 @@ class FamilyStatusCard extends StatelessWidget {
                       Text(
                         'You are Safe',
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              color: AppTheme.safeGreen,
-                              fontSize: 20,
-                            ),
+                          color: AppTheme.safeGreen,
+                          fontSize: 20,
+                        ),
                       ),
                       Text(
-                        'Last updated: Today, 7:45 AM',
+                        'Your family can see your status.',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],
@@ -50,7 +63,7 @@ class FamilyStatusCard extends StatelessWidget {
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: () {},
-              child: const Text('Update My Status'),
+              child: const Text('Update Status'),
             ),
           ],
         ),

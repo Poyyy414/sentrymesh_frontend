@@ -19,16 +19,16 @@ void main() {
     await tester.tap(find.text('Sign In').last);
     await tester.pumpAndSettle();
 
-    expect(find.text('SentryMesh Responder'), findsOneWidget);
+    expect(find.text('Responder Console'), findsOneWidget);
     expect(find.text('Situation Overview'), findsOneWidget);
 
     await tester.tap(find.text('Incidents').last);
     await tester.pumpAndSettle();
-    expect(find.text('Active Incidents'), findsOneWidget);
+    expect(find.text('Priority Incidents'), findsOneWidget);
 
     await tester.tap(find.text('Teams').last);
     await tester.pumpAndSettle();
-    expect(find.text('Teams & Communication'), findsOneWidget);
+    expect(find.text('Team Coordination'), findsOneWidget);
 
     await tester.tap(find.text('Dashboard').last);
     await tester.pumpAndSettle();
@@ -56,7 +56,7 @@ void main() {
 
     await tester.tap(find.text('SOS').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Send Emergency Request'));
+    await tester.tap(find.text('Send Emergency Request').last);
     await tester.pump(const Duration(seconds: 2));
     await tester.pumpAndSettle();
 

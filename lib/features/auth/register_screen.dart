@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../app/assets.dart';
 import '../../app/router.dart';
 import '../../app/theme.dart';
 import '../../core/di/injection.dart';
@@ -42,21 +43,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     try {
       await AppDependenciesScope.of(context).authRepository.register(
-            firstName: _firstNameController.text,
-            lastName: _lastNameController.text,
-            email: _emailController.text,
-            address: _addressController.text,
-            password: _passwordController.text,
-          );
+        firstName: _firstNameController.text,
+        lastName: _lastNameController.text,
+        email: _emailController.text,
+        address: _addressController.text,
+        password: _passwordController.text,
+      );
 
       if (!mounted) {
         return;
       }
 
-      Navigator.of(context).pushNamedAndRemoveUntil(
-        AppRouter.appShell,
-        (_) => false,
-      );
+      Navigator.of(
+        context,
+      ).pushNamedAndRemoveUntil(AppRouter.appShell, (_) => false);
     } on AuthException catch (error) {
       _showMessage(error.message);
     } catch (_) {
@@ -73,9 +73,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   String? _required(String? value, String label) {
@@ -130,7 +130,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       color: AppTheme.signalBlue,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Icon(Icons.person_add_alt_1, color: Colors.white),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.asset(AppAssets.appIcon, fit: BoxFit.cover),
+                    ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -139,16 +142,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       children: [
                         Text(
                           'Resident profile',
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                color: Colors.white,
-                              ),
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(color: Colors.white),
                         ),
                         const SizedBox(height: 3),
                         Text(
                           'Create your SentryMesh account.',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Colors.white70,
-                              ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: Colors.white70),
                         ),
                       ],
                     ),
@@ -220,8 +221,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       labelText: 'Password',
                       prefixIcon: const Icon(Icons.lock_outline),
                       suffixIcon: IconButton(
-                        tooltip:
-                            _obscurePassword ? 'Show password' : 'Hide password',
+                        tooltip: _obscurePassword
+                            ? 'Show password'
+                            : 'Hide password',
                         onPressed: () {
                           setState(() {
                             _obscurePassword = !_obscurePassword;

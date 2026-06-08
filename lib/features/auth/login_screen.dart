@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../app/assets.dart';
 import '../../app/router.dart';
 import '../../app/theme.dart';
 import '../../core/di/injection.dart';
@@ -36,9 +37,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       final user = await AppDependenciesScope.of(context).authRepository.login(
-            email: _emailController.text,
-            password: _passwordController.text,
-          );
+        email: _emailController.text,
+        password: _passwordController.text,
+      );
 
       if (!mounted) {
         return;
@@ -69,9 +70,9 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   String? _validateEmail(String? value) {
@@ -187,9 +188,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   OutlinedButton.icon(
                     onPressed: _isLoading
                         ? null
-                        : () => Navigator.of(context).pushNamed(
-                              AppRouter.register,
-                            ),
+                        : () => Navigator.of(
+                            context,
+                          ).pushNamed(AppRouter.register),
                     icon: const Icon(Icons.person_add_alt_1),
                     label: const Text('Create Account'),
                   ),
@@ -212,6 +213,11 @@ class _AuthMasthead extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 26, 20, 24),
       decoration: const BoxDecoration(
         color: AppTheme.deepNavy,
+        image: DecorationImage(
+          image: AssetImage(AppAssets.headerTopography),
+          fit: BoxFit.cover,
+          opacity: 0.28,
+        ),
       ),
       child: Row(
         children: [
@@ -222,7 +228,10 @@ class _AuthMasthead extends StatelessWidget {
               color: AppTheme.signalBlue,
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(Icons.shield, color: Colors.white, size: 34),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.asset(AppAssets.appIcon, fit: BoxFit.cover),
+            ),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -232,17 +241,17 @@ class _AuthMasthead extends StatelessWidget {
                 Text(
                   'SentryMesh',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        color: Colors.white,
-                        fontSize: 26,
-                      ),
+                    color: Colors.white,
+                    fontSize: 26,
+                  ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   'Stay connected. Stay safe.',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.white70,
-                        fontSize: 13,
-                      ),
+                    color: Colors.white70,
+                    fontSize: 13,
+                  ),
                 ),
               ],
             ),

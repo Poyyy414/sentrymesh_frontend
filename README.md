@@ -61,7 +61,7 @@ Use this sequence to present the frontend as one disaster-response story:
 1. Sign in as the resident user: `user123@gmail.com` / `12345678`.
 2. Show the Emergency Backup Ready status and the AI Flood Forecast on Home.
 3. Tap `SOS` and send the emergency request.
-4. Open the Map tab and toggle `Incidents`, `Flood Risk`, `Safe Routes`, `Evac Centers`, and `Signal Points`.
+4. Open the Map tab and toggle `Incidents`, `Flood Risk`, `Safe Paths`, `Shelters`, and `Relay Points`.
 5. Logout, then sign in as responder: `responder123@gmail.com` / `12345678`.
 6. Show the responder dashboard receiving the resident request and live heatmap.
 7. Open Active Incidents, tap a high-priority incident, and explain the AI Flood Prediction reasons.
@@ -69,7 +69,7 @@ Use this sequence to present the frontend as one disaster-response story:
 
 ## Maps
 
-The Safe Route Map uses `flutter_map` with Mapbox raster tiles for a cleaner mobile demo. A demo token is already configured in `MapTileConfig`, so the app can run normally:
+The Evacuation Map uses `flutter_map` with Mapbox raster tiles for a cleaner mobile demo. A demo token is already configured in `MapTileConfig`, so the app can run normally:
 
 ```sh
 flutter run
@@ -81,7 +81,7 @@ If the Mapbox token is rotated, override it at launch:
 flutter run --dart-define=MAPBOX_ACCESS_TOKEN=YOUR_PUBLIC_MAPBOX_TOKEN
 ```
 
-The Safe Route Map should receive route and hazard geometry from FastAPI, then render it in Flutter as:
+The Evacuation Map should receive route and hazard geometry from FastAPI, then render it in Flutter as:
 
 - green safe-route line
 - red flooded-area polygons

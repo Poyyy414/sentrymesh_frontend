@@ -26,7 +26,13 @@ class _AlertsScreenState extends State<AlertsScreen> {
           children: [
             Container(
               height: 64,
-              color: AppTheme.navy,
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [AppTheme.deepNavy, AppTheme.navy],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
@@ -36,9 +42,9 @@ class _AlertsScreenState extends State<AlertsScreen> {
                       'Alerts',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            color: Colors.white,
-                            fontSize: 18,
-                          ),
+                        color: Colors.white,
+                        fontSize: 18,
+                      ),
                     ),
                   ),
                   IconButton(
@@ -58,7 +64,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
                 children: [
                   Text(
-                    'Latest Alerts',
+                    'For Your Area',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 12),

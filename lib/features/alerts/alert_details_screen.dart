@@ -21,7 +21,11 @@ class AlertDetailsScreen extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.flood, color: AppTheme.dangerRed, size: 36),
+                      const Icon(
+                        Icons.flood,
+                        color: AppTheme.dangerRed,
+                        size: 36,
+                      ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
@@ -30,7 +34,10 @@ class AlertDetailsScreen extends StatelessWidget {
                         ),
                       ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 5,
+                        ),
                         decoration: BoxDecoration(
                           color: AppTheme.dangerRed,
                           borderRadius: BorderRadius.circular(6),
@@ -49,7 +56,10 @@ class AlertDetailsScreen extends StatelessWidget {
                   const SizedBox(height: 14),
                   const Text('San Felipe, Naga City and nearby areas'),
                   const SizedBox(height: 8),
-                  Text('Today, 6:30 AM', style: Theme.of(context).textTheme.bodySmall),
+                  Text(
+                    'Today, 6:30 AM',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                   const SizedBox(height: 16),
                   const Text(
                     'Rising water has been reported near low-lying barangays. Avoid flooded roads and monitor local responder updates.',
@@ -62,7 +72,7 @@ class AlertDetailsScreen extends StatelessWidget {
           OutlinedButton.icon(
             onPressed: () {},
             icon: const Icon(Icons.location_on_outlined),
-            label: const Text('Open Safe Route Map'),
+            label: const Text('Open Evacuation Map'),
           ),
           const SizedBox(height: 10),
           ElevatedButton.icon(

@@ -27,16 +27,16 @@ class MapLegend extends StatelessWidget {
           runSpacing: 8,
           children: const [
             _LegendItem(color: AppTheme.signalBlue, label: 'Location'),
-            _LegendItem(color: AppTheme.safeGreen, label: 'Safe route'),
+            _LegendItem(color: AppTheme.safeGreen, label: 'Safe path'),
             _LegendItem(color: AppTheme.dangerRed, label: 'Flood risk'),
             _LegendItem(
               color: AppTheme.signalBlue,
-              label: 'Evac center',
+              label: 'Shelter',
               icon: Icons.home_rounded,
             ),
             _LegendItem(
               color: AppTheme.deepNavy,
-              label: 'Signal point',
+              label: 'Relay point',
               icon: Icons.hub,
             ),
           ],

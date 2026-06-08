@@ -9,7 +9,7 @@ class EditProfileScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('Edit Profile')),
       body: const Padding(
         padding: EdgeInsets.all(20),
-        child: Text('Profile editing form will connect to FastAPI auth endpoints.'),
+        child: Text('Profile editing will be available in the next build.'),
       ),
     );
   }

@@ -44,14 +44,14 @@ class RouteSummaryCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        ready ? 'Location Ready' : 'Route Preview',
+                        ready ? 'Route Ready' : 'Route Preview',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const SizedBox(height: 3),
                       Text(
                         ready
-                            ? 'FastAPI can replace the preview line with live evacuation routing.'
-                            : 'Tap locate to center on your GPS position in $countryName.',
+                            ? 'Follow the highlighted path and avoid marked flood zones.'
+                            : 'Choose $countryName or tap locate to preview nearby routes.',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],
@@ -62,9 +62,15 @@ class RouteSummaryCard extends StatelessWidget {
             const SizedBox(height: 14),
             Row(
               children: const [
-                Expanded(child: _RouteMetric(value: '4.2 km', label: 'Distance')),
-                Expanded(child: _RouteMetric(value: '12 min', label: 'Est. time')),
-                Expanded(child: _RouteMetric(value: 'Low', label: 'Risk')),
+                Expanded(
+                  child: _RouteMetric(value: '4.2 km', label: 'Distance'),
+                ),
+                Expanded(
+                  child: _RouteMetric(value: '12 min', label: 'Est. time'),
+                ),
+                Expanded(
+                  child: _RouteMetric(value: 'Low', label: 'Risk'),
+                ),
               ],
             ),
           ],

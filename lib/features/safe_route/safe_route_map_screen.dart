@@ -43,7 +43,7 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
                   ),
                   Expanded(
                     child: Text(
-                      'Safe Route Map',
+                      'Evacuation Map',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         color: Colors.white,
@@ -119,13 +119,13 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
                   ),
                   const SizedBox(height: 12),
                   SentryButton(
-                    label: 'Start Navigation',
+                    label: 'Start Guidance',
                     icon: Icons.navigation,
                     onPressed: () {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text(
-                            'Navigation started. Follow the highlighted safe route.',
+                            'Guidance started. Follow the highlighted safe path.',
                           ),
                         ),
                       );
@@ -331,7 +331,7 @@ class _MapLayerControls extends StatelessWidget {
             onTap: () => onChanged(layers.copyWith(hazards: !layers.hazards)),
           ),
           _LayerToggle(
-            label: 'Safe Routes',
+            label: 'Safe Paths',
             icon: Icons.route,
             selected: layers.safeRoute,
             color: AppTheme.safeGreen,
@@ -339,7 +339,7 @@ class _MapLayerControls extends StatelessWidget {
                 onChanged(layers.copyWith(safeRoute: !layers.safeRoute)),
           ),
           _LayerToggle(
-            label: 'Evac Centers',
+            label: 'Shelters',
             icon: Icons.home_rounded,
             selected: layers.evacuationCenters,
             color: AppTheme.signalBlue,
@@ -348,7 +348,7 @@ class _MapLayerControls extends StatelessWidget {
             ),
           ),
           _LayerToggle(
-            label: 'Signal Points',
+            label: 'Relay Points',
             icon: Icons.hub,
             selected: layers.loraNodes,
             color: AppTheme.deepNavy,
