@@ -28,15 +28,31 @@ The current scaffold keeps each feature's future state in a `state/` folder with
 
 ## Backend
 
-FastAPI calls are isolated behind `core/network`, `data/sources/remote`, and `data/repositories`. Set the backend URL with:
+FastAPI calls are isolated behind `core/network`, `data/sources/remote`, and `data/repositories`. By default, the frontend uses the deployed backend:
+
+```sh
+https://centrimeshx.onrender.com
+```
+
+Run the app normally to use it:
+
+```sh
+flutter run
+```
+
+Override the backend URL for local development with:
 
 ```sh
 flutter run --dart-define=SENTRYMESH_API_BASE_URL=http://your-fastapi-host:8000
 ```
 
+Registration posts to `POST /api/v1/auth/register` with `first_name`, `last_name`, `email`, `address`, and `password`. Backend validation and connection errors are shown in the register screen instead of creating a local mock account.
+
+Database setup for PostgreSQL/PostGIS, local Docker, Supabase, migrations, and demo seed data is documented in [docs/database.md](docs/database.md).
+
 ## Mock Auth
 
-Until the FastAPI auth backend is ready, the Flutter app uses frontend-only mock login/register.
+Until the FastAPI login backend is ready, sign-in uses frontend-only mock accounts. Registration calls the FastAPI register endpoint and displays backend/network errors.
 The resident SOS and responder incident queue are connected through an in-memory demo mode, so the judge demo works without a backend.
 
 Seeded accounts:

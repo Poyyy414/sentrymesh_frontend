@@ -29,7 +29,8 @@ Future<AppDependencies> configureDependencies() async {
 }
 
 class AppDependencies {
-  AppDependencies({required ApiConfig apiConfig}) : apiClient = ApiClient(config: apiConfig) {
+  AppDependencies({required ApiConfig apiConfig})
+    : apiClient = ApiClient(config: apiConfig) {
     localStorage = LocalStorage();
     cacheManager = CacheManager(storage: localStorage);
     storageService = StorageService(localStorage: localStorage);
@@ -46,9 +47,12 @@ class AppDependencies {
     mapApi = MapApi(apiClient);
     familyApi = FamilyApi(apiClient);
 
-    authRepository = AuthRepository(storage: storageService);
+    authRepository = AuthRepository(remote: authApi, storage: storageService);
     alertRepository = AlertRepository(remote: alertsApi);
-    rescueRepository = RescueRepository(remote: rescueApi, loraService: loraService);
+    rescueRepository = RescueRepository(
+      remote: rescueApi,
+      loraService: loraService,
+    );
     mapRepository = MapRepository(remote: mapApi, mapService: mapService);
     familyRepository = FamilyRepository(remote: familyApi);
     dashboardRepository = DashboardRepository(alertRepository: alertRepository);
@@ -90,8 +94,12 @@ class AppDependenciesScope extends InheritedWidget {
   final AppDependencies dependencies;
 
   static AppDependencies of(BuildContext context) {
-    final scope = context.dependOnInheritedWidgetOfExactType<AppDependenciesScope>();
-    assert(scope != null, 'AppDependenciesScope was not found in the widget tree.');
+    final scope = context
+        .dependOnInheritedWidgetOfExactType<AppDependenciesScope>();
+    assert(
+      scope != null,
+      'AppDependenciesScope was not found in the widget tree.',
+    );
     return scope!.dependencies;
   }
 

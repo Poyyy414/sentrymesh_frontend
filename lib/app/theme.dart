@@ -67,6 +67,11 @@ class AppTheme {
         thickness: 1,
         space: 1,
       ),
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: signalBlue,
+        selectionColor: signalBlue.withValues(alpha: 0.22),
+        selectionHandleColor: signalBlue,
+      ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: surfaceRaised,
@@ -101,6 +106,11 @@ class AppTheme {
         labelStyle: const TextStyle(
           color: textMuted,
           fontWeight: FontWeight.w500,
+          letterSpacing: 0,
+        ),
+        floatingLabelStyle: const TextStyle(
+          color: signalBlue,
+          fontWeight: FontWeight.w700,
           letterSpacing: 0,
         ),
         hintStyle: const TextStyle(color: textMuted),

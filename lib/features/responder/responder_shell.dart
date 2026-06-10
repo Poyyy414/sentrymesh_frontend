@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import '../../app/router.dart';
 import '../../app/theme.dart';
 import '../../core/config/map_tile_config.dart';
 import '../../core/di/injection.dart';
+import '../../core/services/location_service.dart';
 import '../../core/widgets/custom_button.dart';
 import '../../shared/demo/demo_scenario.dart';
 
@@ -359,8 +361,144 @@ class ResponderIncidentDetailScreen extends StatelessWidget {
   }
 }
 
-class ResponderLiveMapScreen extends StatelessWidget {
+class ResponderLiveMapScreen extends StatefulWidget {
   const ResponderLiveMapScreen({super.key});
+
+  @override
+  State<ResponderLiveMapScreen> createState() => _ResponderLiveMapScreenState();
+}
+
+class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
+  final _mapController = MapController();
+
+  StreamSubscription<GeoPoint>? _locationSubscription;
+  GeoPoint? _responderLocation;
+  bool _isLocating = false;
+  bool _isTracking = false;
+
+  @override
+  void dispose() {
+    _locationSubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _locateResponder() async {
+    if (_isLocating) {
+      return;
+    }
+
+    setState(() => _isLocating = true);
+
+    final locationService = AppDependenciesScope.of(context).locationService;
+
+    try {
+      final location = await locationService.currentLocation();
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _responderLocation = location;
+        _isTracking = true;
+      });
+      _centerMap(location);
+      _startLiveTracking(locationService);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Responder GPS is live on the map.')),
+      );
+    } on LocationServiceDisabledException {
+      if (!mounted) {
+        return;
+      }
+      _showLocationSettingsSnackBar();
+    } on LocationPermissionPermanentlyDeniedException {
+      if (!mounted) {
+        return;
+      }
+      _showAppSettingsSnackBar();
+    } on LocationPermissionDeniedException {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Location permission was denied')),
+      );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      _showLocationUnavailableSnackBar();
+    } finally {
+      if (mounted) {
+        setState(() => _isLocating = false);
+      }
+    }
+  }
+
+  void _startLiveTracking(LocationService locationService) {
+    _locationSubscription?.cancel();
+    _locationSubscription = locationService.watchLocation().listen(
+      (location) {
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          _responderLocation = location;
+          _isTracking = true;
+        });
+      },
+      onError: (_) {
+        if (mounted) {
+          setState(() => _isTracking = false);
+        }
+      },
+    );
+  }
+
+  void _centerMap(GeoPoint location) {
+    _mapController.move(LatLng(location.latitude, location.longitude), 15);
+  }
+
+  void _showLocationSettingsSnackBar() {
+    final locationService = AppDependenciesScope.of(context).locationService;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Turn on device location to show responder GPS'),
+        action: SnackBarAction(
+          label: 'Open',
+          onPressed: locationService.openLocationSettings,
+        ),
+      ),
+    );
+  }
+
+  void _showAppSettingsSnackBar() {
+    final locationService = AppDependenciesScope.of(context).locationService;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Allow location access in app settings'),
+        action: SnackBarAction(
+          label: 'Open',
+          onPressed: locationService.openAppSettings,
+        ),
+      ),
+    );
+  }
+
+  void _showLocationUnavailableSnackBar() {
+    final locationService = AppDependenciesScope.of(context).locationService;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Responder location is not available yet.'),
+        action: SnackBarAction(
+          label: 'Settings',
+          onPressed: locationService.openLocationSettings,
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -401,14 +539,39 @@ class ResponderLiveMapScreen extends StatelessWidget {
           ),
           Expanded(
             child: Stack(
-              children: const [
-                _ResponderMapPreview(height: double.infinity),
-                Positioned(top: 12, left: 12, child: _MapLayerMenu()),
+              children: [
+                _ResponderMapPreview(
+                  height: double.infinity,
+                  mapController: _mapController,
+                  responderLocation: _responderLocation,
+                ),
+                const Positioned(top: 12, left: 12, child: _MapLayerMenu()),
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: _ResponderGpsBadge(
+                    location: _responderLocation,
+                    isTracking: _isTracking,
+                  ),
+                ),
+                Positioned(
+                  right: 16,
+                  bottom: 168,
+                  child: _ResponderLocateButton(
+                    isLoading: _isLocating,
+                    hasLocation: _responderLocation != null,
+                    onPressed: _locateResponder,
+                  ),
+                ),
                 Positioned(
                   left: 16,
                   right: 16,
                   bottom: 16,
-                  child: _NavigationPanel(),
+                  child: _NavigationPanel(
+                    hasLiveLocation: _responderLocation != null,
+                    isTracking: _isTracking,
+                    onLocate: _locateResponder,
+                  ),
                 ),
               ],
             ),
@@ -1032,14 +1195,23 @@ class _HeatmapPainter extends CustomPainter {
 }
 
 class _ResponderMapPreview extends StatelessWidget {
-  const _ResponderMapPreview({required this.height});
+  const _ResponderMapPreview({
+    required this.height,
+    this.mapController,
+    this.responderLocation,
+  });
 
   final double height;
+  final MapController? mapController;
+  final GeoPoint? responderLocation;
 
   static const _center = LatLng(13.6218, 123.1948);
 
   @override
   Widget build(BuildContext context) {
+    final responderPoint = responderLocation == null
+        ? null
+        : LatLng(responderLocation!.latitude, responderLocation!.longitude);
     final routePoints = const <LatLng>[
       LatLng(13.590, 123.175),
       LatLng(13.598, 123.184),
@@ -1055,12 +1227,13 @@ class _ResponderMapPreview extends StatelessWidget {
     return SizedBox(
       height: height,
       child: FlutterMap(
-        options: const MapOptions(
-          initialCenter: _center,
-          initialZoom: 12.4,
+        mapController: mapController,
+        options: MapOptions(
+          initialCenter: responderPoint ?? _center,
+          initialZoom: responderPoint == null ? 12.4 : 15,
           minZoom: 4,
           maxZoom: 18,
-          interactionOptions: InteractionOptions(),
+          interactionOptions: const InteractionOptions(),
         ),
         children: [
           TileLayer(
@@ -1139,14 +1312,22 @@ class _ResponderMapPreview extends StatelessWidget {
             ],
           ),
           MarkerLayer(
-            markers: const [
-              Marker(
-                point: LatLng(13.6218, 123.1948),
-                width: 40,
-                height: 40,
-                child: _UserDot(),
-              ),
-              Marker(
+            markers: [
+              if (responderPoint == null)
+                const Marker(
+                  point: _center,
+                  width: 84,
+                  height: 58,
+                  child: _CommandCenterMarker(),
+                )
+              else
+                Marker(
+                  point: responderPoint,
+                  width: 84,
+                  height: 68,
+                  child: const _ResponderLocationMarker(),
+                ),
+              const Marker(
                 point: LatLng(13.652, 123.220),
                 width: 42,
                 height: 42,
@@ -1658,8 +1839,108 @@ class _LayerButton extends StatelessWidget {
   }
 }
 
+class _ResponderGpsBadge extends StatelessWidget {
+  const _ResponderGpsBadge({required this.location, required this.isTracking});
+
+  final GeoPoint? location;
+  final bool isTracking;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasLocation = location != null;
+    final title = hasLocation
+        ? isTracking
+              ? 'GPS live'
+              : 'GPS locked'
+        : 'GPS off';
+    final subtitle = hasLocation
+        ? '${location!.latitude.toStringAsFixed(4)}, ${location!.longitude.toStringAsFixed(4)}'
+        : 'Tap locate';
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.border),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 8),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              hasLocation ? Icons.gps_fixed : Icons.gps_off,
+              color: hasLocation ? AppTheme.safeGreen : AppTheme.textMuted,
+              size: 18,
+            ),
+            const SizedBox(width: 7),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                Text(subtitle, style: Theme.of(context).textTheme.labelSmall),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ResponderLocateButton extends StatelessWidget {
+  const _ResponderLocateButton({
+    required this.isLoading,
+    required this.hasLocation,
+    required this.onPressed,
+  });
+
+  final bool isLoading;
+  final bool hasLocation;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      shape: const CircleBorder(),
+      elevation: 3,
+      child: IconButton(
+        onPressed: isLoading ? null : onPressed,
+        tooltip: hasLocation ? 'Recenter responder GPS' : 'Find responder GPS',
+        icon: isLoading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(
+                hasLocation ? Icons.gps_fixed : Icons.my_location,
+                color: AppTheme.signalBlue,
+              ),
+      ),
+    );
+  }
+}
+
 class _NavigationPanel extends StatelessWidget {
-  const _NavigationPanel();
+  const _NavigationPanel({
+    required this.hasLiveLocation,
+    required this.isTracking,
+    required this.onLocate,
+  });
+
+  final bool hasLiveLocation;
+  final bool isTracking;
+  final VoidCallback onLocate;
 
   @override
   Widget build(BuildContext context) {
@@ -1674,6 +1955,45 @@ class _NavigationPanel extends StatelessWidget {
               style: Theme.of(context).textTheme.titleSmall,
             ),
             const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color:
+                    (hasLiveLocation ? AppTheme.safeGreen : AppTheme.signalBlue)
+                        .withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color:
+                      (hasLiveLocation
+                              ? AppTheme.safeGreen
+                              : AppTheme.signalBlue)
+                          .withValues(alpha: 0.22),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    hasLiveLocation ? Icons.gps_fixed : Icons.my_location,
+                    color: hasLiveLocation
+                        ? AppTheme.safeGreen
+                        : AppTheme.signalBlue,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      hasLiveLocation
+                          ? isTracking
+                                ? 'Your responder position is updating live.'
+                                : 'Your responder position is shown on the map.'
+                          : 'Tap locate so the map shows where you are.',
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
             Row(
               children: [
                 const Icon(Icons.chevron_right, color: AppTheme.textMuted),
@@ -1693,9 +2013,9 @@ class _NavigationPanel extends StatelessWidget {
                 SizedBox(
                   width: 126,
                   child: SentryButton(
-                    label: 'Guide',
-                    icon: Icons.navigation,
-                    onPressed: () {},
+                    label: hasLiveLocation ? 'Recenter' : 'Locate',
+                    icon: hasLiveLocation ? Icons.gps_fixed : Icons.my_location,
+                    onPressed: onLocate,
                   ),
                 ),
               ],
@@ -1986,27 +2306,110 @@ class _EvacMarker extends StatelessWidget {
   }
 }
 
-class _UserDot extends StatelessWidget {
-  const _UserDot();
+class _CommandCenterMarker extends StatelessWidget {
+  const _CommandCenterMarker();
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppTheme.signalBlue.withValues(alpha: 0.2),
-        shape: BoxShape.circle,
-      ),
-      child: Center(
-        child: Container(
-          width: 22,
-          height: 22,
-          decoration: BoxDecoration(
-            color: AppTheme.signalBlue,
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 4),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Material(
+          color: AppTheme.deepNavy,
+          borderRadius: BorderRadius.circular(8),
+          elevation: 3,
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            child: Text(
+              'Base',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
           ),
         ),
-      ),
+        const SizedBox(height: 3),
+        Material(
+          color: AppTheme.deepNavy,
+          shape: const CircleBorder(),
+          elevation: 3,
+          child: Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+            ),
+            child: const Icon(
+              Icons.local_police,
+              color: Colors.white,
+              size: 18,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ResponderLocationMarker extends StatelessWidget {
+  const _ResponderLocationMarker();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Material(
+          color: AppTheme.signalBlue,
+          borderRadius: BorderRadius.circular(8),
+          elevation: 3,
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            child: Text(
+              'You',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 3),
+        Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: AppTheme.signalBlue.withValues(alpha: 0.18),
+            shape: BoxShape.circle,
+          ),
+          child: Center(
+            child: Container(
+              width: 25,
+              height: 25,
+              decoration: BoxDecoration(
+                color: AppTheme.signalBlue,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 4),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppTheme.signalBlue.withValues(alpha: 0.35),
+                    blurRadius: 10,
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.navigation,
+                color: Colors.white,
+                size: 12,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

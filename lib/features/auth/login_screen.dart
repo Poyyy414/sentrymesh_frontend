@@ -7,6 +7,13 @@ import '../../core/di/injection.dart';
 import '../../core/widgets/custom_button.dart';
 import '../../data/repositories/auth_repository.dart';
 
+const _authFieldTextStyle = TextStyle(
+  color: AppTheme.textPrimary,
+  fontSize: 14,
+  fontWeight: FontWeight.w600,
+  letterSpacing: 0,
+);
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -139,6 +146,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       children: [
                         TextFormField(
                           controller: _emailController,
+                          style: _authFieldTextStyle,
                           keyboardType: TextInputType.emailAddress,
                           textInputAction: TextInputAction.next,
                           validator: _validateEmail,
@@ -150,6 +158,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: 12),
                         TextFormField(
                           controller: _passwordController,
+                          style: _authFieldTextStyle,
                           obscureText: _obscurePassword,
                           textInputAction: TextInputAction.done,
                           validator: _validatePassword,

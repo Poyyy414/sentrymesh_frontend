@@ -3,26 +3,20 @@ import 'dart:async';
 import 'package:geolocator/geolocator.dart';
 
 class GeoPoint {
-  const GeoPoint({
-    required this.latitude,
-    required this.longitude,
-  });
+  const GeoPoint({required this.latitude, required this.longitude});
 
   final double latitude;
   final double longitude;
 
   Map<String, Object?> toJson() {
-    return {
-      'latitude': latitude,
-      'longitude': longitude,
-    };
+    return {'latitude': latitude, 'longitude': longitude};
   }
 }
 
 class LocationService {
   const LocationService();
 
-  Future<GeoPoint> currentLocation() async {
+  Future<void> _ensureLocationAccess() async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       throw const LocationServiceDisabledException();
@@ -40,6 +34,10 @@ class LocationService {
     if (permission == LocationPermission.deniedForever) {
       throw const LocationPermissionPermanentlyDeniedException();
     }
+  }
+
+  Future<GeoPoint> currentLocation() async {
+    await _ensureLocationAccess();
 
     try {
       final position = await Geolocator.getCurrentPosition(
@@ -84,6 +82,20 @@ class LocationService {
 
       rethrow;
     }
+  }
+
+  Stream<GeoPoint> watchLocation() async* {
+    await _ensureLocationAccess();
+
+    yield* Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.medium,
+        distanceFilter: 10,
+      ),
+    ).map(
+      (position) =>
+          GeoPoint(latitude: position.latitude, longitude: position.longitude),
+    );
   }
 
   Future<void> openLocationSettings() {

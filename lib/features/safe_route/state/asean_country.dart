@@ -78,6 +78,13 @@ class AseanCountry {
       zoom: 5.5,
     ),
     AseanCountry(
+      code: 'TL',
+      name: 'Timor-Leste',
+      longitude: 125.7275,
+      latitude: -8.8742,
+      zoom: 7.2,
+    ),
+    AseanCountry(
       code: 'VN',
       name: 'Vietnam',
       longitude: 108.2772,
