@@ -9,14 +9,15 @@ void main() {
 
     await tester.pumpWidget(SentryMeshApp(dependencies: dependencies));
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Email'),
+      find.byKey(const Key('login_email_field')),
       'responder123@gmail.com',
     );
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Password'),
+      find.byKey(const Key('login_password_field')),
       '12345678',
     );
-    await tester.tap(find.text('Sign In').last);
+    await tester.ensureVisible(find.byKey(const Key('sign_in_button')));
+    await tester.tap(find.byKey(const Key('sign_in_button')));
     await tester.pumpAndSettle();
 
     expect(find.text('SentryMesh Responder'), findsOneWidget);
@@ -44,14 +45,15 @@ void main() {
 
     await tester.pumpWidget(SentryMeshApp(dependencies: dependencies));
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Email'),
+      find.byKey(const Key('login_email_field')),
       'user123@gmail.com',
     );
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Password'),
+      find.byKey(const Key('login_password_field')),
       '12345678',
     );
-    await tester.tap(find.text('Sign In').last);
+    await tester.ensureVisible(find.byKey(const Key('sign_in_button')));
+    await tester.tap(find.byKey(const Key('sign_in_button')));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('SOS').last);
@@ -66,14 +68,15 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Email'),
+      find.byKey(const Key('login_email_field')),
       'responder123@gmail.com',
     );
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Password'),
+      find.byKey(const Key('login_password_field')),
       '12345678',
     );
-    await tester.tap(find.text('Sign In').last);
+    await tester.ensureVisible(find.byKey(const Key('sign_in_button')));
+    await tester.tap(find.byKey(const Key('sign_in_button')));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Incidents').last);

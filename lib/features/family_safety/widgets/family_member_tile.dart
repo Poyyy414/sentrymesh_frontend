@@ -20,36 +20,89 @@ class FamilyMemberTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        leading: CircleAvatar(
-          backgroundColor: color.withValues(alpha: 0.12),
-          child: Text(
-            initials,
-            style: const TextStyle(
-              color: Color(0xFF172437),
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ),
-        title: Text('$name ($relationship)'),
-        subtitle: Text(updated),
-        trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Text(
-            status,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: color,
-                  fontWeight: FontWeight.w700,
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(11),
+        side: const BorderSide(color: Color(0xFFDCE5EF)),
+      ),
+      child: InkWell(
+        onTap: _ignoreTap,
+        borderRadius: BorderRadius.circular(11),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 24,
+                backgroundColor: color.withValues(alpha: 0.13),
+                child: Text(
+                  initials,
+                  style: const TextStyle(
+                    color: Color(0xFF173A5F),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$name ($relationship)',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF102E58),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      updated.replaceFirst('Updated: ', 'Updated '),
+                      style: const TextStyle(
+                        color: Color(0xFF687B92),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(7),
+                ),
+                child: Text(
+                  status,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 9),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Color(0xFF4E6885),
+                size: 23,
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 }
+
+void _ignoreTap() {}
