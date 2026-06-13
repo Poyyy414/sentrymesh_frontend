@@ -1,18 +1,11 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
-import '../../app/assets.dart';
 import '../../app/router.dart';
 import '../../app/theme.dart';
 import '../../core/di/injection.dart';
-import '../../core/widgets/custom_button.dart';
 import '../../data/repositories/auth_repository.dart';
-
-const _authFieldTextStyle = TextStyle(
-  color: AppTheme.textPrimary,
-  fontSize: 14,
-  fontWeight: FontWeight.w600,
-  letterSpacing: 0,
-);
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -103,108 +96,114 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        bottom: false,
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: [
-            const _AuthMasthead(),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 20, 18, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    'Sign in',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Use a resident or responder account to continue.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 18),
-                  _AccessCard(
-                    title: 'Resident access',
-                    email: 'user123@gmail.com',
-                    icon: Icons.person,
-                    color: AppTheme.signalBlue,
-                    onTap: () => _fillDemoAccount('user123@gmail.com'),
-                  ),
-                  const SizedBox(height: 10),
-                  _AccessCard(
-                    title: 'Responder access',
-                    email: 'responder123@gmail.com',
-                    icon: Icons.health_and_safety,
-                    color: AppTheme.safeGreen,
-                    onTap: () => _fillDemoAccount('responder123@gmail.com'),
-                  ),
-                  const SizedBox(height: 20),
-                  Form(
-                    key: _formKey,
+      backgroundColor: const Color(0xFFF4F8FD),
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFF7FAFE), Color(0xFFEDF4FC), Color(0xFFF9FBFE)],
+          ),
+        ),
+        child: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isWide = constraints.maxWidth >= 960;
+              final horizontalPadding = isWide ? 32.0 : 14.0;
+              final card = isWide
+                  ? SizedBox(
+                      height: math.max(720, constraints.maxHeight - 112),
+                      child: _DesktopAuthCard(
+                        form: _buildSignInContent(compact: false),
+                      ),
+                    )
+                  : _MobileAuthCard(form: _buildSignInContent(compact: true));
+
+              return SingleChildScrollView(
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      horizontalPadding,
+                      isWide ? 28 : 14,
+                      horizontalPadding,
+                      14,
+                    ),
                     child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        TextFormField(
-                          controller: _emailController,
-                          style: _authFieldTextStyle,
-                          keyboardType: TextInputType.emailAddress,
-                          textInputAction: TextInputAction.next,
-                          validator: _validateEmail,
-                          decoration: const InputDecoration(
-                            labelText: 'Email',
-                            prefixIcon: Icon(Icons.alternate_email),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        TextFormField(
-                          controller: _passwordController,
-                          style: _authFieldTextStyle,
-                          obscureText: _obscurePassword,
-                          textInputAction: TextInputAction.done,
-                          validator: _validatePassword,
-                          onFieldSubmitted: (_) => _submit(),
-                          decoration: InputDecoration(
-                            labelText: 'Password',
-                            prefixIcon: const Icon(Icons.lock_outline),
-                            suffixIcon: IconButton(
-                              tooltip: _obscurePassword
-                                  ? 'Show password'
-                                  : 'Hide password',
-                              onPressed: () {
-                                setState(() {
-                                  _obscurePassword = !_obscurePassword;
-                                });
-                              },
-                              icon: Icon(
-                                _obscurePassword
-                                    ? Icons.visibility
-                                    : Icons.visibility_off,
-                              ),
-                            ),
-                          ),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 1320),
+                          child: card,
                         ),
                         const SizedBox(height: 18),
-                        SentryButton(
-                          label: 'Sign In',
-                          icon: Icons.login,
-                          isLoading: _isLoading,
-                          onPressed: _submit,
-                        ),
+                        const _AuthFooter(),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 14),
-                  OutlinedButton.icon(
-                    onPressed: _isLoading
-                        ? null
-                        : () => Navigator.of(
-                            context,
-                          ).pushNamed(AppRouter.register),
-                    icon: const Icon(Icons.person_add_alt_1),
-                    label: const Text('Create Account'),
-                  ),
-                ],
-              ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSignInContent({required bool compact}) {
+    return _SignInContent(
+      compact: compact,
+      formKey: _formKey,
+      emailController: _emailController,
+      passwordController: _passwordController,
+      obscurePassword: _obscurePassword,
+      isLoading: _isLoading,
+      validateEmail: _validateEmail,
+      validatePassword: _validatePassword,
+      onSubmit: _submit,
+      onTogglePassword: () {
+        setState(() {
+          _obscurePassword = !_obscurePassword;
+        });
+      },
+      onResidentTap: () => _fillDemoAccount('user123@gmail.com'),
+      onResponderTap: () => _fillDemoAccount('responder123@gmail.com'),
+      onCreateAccount: () =>
+          Navigator.of(context).pushNamed(AppRouter.register),
+    );
+  }
+}
+
+class _DesktopAuthCard extends StatelessWidget {
+  const _DesktopAuthCard({required this.form});
+
+  final Widget form;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x1A15365B),
+            blurRadius: 36,
+            offset: Offset(0, 16),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Expanded(flex: 37, child: _DesktopBrandPanel()),
+            Expanded(
+              flex: 63,
+              child: ColoredBox(color: Colors.white, child: form),
             ),
           ],
         ),
@@ -213,53 +212,241 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-class _AuthMasthead extends StatelessWidget {
-  const _AuthMasthead();
+class _MobileAuthCard extends StatelessWidget {
+  const _MobileAuthCard({required this.form});
+
+  final Widget form;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x1615365B),
+            blurRadius: 24,
+            offset: Offset(0, 10),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Column(
+          children: [
+            const _MobileBrandBanner(),
+            ColoredBox(color: Colors.white, child: form),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopBrandPanel extends StatelessWidget {
+  const _DesktopBrandPanel();
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Image.asset(
+          'assets/images/sentrymesh_security.png',
+          fit: BoxFit.cover,
+          alignment: Alignment.center,
+        ),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xB3072C59), Color(0x00072C59), Color(0xC9052447)],
+              stops: [0, 0.48, 1],
+            ),
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(36, 34, 36, 34),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [_BrandLockup(), Spacer(), _SecurityMessage()],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MobileBrandBanner extends StatelessWidget {
+  const _MobileBrandBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 205,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset(
+            'assets/images/sentrymesh_security.png',
+            fit: BoxFit.cover,
+            alignment: const Alignment(0, 0.1),
+          ),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Color(0xE8072C59),
+                  Color(0x32072C59),
+                  Color(0xA9052447),
+                ],
+              ),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 18, 20, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _BrandLockup(compact: true),
+                Spacer(),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.lock_outline,
+                      color: Color(0xFF8FD5FF),
+                      size: 17,
+                    ),
+                    SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        'Your security is our priority.',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BrandLockup extends StatelessWidget {
+  const _BrandLockup({this.compact = false});
+
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final iconSize = compact ? 44.0 : 58.0;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: iconSize,
+          height: iconSize,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(compact ? 12 : 15),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+          ),
+          child: Icon(
+            Icons.shield_rounded,
+            color: Colors.white,
+            size: compact ? 27 : 35,
+          ),
+        ),
+        SizedBox(width: compact ? 11 : 15),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'SentryMesh',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: compact ? 23 : 30,
+                  height: 1,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.7,
+                ),
+              ),
+              SizedBox(height: compact ? 4 : 7),
+              Text(
+                'Stay connected. Stay safe.',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.8),
+                  fontSize: compact ? 11 : 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SecurityMessage extends StatelessWidget {
+  const _SecurityMessage();
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 26, 20, 24),
-      decoration: const BoxDecoration(
-        color: AppTheme.deepNavy,
-        image: DecorationImage(
-          image: AssetImage(AppAssets.headerTopography),
-          fit: BoxFit.cover,
-          opacity: 0.28,
-        ),
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: const Color(0xFF174A7D).withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
       ),
-      child: Row(
+      child: const Row(
         children: [
-          Container(
-            width: 58,
-            height: 58,
-            decoration: BoxDecoration(
-              color: AppTheme.signalBlue,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Image.asset(AppAssets.appIcon, fit: BoxFit.cover),
-            ),
+          CircleAvatar(
+            radius: 21,
+            backgroundColor: Color(0xFF1E5C96),
+            child: Icon(Icons.lock_outline, color: Color(0xFFB9E2FF), size: 22),
           ),
-          const SizedBox(width: 14),
+          SizedBox(width: 13),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'SentryMesh',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  'Your security is our priority.',
+                  style: TextStyle(
                     color: Colors.white,
-                    fontSize: 26,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: 4),
                 Text(
-                  'Stay connected. Stay safe.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.white70,
-                    fontSize: 13,
+                  'SentryMesh protects what matters most.',
+                  style: TextStyle(
+                    color: Color(0xFFC9DCF0),
+                    fontSize: 11,
+                    height: 1.3,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ],
@@ -271,56 +458,526 @@ class _AuthMasthead extends StatelessWidget {
   }
 }
 
+class _SignInContent extends StatelessWidget {
+  const _SignInContent({
+    required this.compact,
+    required this.formKey,
+    required this.emailController,
+    required this.passwordController,
+    required this.obscurePassword,
+    required this.isLoading,
+    required this.validateEmail,
+    required this.validatePassword,
+    required this.onSubmit,
+    required this.onTogglePassword,
+    required this.onResidentTap,
+    required this.onResponderTap,
+    required this.onCreateAccount,
+  });
+
+  final bool compact;
+  final GlobalKey<FormState> formKey;
+  final TextEditingController emailController;
+  final TextEditingController passwordController;
+  final bool obscurePassword;
+  final bool isLoading;
+  final FormFieldValidator<String> validateEmail;
+  final FormFieldValidator<String> validatePassword;
+  final VoidCallback onSubmit;
+  final VoidCallback onTogglePassword;
+  final VoidCallback onResidentTap;
+  final VoidCallback onResponderTap;
+  final VoidCallback onCreateAccount;
+
+  @override
+  Widget build(BuildContext context) {
+    final horizontalPadding = compact ? 20.0 : 48.0;
+
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: horizontalPadding,
+        vertical: compact ? 26 : 32,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Welcome back',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  color: const Color(0xFF0A2D56),
+                  fontSize: compact ? 26 : 30,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              const SizedBox(height: 7),
+              Text(
+                'Sign in to continue to your account',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: const Color(0xFF667991),
+                  fontSize: compact ? 13 : 15,
+                ),
+              ),
+              SizedBox(height: compact ? 22 : 25),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final cardsSideBySide = constraints.maxWidth >= 560;
+                  final residentCard = _AccessCard(
+                    key: const Key('resident_access_card'),
+                    title: 'Resident access',
+                    email: 'user123@gmail.com',
+                    icon: Icons.person_rounded,
+                    color: AppTheme.signalBlue,
+                    horizontal: !cardsSideBySide,
+                    onTap: onResidentTap,
+                  );
+                  final responderCard = _AccessCard(
+                    key: const Key('responder_access_card'),
+                    title: 'Responder access',
+                    email: 'responder123@gmail.com',
+                    icon: Icons.health_and_safety_rounded,
+                    color: AppTheme.safeGreen,
+                    horizontal: !cardsSideBySide,
+                    onTap: onResponderTap,
+                  );
+
+                  if (!cardsSideBySide) {
+                    return Column(
+                      children: [
+                        residentCard,
+                        const SizedBox(height: 10),
+                        responderCard,
+                      ],
+                    );
+                  }
+
+                  return Row(
+                    children: [
+                      Expanded(child: residentCard),
+                      const SizedBox(width: 18),
+                      Expanded(child: responderCard),
+                    ],
+                  );
+                },
+              ),
+              SizedBox(height: compact ? 18 : 22),
+              const _LabeledDivider(label: 'or sign in with email'),
+              SizedBox(height: compact ? 18 : 20),
+              Form(
+                key: formKey,
+                child: Column(
+                  children: [
+                    TextFormField(
+                      key: const Key('login_email_field'),
+                      controller: emailController,
+                      keyboardType: TextInputType.emailAddress,
+                      textInputAction: TextInputAction.next,
+                      validator: validateEmail,
+                      decoration: _fieldDecoration(
+                        label: 'Email address',
+                        icon: Icons.mail_outline_rounded,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      key: const Key('login_password_field'),
+                      controller: passwordController,
+                      obscureText: obscurePassword,
+                      textInputAction: TextInputAction.done,
+                      validator: validatePassword,
+                      onFieldSubmitted: (_) => onSubmit(),
+                      decoration: _fieldDecoration(
+                        label: 'Password',
+                        icon: Icons.lock_outline_rounded,
+                        suffix: IconButton(
+                          tooltip: obscurePassword
+                              ? 'Show password'
+                              : 'Hide password',
+                          onPressed: onTogglePassword,
+                          icon: Icon(
+                            obscurePassword
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: compact ? 18 : 20),
+                    _SignInButton(isLoading: isLoading, onPressed: onSubmit),
+                  ],
+                ),
+              ),
+              SizedBox(height: compact ? 20 : 23),
+              const _LabeledDivider(label: 'or'),
+              SizedBox(height: compact ? 18 : 20),
+              SizedBox(
+                height: 52,
+                child: OutlinedButton.icon(
+                  key: const Key('create_account_button'),
+                  onPressed: isLoading ? null : onCreateAccount,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF075BBF),
+                    side: const BorderSide(
+                      color: Color(0xFFB8CDE5),
+                      width: 1.2,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  icon: const Icon(Icons.person_add_alt_1_rounded, size: 20),
+                  label: const Text('Create Account'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  InputDecoration _fieldDecoration({
+    required String label,
+    required IconData icon,
+    Widget? suffix,
+  }) {
+    const borderColor = Color(0xFFC9D8E8);
+
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon),
+      suffixIcon: suffix,
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
+      labelStyle: const TextStyle(
+        color: Color(0xFF687B92),
+        fontWeight: FontWeight.w500,
+      ),
+      prefixIconColor: const Color(0xFF71849A),
+      suffixIconColor: const Color(0xFF71849A),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(11),
+        borderSide: const BorderSide(color: borderColor),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(11),
+        borderSide: const BorderSide(color: borderColor),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(11),
+        borderSide: const BorderSide(color: AppTheme.signalBlue, width: 1.5),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(11),
+        borderSide: const BorderSide(color: AppTheme.dangerRed),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(11),
+        borderSide: const BorderSide(color: AppTheme.dangerRed, width: 1.5),
+      ),
+    );
+  }
+}
+
 class _AccessCard extends StatelessWidget {
   const _AccessCard({
     required this.title,
     required this.email,
     required this.icon,
     required this.color,
+    required this.horizontal,
     required this.onTap,
+    super.key,
   });
 
   final String title;
   final String email;
   final IconData icon;
   final Color color;
+  final bool horizontal;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
+    final content = horizontal
+        ? Row(
             children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(icon, color: color),
-              ),
-              const SizedBox(width: 12),
+              _AccessIcon(icon: icon, color: color, compact: true),
+              const SizedBox(width: 14),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title, style: Theme.of(context).textTheme.titleSmall),
-                    const SizedBox(height: 3),
-                    Text(email, style: Theme.of(context).textTheme.bodySmall),
-                  ],
+                child: _AccessText(
+                  title: title,
+                  email: email,
+                  color: color,
+                  centered: false,
                 ),
               ),
-              const Icon(Icons.arrow_forward_ios, size: 16),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: color.withValues(alpha: 0.75),
+              ),
             ],
+          )
+        : Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _AccessIcon(icon: icon, color: color),
+              const SizedBox(height: 13),
+              _AccessText(
+                title: title,
+                email: email,
+                color: color,
+                centered: true,
+              ),
+            ],
+          );
+
+    return Material(
+      color: color.withValues(alpha: 0.045),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(13),
+        side: BorderSide(color: color.withValues(alpha: 0.2)),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(13),
+        onTap: onTap,
+        child: SizedBox(
+          height: horizontal ? 88 : 142,
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: horizontal ? 15 : 12,
+              vertical: horizontal ? 12 : 14,
+            ),
+            child: content,
           ),
         ),
       ),
+    );
+  }
+}
+
+class _AccessIcon extends StatelessWidget {
+  const _AccessIcon({
+    required this.icon,
+    required this.color,
+    this.compact = false,
+  });
+
+  final IconData icon;
+  final Color color;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = compact ? 48.0 : 58.0;
+
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+        border: Border.all(color: color.withValues(alpha: 0.12)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x140F365F),
+            blurRadius: 10,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Icon(icon, color: color, size: compact ? 26 : 31),
+    );
+  }
+}
+
+class _AccessText extends StatelessWidget {
+  const _AccessText({
+    required this.title,
+    required this.email,
+    required this.color,
+    required this.centered,
+  });
+
+  final String title;
+  final String email;
+  final Color color;
+  final bool centered;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: centered
+          ? CrossAxisAlignment.center
+          : CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          textAlign: centered ? TextAlign.center : TextAlign.start,
+          style: TextStyle(
+            color: color == AppTheme.safeGreen
+                ? const Color(0xFF13563E)
+                : const Color(0xFF0A3873),
+            fontSize: 14,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          email,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: centered ? TextAlign.center : TextAlign.start,
+          style: TextStyle(
+            color: color,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LabeledDivider extends StatelessWidget {
+  const _LabeledDivider({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Expanded(child: Divider(color: Color(0xFFD4E0ED))),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF7A8CA1),
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+        const Expanded(child: Divider(color: Color(0xFFD4E0ED))),
+      ],
+    );
+  }
+}
+
+class _SignInButton extends StatelessWidget {
+  const _SignInButton({required this.isLoading, required this.onPressed});
+
+  final bool isLoading;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 54,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: isLoading
+              ? const [Color(0xFF8CA9C9), Color(0xFF7799BF)]
+              : const [Color(0xFF075CCB), Color(0xFF176ACD)],
+        ),
+        borderRadius: BorderRadius.circular(11),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x24105FB7),
+            blurRadius: 12,
+            offset: Offset(0, 5),
+          ),
+        ],
+      ),
+      child: ElevatedButton(
+        key: const Key('sign_in_button'),
+        onPressed: isLoading ? null : onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.transparent,
+          disabledBackgroundColor: Colors.transparent,
+          shadowColor: Colors.transparent,
+          foregroundColor: Colors.white,
+          disabledForegroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(11),
+          ),
+        ),
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 160),
+          child: isLoading
+              ? const SizedBox(
+                  key: ValueKey('loading'),
+                  width: 19,
+                  height: 19,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Row(
+                  key: ValueKey('label'),
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.login_rounded, size: 20),
+                    SizedBox(width: 10),
+                    Text(
+                      'Sign In',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AuthFooter extends StatelessWidget {
+  const _AuthFooter();
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      alignment: WrapAlignment.center,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        const Icon(Icons.shield_rounded, color: Color(0xFF8AA0B8), size: 22),
+        const Text(
+          'SentryMesh',
+          style: TextStyle(
+            color: Color(0xFF405775),
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const Text('|', style: TextStyle(color: Color(0xFF9BADC0))),
+        Text(
+          '© ${DateTime.now().year} All rights reserved.',
+          style: const TextStyle(
+            color: Color(0xFF74879D),
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
     );
   }
 }

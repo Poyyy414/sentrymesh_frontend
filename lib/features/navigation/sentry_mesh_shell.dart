@@ -26,10 +26,9 @@ class _SentryMeshShellState extends State<SentryMeshShell> {
       return;
     }
 
-    Navigator.of(context).pushNamedAndRemoveUntil(
-      AppRouter.login,
-      (_) => false,
-    );
+    Navigator.of(
+      context,
+    ).pushNamedAndRemoveUntil(AppRouter.login, (_) => false);
   }
 
   @override
@@ -52,10 +51,7 @@ class _SentryMeshShellState extends State<SentryMeshShell> {
     ];
 
     return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: screens,
-      ),
+      body: IndexedStack(index: _currentIndex, children: screens),
       bottomNavigationBar: SentryBottomNavBar(
         currentIndex: _currentIndex,
         onTap: (index) => setState(() => _currentIndex = index),
@@ -74,11 +70,15 @@ class _ResidentLogoutButton extends StatelessWidget {
     return Material(
       color: Colors.white,
       shape: const CircleBorder(),
-      elevation: 2,
+      elevation: 3,
       child: IconButton(
         tooltip: 'Logout',
         onPressed: onPressed,
-        icon: const Icon(Icons.logout, color: AppTheme.dangerRed),
+        icon: const Icon(
+          Icons.logout_rounded,
+          color: AppTheme.dangerRed,
+          size: 25,
+        ),
       ),
     );
   }

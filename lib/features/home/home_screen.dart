@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../app/assets.dart';
 import '../../app/theme.dart';
 import '../../shared/demo/demo_scenario.dart';
 
@@ -28,7 +27,7 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() => _distressSent = true);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Your emergency request is now visible to responders.'),
+          content: Text('Distress ping received by responder dashboard.'),
         ),
       );
     }
@@ -37,59 +36,54 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return ColoredBox(
-      color: AppTheme.surface,
+      color: const Color(0xFFF3F7FC),
       child: SafeArea(
         bottom: false,
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: [
-            const _HomeHeader(),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const _EmergencyStatusBanner(),
-                  const SizedBox(height: 12),
-                  _SosButton(onPressed: _openSosFlow),
-                  const SizedBox(height: 12),
-                  const _LocationCard(),
-                  const SizedBox(height: 12),
-                  _DisasterStatusCard(distressSent: _distressSent),
-                  const SizedBox(height: 18),
-                  const _FloodPredictionCard(),
-                  const SizedBox(height: 18),
-                  const _SectionHeader(
-                    title: 'Weather & Hazard Overview',
-                    subtitle: 'Updated 2 min ago',
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth >= 980;
+            final horizontalPadding = isWide ? 22.0 : 14.0;
+
+            return ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                _HomeHeader(isWide: isWide),
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding,
+                    isWide ? 14 : 12,
+                    horizontalPadding,
+                    24,
                   ),
-                  const SizedBox(height: 10),
-                  const _HazardMetrics(),
-                  const SizedBox(height: 18),
-                  const _SectionHeader(
-                    title: 'Nearby Alerts',
-                    action: 'View all',
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1480),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _EmergencyActions(
+                            isWide: isWide,
+                            onSosPressed: _openSosFlow,
+                          ),
+                          const SizedBox(height: 14),
+                          _LocationAndStatus(
+                            isWide: isWide,
+                            distressSent: _distressSent,
+                          ),
+                          const SizedBox(height: 14),
+                          const _FloodForecastCard(),
+                          const SizedBox(height: 14),
+                          _InformationGrid(isWide: isWide),
+                          const SizedBox(height: 14),
+                          _QuickActions(onSosPressed: _openSosFlow),
+                        ],
+                      ),
+                    ),
                   ),
-                  const SizedBox(height: 10),
-                  const _AlertTile(
-                    icon: Icons.flood,
-                    title: 'Flood Warning',
-                    subtitle: 'San Felipe - 12 people affected',
-                    label: 'High',
-                    color: AppTheme.dangerRed,
-                  ),
-                  const SizedBox(height: 8),
-                  const _AlertTile(
-                    icon: Icons.warning_amber_rounded,
-                    title: 'Landslide Watch',
-                    subtitle: 'Concepcion Pequena - avoid steep roads',
-                    label: 'Medium',
-                    color: AppTheme.warningAmber,
-                  ),
-                ],
-              ),
-            ),
-          ],
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -97,94 +91,96 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _HomeHeader extends StatelessWidget {
-  const _HomeHeader();
+  const _HomeHeader({required this.isWide});
+
+  final bool isWide;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [AppTheme.deepNavy, AppTheme.navy],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-        ),
-        image: DecorationImage(
-          image: AssetImage(AppAssets.headerTopography),
-          fit: BoxFit.cover,
-          opacity: 0.24,
+          colors: [Color(0xFF031E49), Color(0xFF073C78), Color(0xFF06295A)],
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.asset(AppAssets.appIcon, fit: BoxFit.cover),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          const Positioned.fill(child: _HeaderBackdrop()),
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              isWide ? 24 : 16,
+              isWide ? 16 : 14,
+              isWide ? 24 : 16,
+              isWide ? 20 : 18,
+            ),
+            child: Column(
+              children: [
+                Row(
                   children: [
-                    Text(
-                      'SentryMesh',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.titleLarge?.copyWith(color: Colors.white),
+                    const _HeaderBrand(),
+                    const Spacer(),
+                    if (isWide) ...[
+                      const _HeaderIcon(
+                        icon: Icons.notifications_none_rounded,
+                        badge: '2',
+                      ),
+                      const SizedBox(width: 12),
+                      const _HeaderUser(),
+                      const SizedBox(width: 12),
+                    ],
+                    if (isWide) const _LiveBadge(),
+                  ],
+                ),
+                SizedBox(height: isWide ? 22 : 18),
+                Row(
+                  children: [
+                    const CircleAvatar(
+                      radius: 27,
+                      backgroundColor: Colors.white,
+                      child: Text(
+                        'JP',
+                        style: TextStyle(
+                          color: AppTheme.signalBlue,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
                     ),
-                    Text(
-                      'Resident Mode',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.labelMedium?.copyWith(color: Colors.white70),
+                    const SizedBox(width: 13),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Welcome, John Paul!',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: isWide ? 21 : 18,
+                              height: 1.1,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -0.3,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            'Stay informed. Stay safe.',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.78),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
-              ),
-              const _RoleBadge(label: 'Live'),
-            ],
-          ),
-          const SizedBox(height: 18),
-          Row(
-            children: [
-              const CircleAvatar(
-                radius: 28,
-                backgroundColor: Colors.white,
-                backgroundImage: AssetImage(AppAssets.avatarJohnPaul),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Welcome, John Paul',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.titleMedium?.copyWith(color: Colors.white),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      'Flood watch is active nearby.',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodySmall?.copyWith(color: Colors.white70),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -192,68 +188,719 @@ class _HomeHeader extends StatelessWidget {
   }
 }
 
-class _EmergencyStatusBanner extends StatelessWidget {
-  const _EmergencyStatusBanner();
+class _HeaderBrand extends StatelessWidget {
+  const _HeaderBrand();
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      color: AppTheme.deepNavy,
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: AppTheme.safeGreen.withValues(alpha: 0.16),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(Icons.hub, color: AppTheme.safeGreen),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 46,
+          height: 46,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF8CB7FF), Color(0xFF316FF4)],
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Emergency Help Ready',
-                    style: Theme.of(
-                      context,
-                    ).textTheme.titleSmall?.copyWith(color: Colors.white),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    'You can send an SOS even when mobile signal is weak.',
-                    style: Theme.of(
-                      context,
-                    ).textTheme.labelMedium?.copyWith(color: Colors.white70),
-                  ),
-                ],
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x442D70EF),
+                blurRadius: 12,
+                offset: Offset(0, 5),
+              ),
+            ],
+          ),
+          child: const Icon(
+            Icons.shield_rounded,
+            color: Colors.white,
+            size: 29,
+          ),
+        ),
+        const SizedBox(width: 12),
+        const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'SentryMesh',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 21,
+                height: 1,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -0.4,
+              ),
+            ),
+            SizedBox(height: 4),
+            Text(
+              'Resident Mode',
+              style: TextStyle(
+                color: Color(0xFFC5D6EC),
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ],
         ),
+      ],
+    );
+  }
+}
+
+class _HeaderIcon extends StatelessWidget {
+  const _HeaderIcon({required this.icon, this.badge});
+
+  final IconData icon;
+  final String? badge;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.09),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, color: Colors.white, size: 23),
+        ),
+        if (badge != null)
+          Positioned(
+            top: -2,
+            right: -2,
+            child: Container(
+              width: 18,
+              height: 18,
+              alignment: Alignment.center,
+              decoration: const BoxDecoration(
+                color: AppTheme.dangerRed,
+                shape: BoxShape.circle,
+              ),
+              child: Text(
+                badge!,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _HeaderUser extends StatelessWidget {
+  const _HeaderUser();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.11),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.person_rounded, color: Colors.white),
+        ),
+        const SizedBox(width: 9),
+        const Text(
+          'John Paul',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(width: 7),
+        const Icon(
+          Icons.keyboard_arrow_down_rounded,
+          color: Colors.white,
+          size: 20,
+        ),
+      ],
+    );
+  }
+}
+
+class _LiveBadge extends StatelessWidget {
+  const _LiveBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF008E73).withValues(alpha: 0.48),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircleAvatar(radius: 4, backgroundColor: Color(0xFF16E29A)),
+          SizedBox(width: 7),
+          Text(
+            'Demo Live',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _LocationCard extends StatelessWidget {
-  const _LocationCard();
+class _HeaderBackdrop extends StatelessWidget {
+  const _HeaderBackdrop();
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        leading: const Icon(Icons.location_on, color: AppTheme.textMuted),
-        title: const Text('Naga City, Camarines Sur'),
-        subtitle: const Text('Philippines'),
-        trailing: IconButton(
-          tooltip: 'Locate',
-          onPressed: () {},
-          icon: const Icon(Icons.my_location),
+    return CustomPaint(painter: _HeaderBackdropPainter());
+  }
+}
+
+class _HeaderBackdropPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final hillPaint = Paint()..color = const Color(0xFF0D4A82);
+    final distantPaint = Paint()..color = const Color(0xFF0A3C70);
+
+    final distant = Path()
+      ..moveTo(size.width * 0.55, size.height)
+      ..lineTo(size.width * 0.69, size.height * 0.48)
+      ..lineTo(size.width * 0.76, size.height * 0.68)
+      ..lineTo(size.width * 0.84, size.height * 0.38)
+      ..lineTo(size.width, size.height * 0.58)
+      ..lineTo(size.width, size.height)
+      ..close();
+    canvas.drawPath(distant, distantPaint);
+
+    final hill = Path()
+      ..moveTo(size.width * 0.48, size.height)
+      ..quadraticBezierTo(
+        size.width * 0.72,
+        size.height * 0.42,
+        size.width,
+        size.height * 0.82,
+      )
+      ..lineTo(size.width, size.height)
+      ..close();
+    canvas.drawPath(hill, hillPaint);
+
+    final buildingPaint = Paint()..color = const Color(0xFF0A3565);
+    for (var index = 0; index < 8; index++) {
+      final width = 18.0 + (index % 3) * 8;
+      final height = 32.0 + (index % 4) * 13;
+      final left = size.width * 0.62 + index * 44;
+      canvas.drawRect(
+        Rect.fromLTWH(left, size.height - height, width, height),
+        buildingPaint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _EmergencyActions extends StatelessWidget {
+  const _EmergencyActions({required this.isWide, required this.onSosPressed});
+
+  final bool isWide;
+  final VoidCallback onSosPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final backup = const _BackupCard();
+    final sos = _EmergencySosCard(onPressed: onSosPressed);
+    final family = const _FamilyCheckInCard();
+
+    if (!isWide) {
+      return Column(
+        children: [
+          backup,
+          const SizedBox(height: 10),
+          sos,
+          const SizedBox(height: 10),
+          family,
+        ],
+      );
+    }
+
+    return SizedBox(
+      height: 112,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(flex: 10, child: backup),
+          const SizedBox(width: 14),
+          Expanded(flex: 17, child: sos),
+          const SizedBox(width: 14),
+          Expanded(flex: 10, child: family),
+        ],
+      ),
+    );
+  }
+}
+
+class _BackupCard extends StatelessWidget {
+  const _BackupCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return _ActionCardShell(
+      key: const Key('emergency_backup_card'),
+      gradient: const [Color(0xFF06295A), Color(0xFF031D44)],
+      child: Row(
+        children: [
+          const _ActionIcon(
+            icon: Icons.hub_rounded,
+            foreground: Color(0xFF12D88D),
+            background: Color(0xFF075A55),
+          ),
+          const SizedBox(width: 14),
+          const Expanded(
+            child: _ActionText(
+              title: 'Emergency Backup Ready',
+              subtitle:
+                  'You can still send an emergency request if mobile signal is weak.',
+            ),
+          ),
+          Container(
+            width: 31,
+            height: 31,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.08),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.wifi_tethering_rounded,
+              color: Color(0xFF53E7B0),
+              size: 18,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmergencySosCard extends StatelessWidget {
+  const _EmergencySosCard({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ActionCardShell(
+      key: const Key('home_sos_card'),
+      gradient: const [Color(0xFFEF2736), Color(0xFFCC1023)],
+      onTap: onPressed,
+      child: Row(
+        children: [
+          Container(
+            width: 64,
+            height: 64,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2.5),
+            ),
+            child: const Text(
+              'SOS',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 19,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          const SizedBox(width: 18),
+          const Expanded(
+            child: _ActionText(
+              title: 'Emergency SOS',
+              subtitle: 'Send your emergency location to responders.',
+              titleSize: 20,
+            ),
+          ),
+          const _ActionChevron(),
+        ],
+      ),
+    );
+  }
+}
+
+class _FamilyCheckInCard extends StatelessWidget {
+  const _FamilyCheckInCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return const _ActionCardShell(
+      key: Key('family_check_in_card'),
+      gradient: [Color(0xFF0B4FB2), Color(0xFF073781)],
+      child: Row(
+        children: [
+          _ActionIcon(
+            icon: Icons.groups_rounded,
+            foreground: Colors.white,
+            background: Color(0xFF1767D3),
+          ),
+          SizedBox(width: 14),
+          Expanded(
+            child: _ActionText(
+              title: 'Family Check-in',
+              subtitle: 'Let your family know you are safe.',
+            ),
+          ),
+          _ActionChevron(),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActionCardShell extends StatelessWidget {
+  const _ActionCardShell({
+    required this.gradient,
+    required this.child,
+    this.onTap,
+    super.key,
+  });
+
+  final List<Color> gradient;
+  final Widget child;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final card = Container(
+      constraints: const BoxConstraints(minHeight: 106),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 17),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: gradient,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x1C15365B),
+            blurRadius: 12,
+            offset: Offset(0, 5),
+          ),
+        ],
+      ),
+      child: child,
+    );
+
+    if (onTap == null) {
+      return card;
+    }
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: card,
+      ),
+    );
+  }
+}
+
+class _ActionIcon extends StatelessWidget {
+  const _ActionIcon({
+    required this.icon,
+    required this.foreground,
+    required this.background,
+  });
+
+  final IconData icon;
+  final Color foreground;
+  final Color background;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 54,
+      height: 54,
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(13),
+      ),
+      child: Icon(icon, color: foreground, size: 30),
+    );
+  }
+}
+
+class _ActionText extends StatelessWidget {
+  const _ActionText({
+    required this.title,
+    required this.subtitle,
+    this.titleSize = 14,
+  });
+
+  final String title;
+  final String subtitle;
+  final double titleSize;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: titleSize,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          subtitle,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Color(0xFFE3ECF7),
+            fontSize: 11,
+            height: 1.35,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ActionChevron extends StatelessWidget {
+  const _ActionChevron();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 31,
+      height: 31,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.1),
+        shape: BoxShape.circle,
+      ),
+      child: const Icon(
+        Icons.chevron_right_rounded,
+        color: Colors.white,
+        size: 21,
+      ),
+    );
+  }
+}
+
+class _LocationAndStatus extends StatelessWidget {
+  const _LocationAndStatus({required this.isWide, required this.distressSent});
+
+  final bool isWide;
+  final bool distressSent;
+
+  @override
+  Widget build(BuildContext context) {
+    final location = const _LocationMapCard();
+    final status = _DisasterStatusCard(distressSent: distressSent);
+
+    if (!isWide) {
+      return Column(
+        children: [
+          SizedBox(height: 170, child: location),
+          const SizedBox(height: 12),
+          status,
+        ],
+      );
+    }
+
+    return SizedBox(
+      height: 170,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(flex: 34, child: location),
+          const SizedBox(width: 14),
+          Expanded(flex: 66, child: status),
+        ],
+      ),
+    );
+  }
+}
+
+class _LocationMapCard extends StatelessWidget {
+  const _LocationMapCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return _DashboardCard(
+      key: const Key('resident_location_card'),
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 12, 11),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF0F5FE),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.location_on_rounded,
+                    color: Color(0xFF285489),
+                  ),
+                ),
+                const SizedBox(width: 11),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Naga City, Camarines Sur',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Color(0xFF102E58),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        'Philippines',
+                        style: TextStyle(
+                          color: Color(0xFF71849A),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Locate',
+                  onPressed: () {},
+                  icon: const Icon(
+                    Icons.my_location_rounded,
+                    color: Color(0xFF285489),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(12)),
+              child: _MapPreview(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MapPreview extends StatelessWidget {
+  const _MapPreview();
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _MapPreviewPainter(),
+      child: const Center(child: _CurrentLocationMarker()),
+    );
+  }
+}
+
+class _MapPreviewPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = const Color(0xFFE9F0F7),
+    );
+
+    final blockPaint = Paint()..color = Colors.white.withValues(alpha: 0.9);
+    for (var row = 0; row < 4; row++) {
+      for (var column = 0; column < 8; column++) {
+        final left = column * (size.width / 7.2) - (row.isOdd ? 18 : 0);
+        final top = row * 24.0 + 6;
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTWH(left, top, 28 + (column % 3) * 7, 14),
+            const Radius.circular(3),
+          ),
+          blockPaint,
+        );
+      }
+    }
+
+    final roadPaint = Paint()
+      ..color = const Color(0xFFC8D5E4)
+      ..strokeWidth = 4
+      ..style = PaintingStyle.stroke;
+    for (var index = 0; index < 5; index++) {
+      final path = Path()
+        ..moveTo(-20, 16 + index * 22)
+        ..quadraticBezierTo(
+          size.width * 0.45,
+          index.isEven ? 5 + index * 22 : 36 + index * 18,
+          size.width + 20,
+          12 + index * 20,
+        );
+      canvas.drawPath(path, roadPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _CurrentLocationMarker extends StatelessWidget {
+  const _CurrentLocationMarker();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 29,
+      height: 29,
+      decoration: BoxDecoration(
+        color: AppTheme.signalBlue.withValues(alpha: 0.18),
+        shape: BoxShape.circle,
+      ),
+      alignment: Alignment.center,
+      child: Container(
+        width: 15,
+        height: 15,
+        decoration: BoxDecoration(
+          color: AppTheme.signalBlue,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+          boxShadow: const [BoxShadow(color: Color(0x44245FB8), blurRadius: 6)],
         ),
       ),
     );
@@ -267,54 +914,115 @@ class _DisasterStatusCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      color: distressSent
-          ? AppTheme.warningAmber.withValues(alpha: 0.08)
-          : AppTheme.safeGreen.withValues(alpha: 0.08),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
+    final accent = distressSent ? AppTheme.warningAmber : AppTheme.safeGreen;
+    final title = distressSent ? 'DISTRESS PING SENT' : 'DISASTER STATUS';
+    final status = distressSent ? 'Responder notified' : 'SAFE';
+    final detail = distressSent
+        ? 'Your location and emergency request were sent to responders.'
+        : 'No significant threats at your exact location.';
+
+    return _DashboardCard(
+      key: const Key('disaster_status_card'),
+      padding: EdgeInsets.zero,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 154),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: distressSent
+                ? const [Color(0xFFFFFBF1), Color(0xFFFFF1D3)]
+                : const [Color(0xFFF8FFFB), Color(0xFFDDF6E7)],
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Stack(
           children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: distressSent
-                    ? AppTheme.warningAmber
-                    : AppTheme.safeGreen,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                distressSent ? Icons.outgoing_mail : Icons.verified_user,
-                color: Colors.white,
-                size: 30,
+            Positioned.fill(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: CustomPaint(
+                  painter: _StatusLandscapePainter(color: accent),
+                ),
               ),
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    distressSent ? 'REQUEST SENT' : 'YOUR AREA',
-                    style: Theme.of(context).textTheme.labelMedium,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    distressSent ? 'Responder notified' : 'SAFE',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      color: distressSent
-                          ? AppTheme.warningAmber
-                          : AppTheme.safeGreen,
-                    ),
-                  ),
-                  Text(
-                    distressSent
-                        ? 'Your location and emergency request were sent to responders.'
-                        : 'No significant threats at your exact location.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
+            Padding(
+              padding: const EdgeInsets.all(18),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final showRiskPanel = constraints.maxWidth >= 520;
+                  return Row(
+                    children: [
+                      Container(
+                        width: 72,
+                        height: 72,
+                        decoration: BoxDecoration(
+                          color: accent,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: accent.withValues(alpha: 0.25),
+                              blurRadius: 16,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          distressSent
+                              ? Icons.outgoing_mail
+                              : Icons.verified_user_rounded,
+                          color: Colors.white,
+                          size: 38,
+                        ),
+                      ),
+                      const SizedBox(width: 18),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              style: const TextStyle(
+                                color: Color(0xFF60738A),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              status,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: accent,
+                                fontSize: 27,
+                                height: 1.05,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            const SizedBox(height: 5),
+                            Text(
+                              detail,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFF647890),
+                                fontSize: 11,
+                                height: 1.3,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (showRiskPanel) ...[
+                        const SizedBox(width: 18),
+                        _RiskPanel(distressSent: distressSent),
+                      ],
+                    ],
+                  );
+                },
               ),
             ),
           ],
@@ -324,85 +1032,939 @@ class _DisasterStatusCard extends StatelessWidget {
   }
 }
 
-class _SosButton extends StatelessWidget {
-  const _SosButton({required this.onPressed});
+class _RiskPanel extends StatelessWidget {
+  const _RiskPanel({required this.distressSent});
 
-  final VoidCallback onPressed;
+  final bool distressSent;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
-      child: Ink(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
-          gradient: const LinearGradient(
-            colors: [Color(0xFFE44950), AppTheme.dangerRed],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: AppTheme.dangerRed.withValues(alpha: 0.24),
-              blurRadius: 18,
-              offset: const Offset(0, 8),
+    final accent = distressSent ? AppTheme.warningAmber : AppTheme.safeGreen;
+
+    return Container(
+      width: 176,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.84),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(color: Colors.white),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Risk Score',
+            style: TextStyle(
+              color: Color(0xFF60738A),
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
             ),
-          ],
-        ),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: onPressed,
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Row(
-              children: [
-                Container(
-                  width: 70,
-                  height: 70,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 3),
-                  ),
-                  alignment: Alignment.center,
-                  child: const Text(
-                    'SOS',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            distressSent ? '48 / 100' : '12 / 100',
+            style: TextStyle(
+              color: accent,
+              fontSize: 17,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Divider(color: Color(0xFFDDE7EF)),
+          ),
+          const Text(
+            'Last Updated',
+            style: TextStyle(
+              color: Color(0xFF60738A),
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 2),
+          const Text(
+            '2 min ago',
+            style: TextStyle(
+              color: Color(0xFF16365F),
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusLandscapePainter extends CustomPainter {
+  const _StatusLandscapePainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color.withValues(alpha: 0.1);
+    final hill = Path()
+      ..moveTo(size.width * 0.42, size.height)
+      ..quadraticBezierTo(
+        size.width * 0.66,
+        size.height * 0.22,
+        size.width,
+        size.height * 0.58,
+      )
+      ..lineTo(size.width, size.height)
+      ..close();
+    canvas.drawPath(hill, paint);
+
+    final treePaint = Paint()..color = color.withValues(alpha: 0.17);
+    for (var index = 0; index < 5; index++) {
+      final left = size.width * 0.67 + index * 28;
+      final top = size.height * 0.48 - (index % 2) * 12;
+      canvas.drawCircle(Offset(left, top), 10, treePaint);
+      canvas.drawRect(Rect.fromLTWH(left - 2, top + 8, 4, 22), treePaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _StatusLandscapePainter oldDelegate) {
+    return oldDelegate.color != color;
+  }
+}
+
+class _FloodForecastCard extends StatelessWidget {
+  const _FloodForecastCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return _DashboardCard(
+      key: const Key('flood_forecast_card'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const _SectionIcon(
+                icon: Icons.auto_graph_rounded,
+                color: AppTheme.signalBlue,
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'AI Flood Forecast',
+                      style: TextStyle(
+                        color: Color(0xFF102E58),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Plain-language warning for nearby barangays',
+                      style: TextStyle(
+                        color: Color(0xFF71849A),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF3F7FE),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFD5E1F2)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'View details',
+                      style: TextStyle(
+                        color: AppTheme.signalBlue,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    SizedBox(width: 6),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      color: AppTheme.signalBlue,
+                      size: 17,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final horizontal = constraints.maxWidth >= 720;
+              const metrics = [
+                _ForecastMetric(
+                  icon: Icons.schedule_rounded,
+                  color: AppTheme.warningAmber,
+                  title: 'Arrival time',
+                  value: 'San Felipe: about 45 min',
+                  detail: 'Estimated arrival of flooding',
+                ),
+                _ForecastMetric(
+                  icon: Icons.height_rounded,
+                  color: AppTheme.signalBlue,
+                  title: 'Expected peak level',
+                  value: 'Up to 1.4 m in low areas',
+                  detail: 'Possible flooding in low-lying areas',
+                ),
+                _ForecastMetric(
+                  icon: Icons.flash_on_rounded,
+                  color: AppTheme.dangerRed,
+                  title: 'Early warning',
+                  value: 'Flash flood risk in 30-60 min',
+                  detail: 'Monitor updates and prepare',
+                ),
+              ];
+
+              if (!horizontal) {
+                return Column(
+                  children: [
+                    metrics[0],
+                    const SizedBox(height: 14),
+                    const Divider(color: Color(0xFFE0E8F1)),
+                    const SizedBox(height: 14),
+                    metrics[1],
+                    const SizedBox(height: 14),
+                    const Divider(color: Color(0xFFE0E8F1)),
+                    const SizedBox(height: 14),
+                    metrics[2],
+                  ],
+                );
+              }
+
+              return Row(
+                children: [
+                  Expanded(child: metrics[0]),
+                  const _VerticalDivider(),
+                  Expanded(child: metrics[1]),
+                  const _VerticalDivider(),
+                  Expanded(child: metrics[2]),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ForecastMetric extends StatelessWidget {
+  const _ForecastMetric({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.value,
+    required this.detail,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String value;
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 50,
+          height: 50,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child: Icon(icon, color: color, size: 27),
+        ),
+        const SizedBox(width: 13),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Color(0xFF60738A),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF102E58),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                detail,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF71849A),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _VerticalDivider extends StatelessWidget {
+  const _VerticalDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 1,
+      height: 58,
+      margin: const EdgeInsets.symmetric(horizontal: 18),
+      color: const Color(0xFFDDE6F0),
+    );
+  }
+}
+
+class _InformationGrid extends StatelessWidget {
+  const _InformationGrid({required this.isWide});
+
+  final bool isWide;
+
+  @override
+  Widget build(BuildContext context) {
+    const weather = _WeatherHazardCard();
+    const alerts = _NearbyAlertsCard();
+
+    if (!isWide) {
+      return const Column(children: [weather, SizedBox(height: 12), alerts]);
+    }
+
+    return const Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(flex: 6, child: weather),
+        SizedBox(width: 14),
+        Expanded(flex: 5, child: alerts),
+      ],
+    );
+  }
+}
+
+class _WeatherHazardCard extends StatelessWidget {
+  const _WeatherHazardCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return const _DashboardCard(
+      key: Key('weather_hazard_card'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _CardSectionHeading(
+            title: 'Weather & Hazard Overview',
+            subtitle: 'Updated 2 min ago',
+          ),
+          SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _WeatherMetric(
+                  icon: Icons.water_drop_rounded,
+                  label: 'Flood Risk',
+                  value: 'Low',
+                  detail: 'Minimal flood risk',
+                  color: AppTheme.safeGreen,
+                ),
+              ),
+              SizedBox(width: 10),
+              Expanded(
+                child: _WeatherMetric(
+                  icon: Icons.cloudy_snowing,
+                  label: 'Rainfall',
+                  value: '1.2 mm/h',
+                  detail: 'Light rain',
+                  color: AppTheme.signalBlue,
+                ),
+              ),
+              SizedBox(width: 10),
+              Expanded(
+                child: _WeatherMetric(
+                  icon: Icons.thermostat_rounded,
+                  label: 'Temp',
+                  value: '28 C',
+                  detail: 'Feels like 31 C',
+                  color: AppTheme.dangerRed,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WeatherMetric extends StatelessWidget {
+  const _WeatherMetric({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.detail,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final String detail;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 130,
+      padding: const EdgeInsets.fromLTRB(11, 10, 11, 0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: const Color(0xFFE1E9F2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Icon(icon, color: color, size: 22),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF60738A),
+                        fontSize: 9,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 7),
+          Text(
+            detail,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF71849A),
+              fontSize: 9,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const Spacer(),
+          SizedBox(
+            height: 30,
+            child: CustomPaint(
+              painter: _SparklinePainter(color: color),
+              size: const Size(double.infinity, 30),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SparklinePainter extends CustomPainter {
+  const _SparklinePainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final fill = Path()
+      ..moveTo(0, size.height * 0.35)
+      ..lineTo(size.width * 0.12, size.height * 0.48)
+      ..lineTo(size.width * 0.24, size.height * 0.3)
+      ..lineTo(size.width * 0.4, size.height * 0.5)
+      ..lineTo(size.width * 0.56, size.height * 0.42)
+      ..lineTo(size.width * 0.72, size.height * 0.64)
+      ..lineTo(size.width, size.height * 0.58)
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+    canvas.drawPath(fill, Paint()..color = color.withValues(alpha: 0.07));
+
+    final line = Path()
+      ..moveTo(0, size.height * 0.35)
+      ..lineTo(size.width * 0.12, size.height * 0.48)
+      ..lineTo(size.width * 0.24, size.height * 0.3)
+      ..lineTo(size.width * 0.4, size.height * 0.5)
+      ..lineTo(size.width * 0.56, size.height * 0.42)
+      ..lineTo(size.width * 0.72, size.height * 0.64)
+      ..lineTo(size.width, size.height * 0.58);
+    canvas.drawPath(
+      line,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _SparklinePainter oldDelegate) {
+    return oldDelegate.color != color;
+  }
+}
+
+class _NearbyAlertsCard extends StatelessWidget {
+  const _NearbyAlertsCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return const _DashboardCard(
+      key: Key('nearby_alerts_card'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _CardSectionHeading(title: 'Nearby Alerts', action: 'View all'),
+          SizedBox(height: 12),
+          _AlertRow(
+            icon: Icons.flood_rounded,
+            title: 'Flood Warning',
+            subtitle: 'San Felipe - 12 people affected',
+            label: 'High',
+            color: AppTheme.dangerRed,
+          ),
+          SizedBox(height: 8),
+          _AlertRow(
+            icon: Icons.warning_amber_rounded,
+            title: 'Landslide Watch',
+            subtitle: 'Concepcion Pequena - sensor confidence 87%',
+            label: 'Medium',
+            color: AppTheme.warningAmber,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AlertRow extends StatelessWidget {
+  const _AlertRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.label,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(9),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.045),
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: color.withValues(alpha: 0.12)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(icon, color: color, size: 22),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Color(0xFF102E58),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Emergency SOS',
-                        style: Theme.of(
-                          context,
-                        ).textTheme.titleLarge?.copyWith(color: Colors.white),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Send your location and request help now.',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.white.withValues(alpha: 0.88),
-                        ),
-                      ),
-                    ],
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF71849A),
+                    fontSize: 9,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
-                const Icon(Icons.chevron_right, color: Colors.white),
               ],
             ),
           ),
-        ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          const Icon(
+            Icons.chevron_right_rounded,
+            color: Color(0xFF71849A),
+            size: 19,
+          ),
+        ],
       ),
+    );
+  }
+}
+
+class _QuickActions extends StatelessWidget {
+  const _QuickActions({required this.onSosPressed});
+
+  final VoidCallback onSosPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return _DashboardCard(
+      key: const Key('quick_actions_card'),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final wide = constraints.maxWidth >= 850;
+          final actions = [
+            _QuickActionTile(
+              key: const Key('quick_sos_action'),
+              icon: Icons.sos_rounded,
+              title: 'Emergency SOS',
+              subtitle: 'Get immediate help',
+              color: AppTheme.dangerRed,
+              onTap: onSosPressed,
+            ),
+            const _QuickActionTile(
+              icon: Icons.call_rounded,
+              title: 'Emergency Hotline',
+              subtitle: 'Call responders',
+              color: AppTheme.safeGreen,
+            ),
+            const _QuickActionTile(
+              icon: Icons.groups_rounded,
+              title: 'Family Check-in',
+              subtitle: 'Check on your family',
+              color: AppTheme.signalBlue,
+            ),
+            const _QuickActionTile(
+              icon: Icons.flag_rounded,
+              title: 'Report Incident',
+              subtitle: 'Report a hazard',
+              color: AppTheme.violet,
+            ),
+          ];
+
+          if (wide) {
+            return Row(
+              children: [
+                const SizedBox(
+                  width: 150,
+                  child: Text(
+                    'Quick Actions',
+                    style: TextStyle(
+                      color: Color(0xFF102E58),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                for (var index = 0; index < actions.length; index++) ...[
+                  Expanded(child: actions[index]),
+                  if (index != actions.length - 1) const SizedBox(width: 10),
+                ],
+              ],
+            );
+          }
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Quick Actions',
+                style: TextStyle(
+                  color: Color(0xFF102E58),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 10),
+              for (var index = 0; index < actions.length; index++) ...[
+                actions[index],
+                if (index != actions.length - 1) const SizedBox(height: 8),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _QuickActionTile extends StatelessWidget {
+  const _QuickActionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.color,
+    this.onTap,
+    super.key,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final child = Container(
+      constraints: const BoxConstraints(minHeight: 62),
+      padding: const EdgeInsets.all(9),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.045),
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: color.withValues(alpha: 0.12)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            child: Icon(icon, color: Colors.white, size: 22),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF102E58),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF71849A),
+                    fontSize: 8,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Icon(
+            Icons.chevron_right_rounded,
+            color: Color(0xFF315C92),
+            size: 18,
+          ),
+        ],
+      ),
+    );
+
+    if (onTap == null) {
+      return child;
+    }
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(9),
+        onTap: onTap,
+        child: child,
+      ),
+    );
+  }
+}
+
+class _DashboardCard extends StatelessWidget {
+  const _DashboardCard({
+    required this.child,
+    this.padding = const EdgeInsets.all(16),
+    super.key,
+  });
+
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE0E8F1)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x1015365B),
+            blurRadius: 10,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+}
+
+class _SectionIcon extends StatelessWidget {
+  const _SectionIcon({required this.icon, required this.color});
+
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(icon, color: color, size: 23),
+    );
+  }
+}
+
+class _CardSectionHeading extends StatelessWidget {
+  const _CardSectionHeading({required this.title, this.subtitle, this.action});
+
+  final String title;
+  final String? subtitle;
+  final String? action;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Color(0xFF102E58),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              if (subtitle != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  subtitle!,
+                  style: const TextStyle(
+                    color: Color(0xFF71849A),
+                    fontSize: 9,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (action != null)
+          Text(
+            action!,
+            style: const TextStyle(
+              color: AppTheme.signalBlue,
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+      ],
     );
   }
 }
@@ -418,10 +1980,13 @@ class _SosFlowSheetState extends State<_SosFlowSheet> {
   int _step = 0;
 
   static const _steps = [
-    ('Location attached', 'Responders will see your current area.'),
-    ('Best signal selected', 'The app will use the strongest available path.'),
-    ('Backup relay ready', 'Nearby relay points can help send your request.'),
-    ('Responders alerted', 'Your request appears in the responder dashboard.'),
+    ('Location found', 'Your current area is attached to the request.'),
+    ('Signal checked', 'The app is choosing the strongest available path.'),
+    (
+      'Emergency backup ready',
+      'Nearby relay points can help send your request.',
+    ),
+    ('Responder notified', 'Your request appears in the responder dashboard.'),
   ];
 
   Future<void> _send() async {
@@ -463,7 +2028,7 @@ class _SosFlowSheetState extends State<_SosFlowSheet> {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'Send Emergency Request',
+                  'Send Disaster Distress Ping',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
@@ -481,7 +2046,7 @@ class _SosFlowSheetState extends State<_SosFlowSheet> {
           const SizedBox(height: 18),
           ElevatedButton.icon(
             onPressed: _send,
-            icon: const Icon(Icons.send_rounded),
+            icon: const Icon(Icons.hub),
             label: const Text('Send Emergency Request'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.dangerRed,
@@ -523,371 +2088,6 @@ class _SosStepTile extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _HazardMetrics extends StatelessWidget {
-  const _HazardMetrics();
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: const [
-        Expanded(
-          child: _MetricCard(
-            icon: Icons.water_drop,
-            label: 'Flood Risk',
-            value: 'Low',
-            color: AppTheme.safeGreen,
-          ),
-        ),
-        SizedBox(width: 10),
-        Expanded(
-          child: _MetricCard(
-            icon: Icons.cloudy_snowing,
-            label: 'Rainfall',
-            value: 'Light',
-            color: AppTheme.signalBlue,
-          ),
-        ),
-        SizedBox(width: 10),
-        Expanded(
-          child: _MetricCard(
-            icon: Icons.thermostat,
-            label: 'Temp',
-            value: '28 C',
-            color: AppTheme.dangerRed,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _FloodPredictionCard extends StatelessWidget {
-  const _FloodPredictionCard();
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: AppTheme.signalBlue.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(
-                    Icons.auto_graph,
-                    color: AppTheme.signalBlue,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'AI Flood Forecast',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      Text(
-                        'Nearby barangays to watch',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            const _FloodRiskGraphic(),
-            const SizedBox(height: 14),
-            const _PredictionRow(
-              icon: Icons.schedule,
-              title: 'Arrival time',
-              value: 'San Felipe: about 45 min',
-              color: AppTheme.warningAmber,
-            ),
-            const SizedBox(height: 10),
-            const _PredictionRow(
-              icon: Icons.height,
-              title: 'Expected peak level',
-              value: 'Up to 1.4 m in low areas',
-              color: AppTheme.signalBlue,
-            ),
-            const SizedBox(height: 10),
-            const _PredictionRow(
-              icon: Icons.flash_on,
-              title: 'Early warning',
-              value: 'Flash flood risk in 30-60 min',
-              color: AppTheme.dangerRed,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FloodRiskGraphic extends StatelessWidget {
-  const _FloodRiskGraphic();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: Stack(
-                children: [
-                  Container(height: 12, color: const Color(0xFFE7EDF5)),
-                  FractionallySizedBox(
-                    widthFactor: 0.62,
-                    child: Container(
-                      height: 12,
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [AppTheme.safeGreen, AppTheme.warningAmber],
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            'Watch',
-            style: Theme.of(
-              context,
-            ).textTheme.labelMedium?.copyWith(color: AppTheme.warningAmber),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PredictionRow extends StatelessWidget {
-  const _PredictionRow({
-    required this.icon,
-    required this.title,
-    required this.value,
-    required this.color,
-  });
-
-  final IconData icon;
-  final String title;
-  final String value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 32,
-          height: 32,
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(icon, color: color, size: 18),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: Theme.of(context).textTheme.labelMedium),
-              Text(value, style: Theme.of(context).textTheme.titleSmall),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _MetricCard extends StatelessWidget {
-  const _MetricCard({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: color, size: 22),
-            const SizedBox(height: 8),
-            Text(label, style: Theme.of(context).textTheme.labelSmall),
-            const SizedBox(height: 2),
-            Text(value, style: Theme.of(context).textTheme.titleSmall),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.title, this.subtitle, this.action});
-
-  final String title;
-  final String? subtitle;
-  final String? action;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: Theme.of(context).textTheme.titleMedium),
-              if (subtitle != null)
-                Text(subtitle!, style: Theme.of(context).textTheme.bodySmall),
-            ],
-          ),
-        ),
-        if (action != null)
-          Text(
-            action!,
-            style: Theme.of(
-              context,
-            ).textTheme.labelMedium?.copyWith(color: AppTheme.signalBlue),
-          ),
-      ],
-    );
-  }
-}
-
-class _AlertTile extends StatelessWidget {
-  const _AlertTile({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.label,
-    required this.color,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        leading: _IconBox(icon: icon, color: color),
-        title: Text(title),
-        subtitle: Text(subtitle),
-        trailing: _StatusPill(label: label, color: color),
-      ),
-    );
-  }
-}
-
-class _IconBox extends StatelessWidget {
-  const _IconBox({required this.icon, required this.color});
-
-  final IconData icon;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 38,
-      height: 38,
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Icon(icon, color: color),
-    );
-  }
-}
-
-class _StatusPill extends StatelessWidget {
-  const _StatusPill({required this.label, required this.color});
-
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontSize: 11,
-          fontWeight: FontWeight.w900,
-        ),
-      ),
-    );
-  }
-}
-
-class _RoleBadge extends StatelessWidget {
-  const _RoleBadge({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white24),
-      ),
-      child: Text(
-        label,
-        style: Theme.of(
-          context,
-        ).textTheme.labelSmall?.copyWith(color: Colors.white),
-      ),
     );
   }
 }
