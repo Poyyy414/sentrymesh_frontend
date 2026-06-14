@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import '../../../app/theme.dart';
 import '../../../core/config/map_tile_config.dart';
 import '../../../core/services/location_service.dart';
+import '../../../data/models/route_model.dart';
 import '../state/asean_country.dart';
 
 class MapLayerVisibility {
@@ -47,6 +48,7 @@ class MapView extends StatefulWidget {
   const MapView({
     required this.country,
     required this.layers,
+    this.route,
     this.userLocation,
     super.key,
   });
@@ -54,6 +56,7 @@ class MapView extends StatefulWidget {
   final AseanCountry country;
   final GeoPoint? userLocation;
   final MapLayerVisibility layers;
+  final RouteModel? route;
 
   @override
   State<MapView> createState() => _MapViewState();
@@ -119,136 +122,14 @@ class _MapViewState extends State<MapView> {
     return LatLng(location.latitude, location.longitude);
   }
 
-  double get _overlayScale {
-    final zoom = _targetZoom;
-    if (zoom >= 14) {
-      return 0.01;
-    }
-    if (zoom >= 10) {
-      return 0.03;
-    }
-    if (zoom >= 7) {
-      return 0.18;
-    }
-    if (zoom >= 5) {
-      return 0.55;
-    }
-    return 1.2;
-  }
-
-  LatLng _offset(LatLng origin, double latitude, double longitude) {
-    final scale = _overlayScale;
-
-    return LatLng(
-      origin.latitude + latitude * scale,
-      origin.longitude + longitude * scale,
-    );
-  }
-
-  List<LatLng> _safeRoutePoints(LatLng origin) {
-    return [
-      _offset(origin, -0.78, -0.86),
-      _offset(origin, -0.58, -0.72),
-      _offset(origin, -0.52, -0.46),
-      _offset(origin, -0.28, -0.34),
-      _offset(origin, -0.08, -0.18),
-      origin,
-      _offset(origin, 0.16, 0.16),
-      _offset(origin, 0.18, 0.42),
-      _offset(origin, 0.42, 0.55),
-      _offset(origin, 0.58, 0.78),
-      _offset(origin, 0.86, 0.92),
-    ];
-  }
-
-  List<LatLng> _evacuationCenters(LatLng origin) {
-    return [
-      _offset(origin, 0.85, 0.95),
-      _offset(origin, -0.62, 0.72),
-      _offset(origin, 0.58, -0.82),
-    ];
-  }
-
-  List<LatLng> _incidentPoints(LatLng origin) {
-    return [
-      _offset(origin, 0.34, -0.48),
-      _offset(origin, -0.42, 0.38),
-      _offset(origin, 0.66, 0.62),
-    ];
-  }
-
-  List<LatLng> _loraNodes(LatLng origin) {
-    return [
-      _offset(origin, -0.22, -0.55),
-      _offset(origin, 0.18, 0.25),
-      _offset(origin, 0.74, -0.08),
-      _offset(origin, -0.66, 0.78),
-    ];
-  }
-
-  List<Polygon> _hazardPolygons(LatLng origin) {
-    return [
-      Polygon(
-        points: [
-          _offset(origin, 1.35, -1.25),
-          _offset(origin, 0.76, -0.55),
-          _offset(origin, 0.62, 0.18),
-          _offset(origin, 1.28, 0.52),
-          _offset(origin, 1.72, -0.28),
-        ],
-        color: AppTheme.dangerRed.withValues(alpha: 0.24),
-        borderColor: AppTheme.dangerRed.withValues(alpha: 0.68),
-        borderStrokeWidth: 2,
-      ),
-      Polygon(
-        points: [
-          _offset(origin, -1.42, 0.18),
-          _offset(origin, -0.86, 0.82),
-          _offset(origin, -1.16, 1.48),
-          _offset(origin, -1.88, 1.22),
-          _offset(origin, -1.96, 0.42),
-        ],
-        color: AppTheme.warningAmber.withValues(alpha: 0.2),
-        borderColor: AppTheme.warningAmber.withValues(alpha: 0.72),
-        borderStrokeWidth: 2,
-      ),
-    ];
-  }
-
-  List<CircleMarker> _hazardHeatCircles(LatLng origin) {
-    return [
-      CircleMarker(
-        point: _offset(origin, 1.08, -0.48),
-        radius: 72,
-        color: AppTheme.dangerRed.withValues(alpha: 0.14),
-        borderColor: AppTheme.dangerRed.withValues(alpha: 0.26),
-        borderStrokeWidth: 1,
-        useRadiusInMeter: false,
-      ),
-      CircleMarker(
-        point: _offset(origin, 1.36, -0.1),
-        radius: 48,
-        color: AppTheme.warningAmber.withValues(alpha: 0.2),
-        borderColor: AppTheme.warningAmber.withValues(alpha: 0.3),
-        borderStrokeWidth: 1,
-        useRadiusInMeter: false,
-      ),
-      CircleMarker(
-        point: _offset(origin, -1.34, 0.84),
-        radius: 58,
-        color: AppTheme.warningAmber.withValues(alpha: 0.16),
-        borderColor: AppTheme.warningAmber.withValues(alpha: 0.3),
-        borderStrokeWidth: 1,
-        useRadiusInMeter: false,
-      ),
-    ];
-  }
-
   @override
   Widget build(BuildContext context) {
     final userPoint = _userPoint;
-    final origin = userPoint ?? _countryPoint;
-    final routePoints = _safeRoutePoints(origin);
+    final routePoints =
+        widget.route?.waypoints
+            .map((point) => LatLng(point.latitude, point.longitude))
+            .toList() ??
+        const <LatLng>[];
 
     return FlutterMap(
       mapController: _mapController,
@@ -267,11 +148,7 @@ class _MapViewState extends State<MapView> {
           userAgentPackageName: 'com.example.sentrymesh_frontend',
           maxZoom: 18,
         ),
-        if (widget.layers.hazards)
-          PolygonLayer(polygons: _hazardPolygons(origin)),
-        if (widget.layers.hazards)
-          CircleLayer(circles: _hazardHeatCircles(origin)),
-        if (widget.layers.safeRoute)
+        if (widget.layers.safeRoute && routePoints.length > 1)
           PolylineLayer(
             polylines: [
               Polyline(
@@ -301,38 +178,6 @@ class _MapViewState extends State<MapView> {
           ),
         MarkerLayer(
           markers: [
-            if (widget.layers.evacuationCenters)
-              for (final center in _evacuationCenters(origin))
-                Marker(
-                  point: center,
-                  width: 38,
-                  height: 38,
-                  child: const _EvacuationCenterMarker(),
-                ),
-            if (widget.layers.safeRoute)
-              for (final turn in [routePoints[3], routePoints[7]])
-                Marker(
-                  point: turn,
-                  width: 26,
-                  height: 26,
-                  child: const _RouteTurnMarker(),
-                ),
-            if (widget.layers.incidents)
-              for (final incident in _incidentPoints(origin))
-                Marker(
-                  point: incident,
-                  width: 40,
-                  height: 40,
-                  child: const _IncidentMarker(),
-                ),
-            if (widget.layers.loraNodes)
-              for (final node in _loraNodes(origin))
-                Marker(
-                  point: node,
-                  width: 34,
-                  height: 34,
-                  child: const _LoRaNodeMarker(),
-                ),
             if (widget.layers.location)
               if (userPoint != null)
                 Marker(
@@ -357,90 +202,6 @@ class _MapViewState extends State<MapView> {
           ],
         ),
       ],
-    );
-  }
-}
-
-class _RouteTurnMarker extends StatelessWidget {
-  const _RouteTurnMarker();
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      shape: const CircleBorder(),
-      elevation: 2,
-      child: Container(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(color: AppTheme.safeGreen, width: 2),
-        ),
-        child: const Icon(
-          Icons.turn_right,
-          color: AppTheme.safeGreen,
-          size: 14,
-        ),
-      ),
-    );
-  }
-}
-
-class _EvacuationCenterMarker extends StatelessWidget {
-  const _EvacuationCenterMarker();
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppTheme.signalBlue,
-      shape: const CircleBorder(),
-      elevation: 3,
-      child: Container(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 2),
-        ),
-        child: const Icon(Icons.home_rounded, color: Colors.white, size: 20),
-      ),
-    );
-  }
-}
-
-class _IncidentMarker extends StatelessWidget {
-  const _IncidentMarker();
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppTheme.dangerRed,
-      shape: const CircleBorder(),
-      elevation: 3,
-      child: Container(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 2),
-        ),
-        child: const Icon(Icons.priority_high, color: Colors.white, size: 20),
-      ),
-    );
-  }
-}
-
-class _LoRaNodeMarker extends StatelessWidget {
-  const _LoRaNodeMarker();
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppTheme.deepNavy,
-      shape: const CircleBorder(),
-      elevation: 2,
-      child: Container(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 2),
-        ),
-        child: const Icon(Icons.hub, color: Colors.white, size: 16),
-      ),
     );
   }
 }

@@ -13,7 +13,7 @@ class _EmergencyTypeDropdownState extends State<EmergencyTypeDropdown> {
   @override
   Widget build(BuildContext context) {
     return DropdownButtonFormField<String>(
-      value: _value,
+      initialValue: _value,
       isExpanded: true,
       decoration: const InputDecoration(
         prefixIcon: Icon(

@@ -39,14 +39,40 @@ class AuthRepository {
     required String password,
   }) async {
     final normalizedEmail = email.trim().toLowerCase();
-    final account = _accounts[normalizedEmail];
 
-    if (account == null || account.password != password) {
-      throw const AuthException('Invalid email or password.');
+    // Keep the built-in demo accounts working without hitting the backend.
+    final mockAccount = _accounts[normalizedEmail];
+    if (mockAccount != null) {
+      if (mockAccount.password != password) {
+        throw const AuthException('Invalid email or password.');
+      }
+
+      await _storage.saveAuthToken(
+        'mock-${mockAccount.role}-${mockAccount.email}',
+      );
+      return mockAccount.toUserModel();
     }
 
-    await _storage.saveAuthToken('mock-${account.role}-${account.email}');
-    return account.toUserModel();
+    // All other accounts go through the real API.
+    try {
+      final payload = await _remote.login(
+        email: normalizedEmail,
+        password: password,
+      );
+
+      final token = _tokenFromPayload(payload) ?? 'api-user-$normalizedEmail';
+      final user = _userFromPayload(
+        payload,
+        firstName: '',
+        lastName: '',
+        email: normalizedEmail,
+      );
+
+      await _storage.saveAuthToken(token);
+      return user;
+    } on NetworkException catch (error) {
+      throw AuthException(error.message);
+    }
   }
 
   Future<UserModel> register({

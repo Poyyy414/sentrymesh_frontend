@@ -1,17 +1,11 @@
 import '../../core/services/location_service.dart';
-import '../../core/services/map_service.dart';
 import '../models/route_model.dart';
 import '../sources/remote/map_api.dart';
 
 class MapRepository {
-  const MapRepository({
-    required MapApi remote,
-    required MapService mapService,
-  })  : _remote = remote,
-        _mapService = mapService;
+  const MapRepository({required MapApi remote}) : _remote = remote;
 
   final MapApi _remote;
-  final MapService _mapService;
 
   Future<RouteModel?> fetchSafeRoute({
     required GeoPoint origin,
@@ -22,12 +16,14 @@ class MapRepository {
         origin: origin,
         destination: destination,
       );
-      return RouteModel.fromJson(payload);
+      final route = RouteModel.fromJson(payload);
+      if (route.waypoints.isEmpty) {
+        return null;
+      }
+
+      return route;
     } catch (_) {
-      return _mapService.findSafeRoute(
-        origin: origin,
-        destination: destination,
-      );
+      return null;
     }
   }
 }

@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/assets.dart';
 import '../../app/router.dart';
@@ -12,7 +12,13 @@ import '../../core/config/map_tile_config.dart';
 import '../../core/di/injection.dart';
 import '../../core/services/location_service.dart';
 import '../../core/widgets/custom_button.dart';
+import '../../data/models/rescue_location_model.dart';
+import '../../data/models/rescue_navigation_model.dart';
+import '../../data/models/rescue_request_model.dart';
+import '../../data/models/route_model.dart';
 import '../../shared/demo/demo_scenario.dart';
+import '../../shared/enums/hazard_type.dart';
+import '../../shared/enums/rescue_status.dart';
 
 Future<void> _logout(BuildContext context) async {
   await AppDependenciesScope.of(context).authRepository.logout();
@@ -23,7 +29,18 @@ Future<void> _logout(BuildContext context) async {
   Navigator.of(context).pushNamedAndRemoveUntil(AppRouter.login, (_) => false);
 }
 
-IconData _incidentIcon(DemoIncidentType type) {
+IconData _incidentIcon(HazardType type) {
+  return switch (type) {
+    HazardType.flood => Icons.flood,
+    HazardType.landslide => Icons.warning_amber_rounded,
+    HazardType.typhoon => Icons.cyclone,
+    HazardType.medical => Icons.medical_services,
+    HazardType.distress => Icons.sos,
+    HazardType.infrastructure => Icons.car_crash,
+  };
+}
+
+IconData _demoIncidentIcon(DemoIncidentType type) {
   return switch (type) {
     DemoIncidentType.flood => Icons.flood,
     DemoIncidentType.landslide => Icons.warning_amber_rounded,
@@ -31,6 +48,105 @@ IconData _incidentIcon(DemoIncidentType type) {
     DemoIncidentType.roadBlocked => Icons.car_crash,
     DemoIncidentType.sos => Icons.sos,
   };
+}
+
+String _hazardTitle(HazardType type) {
+  return switch (type) {
+    HazardType.flood => 'Flood',
+    HazardType.landslide => 'Landslide',
+    HazardType.typhoon => 'Typhoon',
+    HazardType.medical => 'Medical Emergency',
+    HazardType.distress => 'Distress / SOS',
+    HazardType.infrastructure => 'Infrastructure Hazard',
+  };
+}
+
+String _rescueStatusLabel(RescueStatus status) {
+  return switch (status) {
+    RescueStatus.pending => 'Active',
+    RescueStatus.acknowledged => 'Dispatched',
+    RescueStatus.inProgress => 'En Route',
+    RescueStatus.resolved => 'Resolved',
+    RescueStatus.cancelled => 'Cancelled',
+  };
+}
+
+Color _severityFromPeople(int people) {
+  if (people >= 5) {
+    return AppTheme.dangerRed;
+  }
+  if (people >= 2) {
+    return AppTheme.warningAmber;
+  }
+  return AppTheme.safeGreen;
+}
+
+String _severityLabelFromPeople(int people) {
+  if (people >= 5) {
+    return 'High';
+  }
+  if (people >= 2) {
+    return 'Medium';
+  }
+  return 'Low';
+}
+
+String _timeAgoLabel(DateTime createdAt) {
+  final diff = DateTime.now().difference(createdAt);
+  if (diff.inMinutes < 1) {
+    return 'Just now';
+  }
+  if (diff.inMinutes < 60) {
+    return '${diff.inMinutes} min ago';
+  }
+  if (diff.inHours < 24) {
+    return '${diff.inHours} hr ago';
+  }
+  return '${diff.inDays} d ago';
+}
+
+String? _navigationUrlFrom(RescueNavigationModel? navigation) {
+  return navigation?.navigationUrl;
+}
+
+Future<void> _launchNavigation({
+  required BuildContext context,
+  String? navigationUrl,
+  RescueLocationModel? residentLocation,
+  GeoPoint? responderLocation,
+}) async {
+  Uri? uri;
+
+  if (navigationUrl != null && navigationUrl.isNotEmpty) {
+    uri = Uri.tryParse(navigationUrl);
+  }
+
+  if (uri == null && residentLocation != null) {
+    final destination =
+        '${residentLocation.latitude},${residentLocation.longitude}';
+    final origin = responderLocation == null
+        ? ''
+        : '&origin=${responderLocation.latitude},${responderLocation.longitude}';
+    uri = Uri.parse(
+      'https://www.google.com/maps/dir/?api=1$origin&destination=$destination&travelmode=driving',
+    );
+  }
+
+  if (uri == null) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Resident location is not available yet.')),
+      );
+    }
+    return;
+  }
+
+  final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+  if (!launched && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not open maps app.')),
+    );
+  }
 }
 
 Color _severityColor(String severity) {
@@ -198,34 +314,99 @@ class ResponderDashboardScreen extends StatelessWidget {
   }
 }
 
-class ActiveIncidentsScreen extends StatelessWidget {
+class ActiveIncidentsScreen extends StatefulWidget {
   const ActiveIncidentsScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: DemoScenario.instance,
-      builder: (context, _) {
-        final incidents = DemoScenario.instance.incidents
-            .map(_Incident.fromDemo)
-            .toList();
+  State<ActiveIncidentsScreen> createState() => _ActiveIncidentsScreenState();
+}
 
-        return _ResponderPage(
-          header: const _SimpleResponderHeader(
-            title: 'Priority Incidents',
-            leadingIcon: Icons.arrow_back,
-            trailingIcon: Icons.filter_alt,
-          ),
-          children: [
-            const _IncidentFilters(),
+class _ActiveIncidentsScreenState extends State<ActiveIncidentsScreen> {
+  List<_Incident> _incidents = [];
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _load();
+      }
+    });
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final dependencies = AppDependenciesScope.of(context);
+      final requests = await dependencies.rescueRepository.fetchRequests();
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _incidents = requests.map(_Incident.fromRescueRequest).toList();
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = 'Could not load incidents: $error';
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ResponderPage(
+      header: const _SimpleResponderHeader(
+        title: 'Priority Incidents',
+        leadingIcon: Icons.arrow_back,
+        trailingIcon: Icons.filter_alt,
+      ),
+      children: [
+        const _IncidentFilters(),
+        const SizedBox(height: 12),
+        if (_isLoading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 40),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (_error != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Column(
+              children: [
+                Text(_error!, textAlign: TextAlign.center),
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: _load,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry'),
+                ),
+              ],
+            ),
+          )
+        else if (_incidents.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 40),
+            child: Center(child: Text('No active incidents.')),
+          )
+        else
+          for (final incident in _incidents) ...[
+            _IncidentCard(incident: incident),
             const SizedBox(height: 12),
-            for (final incident in incidents) ...[
-              _IncidentCard(incident: incident),
-              const SizedBox(height: 12),
-            ],
           ],
-        );
-      },
+      ],
     );
   }
 }
@@ -325,9 +506,9 @@ class ResponderIncidentDetailScreen extends StatelessWidget {
             backgroundColor: AppTheme.safeGreen,
             onPressed: () {
               DemoScenario.instance.markEnRoute(incident.id);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Safe route opened for the response team.'),
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ResponderNavigationScreen(incident: incident),
                 ),
               );
             },
@@ -354,6 +535,171 @@ class ResponderIncidentDetailScreen extends StatelessWidget {
             },
             icon: const Icon(Icons.check_circle_outline),
             label: const Text('Resolve Incident'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class ResponderNavigationScreen extends StatefulWidget {
+  const ResponderNavigationScreen({required this.incident, super.key});
+
+  final _Incident incident;
+
+  @override
+  State<ResponderNavigationScreen> createState() =>
+      _ResponderNavigationScreenState();
+}
+
+class _ResponderNavigationScreenState extends State<ResponderNavigationScreen> {
+  final _mapController = MapController();
+
+  GeoPoint? _responderLocation;
+  RescueLocationModel? _residentLocation;
+  RescueNavigationModel? _navigation;
+  RouteModel? _route;
+  bool _isLoading = true;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _loadNavigation();
+      }
+    });
+  }
+
+  Future<void> _loadNavigation() async {
+    setState(() {
+      _isLoading = true;
+      _message = null;
+    });
+
+    if (_isRunningWidgetTest) {
+      setState(() {
+        _isLoading = false;
+        _message = 'Navigation fetch skipped during widget tests.';
+      });
+      return;
+    }
+
+    final dependencies = AppDependenciesScope.of(context);
+    RescueLocationModel? residentLocation;
+    GeoPoint? responderLocation;
+    RescueNavigationModel? navigation;
+    RouteModel? route;
+    String? message;
+
+    try {
+      residentLocation = await dependencies.rescueRepository
+          .fetchRequestLocation(widget.incident.id);
+    } catch (error) {
+      message = 'Resident GPS is not available from backend yet: $error';
+    }
+
+    try {
+      responderLocation = await dependencies.locationService.currentLocation();
+    } catch (error) {
+      message = [
+        ?message,
+        'Responder GPS is not available: $error',
+      ].join('\n');
+    }
+
+    if (residentLocation != null && responderLocation != null) {
+      try {
+        navigation = await dependencies.rescueRepository.fetchNavigation(
+          id: widget.incident.id,
+          responderLocation: responderLocation,
+        );
+        route = navigation?.route;
+
+        message = route == null
+            ? 'Resident GPS loaded. Backend did not return navigation waypoints yet.'
+            : 'Backend route loaded to resident location.';
+      } catch (error) {
+        message = [
+          ?message,
+          'Navigation route is not available from backend yet: $error',
+        ].join('\n');
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _residentLocation = residentLocation;
+      _responderLocation = responderLocation;
+      _navigation = navigation;
+      _route = route;
+      _message = message;
+      _isLoading = false;
+    });
+
+    final focus = residentLocation?.point ?? responderLocation;
+    if (focus != null) {
+      _mapController.move(LatLng(focus.latitude, focus.longitude), 15);
+    }
+  }
+
+  bool get _isRunningWidgetTest {
+    return WidgetsBinding.instance.runtimeType.toString().contains(
+      'TestWidgetsFlutterBinding',
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.surface,
+      appBar: AppBar(
+        title: const Text('Navigate to Resident'),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh route',
+            onPressed: _isLoading ? null : _loadNavigation,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          _ResponderMapPreview(
+            height: double.infinity,
+            mapController: _mapController,
+            responderLocation: _responderLocation,
+            residentLocation: _residentLocation?.point,
+            route: _route,
+          ),
+          Positioned(
+            left: 16,
+            right: 16,
+            top: 16,
+            child: _NavigationFetchStatus(
+              isLoading: _isLoading,
+              hasResidentLocation: _residentLocation != null,
+              hasRoute: _route != null,
+              message: _message,
+            ),
+          ),
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 16,
+            child: _ResidentRoutePanel(
+              incident: widget.incident,
+              residentLocation: _residentLocation,
+              navigation: _navigation,
+              route: _route,
+              onRefresh: _loadNavigation,
+              isLoading: _isLoading,
+              responderLocation: _responderLocation,
+            ),
           ),
         ],
       ),
@@ -1043,7 +1389,7 @@ class _RecentIncidentsList extends StatelessWidget {
           children: [
             for (var index = 0; index < incidents.length; index++) ...[
               _CompactIncidentTile(
-                icon: _incidentIcon(incidents[index].type),
+                icon: _demoIncidentIcon(incidents[index].type),
                 title:
                     '${incidents[index].title} - ${incidents[index].location}',
                 subtitle:
@@ -1065,133 +1411,51 @@ class _HeatmapPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: Stack(
-        children: [
-          Container(
-            height: 150,
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF0A3A35), Color(0xFF163F5A)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+    return Card(
+      child: SizedBox(
+        height: 150,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Row(
+              children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: AppTheme.signalBlue.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.cloud_sync_outlined,
+                    color: AppTheme.signalBlue,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Waiting for backend risk layer',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'No hardcoded heatmap is displayed. Deploy hazard geometry or prediction layer data to fill this panel.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-          const Positioned.fill(child: CustomPaint(painter: _HeatmapPainter())),
-          const Positioned(left: 28, top: 38, child: _MapLabel('San Felipe')),
-          const Positioned(right: 26, top: 44, child: _MapLabel('Concepcion')),
-          const Positioned(right: 50, bottom: 28, child: _MapLabel('Pacol')),
-          const Positioned(
-            left: 16,
-            top: 18,
-            child: _HeatSpot(size: 74, color: AppTheme.warningAmber),
-          ),
-          const Positioned(
-            left: 42,
-            bottom: 28,
-            child: _HeatSpot(size: 48, color: AppTheme.dangerRed),
-          ),
-          const Positioned(
-            left: 92,
-            top: 56,
-            child: _HeatSpot(size: 64, color: AppTheme.warningAmber),
-          ),
-          const Positioned(
-            right: 76,
-            top: 46,
-            child: _HeatSpot(size: 52, color: AppTheme.dangerRed),
-          ),
-          const Positioned(
-            right: 20,
-            bottom: 20,
-            child: _HeatSpot(size: 62, color: AppTheme.warningAmber),
-          ),
-          Positioned(
-            right: 12,
-            bottom: 12,
-            child: FloatingActionButton.small(
-              heroTag: 'dashboard-location',
-              onPressed: () {},
-              backgroundColor: Colors.white,
-              foregroundColor: AppTheme.signalBlue,
-              child: const Icon(Icons.my_location),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
-}
-
-class _HeatmapPainter extends CustomPainter {
-  const _HeatmapPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final roadPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.18)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2
-      ..strokeCap = StrokeCap.round;
-
-    final routePaint = Paint()
-      ..color = AppTheme.safeGreen.withValues(alpha: 0.9)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3
-      ..strokeCap = StrokeCap.round;
-
-    final riverPaint = Paint()
-      ..color = AppTheme.signalBlue.withValues(alpha: 0.28)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 8
-      ..strokeCap = StrokeCap.round;
-
-    final river = ui.Path()
-      ..moveTo(size.width * 0.05, size.height * 0.2)
-      ..cubicTo(
-        size.width * 0.26,
-        size.height * 0.05,
-        size.width * 0.34,
-        size.height * 0.72,
-        size.width * 0.52,
-        size.height * 0.55,
-      )
-      ..cubicTo(
-        size.width * 0.7,
-        size.height * 0.38,
-        size.width * 0.76,
-        size.height * 0.88,
-        size.width * 0.95,
-        size.height * 0.64,
-      );
-    canvas.drawPath(river, riverPaint);
-
-    for (final y in [0.28, 0.48, 0.68]) {
-      final road = ui.Path()
-        ..moveTo(size.width * 0.04, size.height * y)
-        ..quadraticBezierTo(
-          size.width * 0.42,
-          size.height * (y - 0.08),
-          size.width * 0.96,
-          size.height * (y + 0.04),
-        );
-      canvas.drawPath(road, roadPaint);
-    }
-
-    final route = ui.Path()
-      ..moveTo(size.width * 0.12, size.height * 0.78)
-      ..lineTo(size.width * 0.28, size.height * 0.66)
-      ..lineTo(size.width * 0.38, size.height * 0.5)
-      ..lineTo(size.width * 0.55, size.height * 0.46)
-      ..lineTo(size.width * 0.68, size.height * 0.32)
-      ..lineTo(size.width * 0.86, size.height * 0.26);
-    canvas.drawPath(route, routePaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _ResponderMapPreview extends StatelessWidget {
@@ -1199,11 +1463,15 @@ class _ResponderMapPreview extends StatelessWidget {
     required this.height,
     this.mapController,
     this.responderLocation,
+    this.residentLocation,
+    this.route,
   });
 
   final double height;
   final MapController? mapController;
   final GeoPoint? responderLocation;
+  final GeoPoint? residentLocation;
+  final RouteModel? route;
 
   static const _center = LatLng(13.6218, 123.1948);
 
@@ -1212,25 +1480,24 @@ class _ResponderMapPreview extends StatelessWidget {
     final responderPoint = responderLocation == null
         ? null
         : LatLng(responderLocation!.latitude, responderLocation!.longitude);
-    final routePoints = const <LatLng>[
-      LatLng(13.590, 123.175),
-      LatLng(13.598, 123.184),
-      LatLng(13.606, 123.187),
-      LatLng(13.612, 123.198),
-      LatLng(13.6218, 123.1948),
-      LatLng(13.628, 123.204),
-      LatLng(13.636, 123.210),
-      LatLng(13.642, 123.224),
-      LatLng(13.652, 123.220),
-    ];
+    final residentPoint = residentLocation == null
+        ? null
+        : LatLng(residentLocation!.latitude, residentLocation!.longitude);
+    final routePoints =
+        route?.waypoints
+            .map((point) => LatLng(point.latitude, point.longitude))
+            .toList() ??
+        const <LatLng>[];
 
     return SizedBox(
       height: height,
       child: FlutterMap(
         mapController: mapController,
         options: MapOptions(
-          initialCenter: responderPoint ?? _center,
-          initialZoom: responderPoint == null ? 12.4 : 15,
+          initialCenter: residentPoint ?? responderPoint ?? _center,
+          initialZoom: responderPoint == null && residentPoint == null
+              ? 12.4
+              : 15,
           minZoom: 4,
           maxZoom: 18,
           interactionOptions: const InteractionOptions(),
@@ -1240,84 +1507,28 @@ class _ResponderMapPreview extends StatelessWidget {
             urlTemplate: MapTileConfig.mapboxSatelliteStreetsUrl,
             userAgentPackageName: 'com.example.sentrymesh_frontend',
           ),
-          PolygonLayer(
-            polygons: [
-              Polygon(
-                points: const [
-                  LatLng(13.640, 123.165),
-                  LatLng(13.628, 123.198),
-                  LatLng(13.650, 123.230),
-                  LatLng(13.675, 123.205),
-                ],
-                color: AppTheme.dangerRed.withValues(alpha: 0.26),
-                borderColor: AppTheme.dangerRed,
-                borderStrokeWidth: 2,
-              ),
-              Polygon(
-                points: const [
-                  LatLng(13.595, 123.205),
-                  LatLng(13.580, 123.238),
-                  LatLng(13.608, 123.260),
-                  LatLng(13.630, 123.228),
-                ],
-                color: AppTheme.dangerRed.withValues(alpha: 0.22),
-                borderColor: AppTheme.dangerRed,
-                borderStrokeWidth: 2,
-              ),
-              Polygon(
-                points: const [
-                  LatLng(13.615, 123.150),
-                  LatLng(13.602, 123.176),
-                  LatLng(13.626, 123.188),
-                  LatLng(13.642, 123.170),
-                ],
-                color: AppTheme.warningAmber.withValues(alpha: 0.18),
-                borderColor: AppTheme.warningAmber.withValues(alpha: 0.72),
-                borderStrokeWidth: 2,
-              ),
-            ],
-          ),
-          CircleLayer(
-            circles: [
-              CircleMarker(
-                point: const LatLng(13.650, 123.202),
-                radius: 82,
-                color: AppTheme.dangerRed.withValues(alpha: 0.12),
-                borderColor: AppTheme.dangerRed.withValues(alpha: 0.25),
-                borderStrokeWidth: 1,
-                useRadiusInMeter: false,
-              ),
-              CircleMarker(
-                point: const LatLng(13.610, 123.230),
-                radius: 68,
-                color: AppTheme.warningAmber.withValues(alpha: 0.14),
-                borderColor: AppTheme.warningAmber.withValues(alpha: 0.28),
-                borderStrokeWidth: 1,
-                useRadiusInMeter: false,
-              ),
-            ],
-          ),
-          PolylineLayer(
-            polylines: [
-              Polyline(
-                points: routePoints,
-                strokeWidth: 8,
-                color: Colors.white,
-              ),
-              Polyline(
-                points: routePoints,
-                strokeWidth: 4,
-                color: AppTheme.safeGreen,
-              ),
-            ],
-          ),
+          if (routePoints.length > 1)
+            PolylineLayer(
+              polylines: [
+                Polyline(
+                  points: routePoints,
+                  strokeWidth: 8,
+                  color: Colors.white,
+                ),
+                Polyline(
+                  points: routePoints,
+                  strokeWidth: 4,
+                  color: AppTheme.safeGreen,
+                ),
+              ],
+            ),
           MarkerLayer(
             markers: [
               if (responderPoint == null)
                 const Marker(
                   point: _center,
                   width: 84,
-                  height: 58,
+                  height: 68,
                   child: _CommandCenterMarker(),
                 )
               else
@@ -1327,30 +1538,13 @@ class _ResponderMapPreview extends StatelessWidget {
                   height: 68,
                   child: const _ResponderLocationMarker(),
                 ),
-              const Marker(
-                point: LatLng(13.652, 123.220),
-                width: 42,
-                height: 42,
-                child: _IncidentMarker(icon: Icons.personal_injury),
-              ),
-              Marker(
-                point: LatLng(13.611, 123.238),
-                width: 42,
-                height: 42,
-                child: _IncidentMarker(icon: Icons.flood),
-              ),
-              Marker(
-                point: LatLng(13.590, 123.175),
-                width: 40,
-                height: 40,
-                child: _EvacMarker(),
-              ),
-              Marker(
-                point: LatLng(13.640, 123.160),
-                width: 40,
-                height: 40,
-                child: _EvacMarker(),
-              ),
+              if (residentPoint != null)
+                Marker(
+                  point: residentPoint,
+                  width: 64,
+                  height: 64,
+                  child: const _ResidentLocationMarker(),
+                ),
             ],
           ),
           const RichAttributionWidget(
@@ -1360,6 +1554,177 @@ class _ResponderMapPreview extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _NavigationFetchStatus extends StatelessWidget {
+  const _NavigationFetchStatus({
+    required this.isLoading,
+    required this.hasResidentLocation,
+    required this.hasRoute,
+    required this.message,
+  });
+
+  final bool isLoading;
+  final bool hasResidentLocation;
+  final bool hasRoute;
+  final String? message;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isLoading
+        ? AppTheme.signalBlue
+        : hasRoute
+        ? AppTheme.safeGreen
+        : hasResidentLocation
+        ? AppTheme.warningAmber
+        : AppTheme.dangerRed;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            if (isLoading)
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              Icon(
+                hasRoute
+                    ? Icons.route
+                    : hasResidentLocation
+                    ? Icons.location_on
+                    : Icons.cloud_off,
+                color: color,
+              ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                isLoading
+                    ? 'Fetching resident GPS and safe route from backend...'
+                    : message ?? 'Waiting for backend response.',
+                style: Theme.of(
+                  context,
+                ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ResidentRoutePanel extends StatelessWidget {
+  const _ResidentRoutePanel({
+    required this.incident,
+    required this.residentLocation,
+    required this.navigation,
+    required this.route,
+    required this.onRefresh,
+    required this.isLoading,
+    required this.responderLocation,
+  });
+
+  final _Incident incident;
+  final RescueLocationModel? residentLocation;
+  final RescueNavigationModel? navigation;
+  final RouteModel? route;
+  final VoidCallback onRefresh;
+  final bool isLoading;
+  final GeoPoint? responderLocation;
+
+  @override
+  Widget build(BuildContext context) {
+    final location = residentLocation;
+    final hasRoute = route != null;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                _IconBubble(icon: incident.icon, color: incident.color),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        incident.title,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      Text(
+                        location == null
+                            ? 'Waiting for resident GPS'
+                            : '${location.latitude.toStringAsFixed(5)}, ${location.longitude.toStringAsFixed(5)}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                FilledButton.icon(
+                  onPressed: isLoading ? null : onRefresh,
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('Refresh'),
+                ),
+              ],
+            ),
+            const Divider(height: 22),
+            Row(
+              children: [
+                Expanded(
+                  child: _MiniMetric(
+                    value: navigation != null
+                        ? '${navigation!.directDistanceKm.toStringAsFixed(1)} km'
+                        : hasRoute
+                        ? '${route!.distanceKm.toStringAsFixed(1)} km'
+                        : '--',
+                    label: 'Distance',
+                  ),
+                ),
+                Expanded(
+                  child: _MiniMetric(
+                    value: hasRoute ? '${route!.estimatedMinutes} min' : '--',
+                    label: 'ETA',
+                  ),
+                ),
+                Expanded(
+                  child: _MiniMetric(
+                    value: navigation != null
+                        ? '${navigation!.bearingDegrees.round()} deg'
+                        : '--',
+                    label: 'Bearing',
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: SentryButton(
+                label: 'Navigate to Resident',
+                icon: Icons.navigation,
+                backgroundColor: AppTheme.safeGreen,
+                onPressed: () => _launchNavigation(
+                  context: context,
+                  navigationUrl: _navigationUrlFrom(navigation),
+                  residentLocation: location,
+                  responderLocation: responderLocation,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1430,12 +1795,14 @@ class _Incident {
     required this.color,
     required this.people,
     required this.status,
+    this.latitude,
+    this.longitude,
   });
 
   factory _Incident.fromDemo(DemoIncident incident) {
     return _Incident(
       id: incident.id,
-      icon: _incidentIcon(incident.type),
+      icon: _demoIncidentIcon(incident.type),
       title: incident.title,
       location: incident.location,
       meta:
@@ -1444,6 +1811,25 @@ class _Incident {
       color: _severityColor(incident.severity),
       people: incident.people,
       status: _statusLabel(incident.status),
+    );
+  }
+
+  factory _Incident.fromRescueRequest(RescueRequestModel request) {
+    final severityLabel = _severityLabelFromPeople(request.peopleNeedingHelp);
+
+    return _Incident(
+      id: request.id,
+      icon: _incidentIcon(request.emergencyType),
+      title: _hazardTitle(request.emergencyType),
+      location: request.locationLabel ?? request.description,
+      meta:
+          '${request.peopleNeedingHelp} people - ${_timeAgoLabel(request.createdAt)} - ${_rescueStatusLabel(request.status)}',
+      severity: severityLabel,
+      color: _severityFromPeople(request.peopleNeedingHelp),
+      people: request.peopleNeedingHelp,
+      status: _rescueStatusLabel(request.status),
+      latitude: request.latitude,
+      longitude: request.longitude,
     );
   }
 
@@ -1456,6 +1842,8 @@ class _Incident {
   final Color color;
   final int people;
   final String status;
+  final double? latitude;
+  final double? longitude;
 }
 
 class _SectionTitle extends StatelessWidget {
@@ -1656,62 +2044,24 @@ class _BellBadge extends StatelessWidget {
   }
 }
 
-class _HeatSpot extends StatelessWidget {
-  const _HeatSpot({required this.size, required this.color});
-
-  final double size;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(
-          colors: [
-            color.withValues(alpha: 0.9),
-            AppTheme.warningAmber.withValues(alpha: 0.45),
-            Colors.transparent,
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MapLabel extends StatelessWidget {
-  const _MapLabel(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: const TextStyle(
-        color: Colors.white,
-        fontSize: 12,
-        fontWeight: FontWeight.w800,
-        shadows: [Shadow(blurRadius: 4)],
-      ),
-    );
-  }
-}
-
 class _DetailTabs extends StatelessWidget {
   const _DetailTabs();
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: const [
-        _FilterChip(label: 'Overview', selected: true),
-        _FilterChip(label: 'Victims (12)'),
-        _FilterChip(label: 'Updates'),
-        _FilterChip(label: 'Media'),
-      ],
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: const [
+          _FilterChip(label: 'Overview', selected: true),
+          SizedBox(width: 8),
+          _FilterChip(label: 'Victims (12)'),
+          SizedBox(width: 8),
+          _FilterChip(label: 'Updates'),
+          SizedBox(width: 8),
+          _FilterChip(label: 'Media'),
+        ],
+      ),
     );
   }
 }
@@ -2264,48 +2614,6 @@ class _ReportTile extends StatelessWidget {
   }
 }
 
-class _IncidentMarker extends StatelessWidget {
-  const _IncidentMarker({required this.icon});
-
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppTheme.dangerRed,
-      shape: const CircleBorder(),
-      elevation: 3,
-      child: Container(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 2),
-        ),
-        child: Icon(icon, color: Colors.white, size: 20),
-      ),
-    );
-  }
-}
-
-class _EvacMarker extends StatelessWidget {
-  const _EvacMarker();
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppTheme.signalBlue,
-      shape: const CircleBorder(),
-      elevation: 3,
-      child: Container(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 2),
-        ),
-        child: const Icon(Icons.home, color: Colors.white, size: 20),
-      ),
-    );
-  }
-}
-
 class _CommandCenterMarker extends StatelessWidget {
   const _CommandCenterMarker();
 
@@ -2406,6 +2714,54 @@ class _ResponderLocationMarker extends StatelessWidget {
                 color: Colors.white,
                 size: 12,
               ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ResidentLocationMarker extends StatelessWidget {
+  const _ResidentLocationMarker();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Material(
+          color: AppTheme.dangerRed,
+          borderRadius: BorderRadius.circular(8),
+          elevation: 3,
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            child: Text(
+              'Resident',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 3),
+        Material(
+          color: AppTheme.dangerRed,
+          shape: const CircleBorder(),
+          elevation: 3,
+          child: Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 3),
+            ),
+            child: const Icon(
+              Icons.person_pin_circle_rounded,
+              color: Colors.white,
+              size: 22,
             ),
           ),
         ),

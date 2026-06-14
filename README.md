@@ -28,10 +28,10 @@ The current scaffold keeps each feature's future state in a `state/` folder with
 
 ## Backend
 
-FastAPI calls are isolated behind `core/network`, `data/sources/remote`, and `data/repositories`. By default, the frontend uses the deployed backend:
+Backend calls are isolated behind `core/network`, `data/sources/remote`, and `data/repositories`. By default, the frontend uses the deployed NestJS app backend:
 
 ```sh
-https://centrimeshx.onrender.com
+https://backend-mesh-t9rc.onrender.com
 ```
 
 Run the app normally to use it:
@@ -43,8 +43,22 @@ flutter run
 Override the backend URL for local development with:
 
 ```sh
-flutter run --dart-define=SENTRYMESH_API_BASE_URL=http://your-fastapi-host:8000
+flutter run --dart-define=SENTRYMESH_API_BASE_URL=http://your-nestjs-host:3000
 ```
+
+AI hazard prediction uses the FastAPI model service separately:
+
+```sh
+https://apexnode-ai.onrender.com
+```
+
+Override it with:
+
+```sh
+flutter run --dart-define=SENTRYMESH_AI_BASE_URL=http://your-fastapi-ai-host:8000
+```
+
+The prediction flow calls `GET /model/info` first to read `feature_cols`, then sends ordered node features to `POST /predict`. The model response is shown in the Home screen's AI Flood Forecast card.
 
 Registration posts to `POST /api/v1/auth/register` with `first_name`, `last_name`, `email`, `address`, and `password`. Backend validation and connection errors are shown in the register screen instead of creating a local mock account.
 
@@ -52,7 +66,7 @@ Database setup for PostgreSQL/PostGIS, local Docker, Supabase, migrations, and d
 
 ## Mock Auth
 
-Until the FastAPI login backend is ready, sign-in uses frontend-only mock accounts. Registration calls the FastAPI register endpoint and displays backend/network errors.
+Until the login backend is ready, sign-in uses frontend-only mock accounts. Registration calls the backend register endpoint and displays backend/network errors.
 The resident SOS and responder incident queue are connected through an in-memory demo mode, so the judge demo works without a backend.
 
 Seeded accounts:

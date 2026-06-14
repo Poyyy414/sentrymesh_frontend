@@ -5,6 +5,7 @@ import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/dashboard_repository.dart';
 import '../../data/repositories/family_repository.dart';
 import '../../data/repositories/map_repository.dart';
+import '../../data/repositories/prediction_repository.dart';
 import '../../data/repositories/rescue_repository.dart';
 import '../../data/sources/local/cache_manager.dart';
 import '../../data/sources/local/local_storage.dart';
@@ -12,6 +13,7 @@ import '../../data/sources/remote/alerts_api.dart';
 import '../../data/sources/remote/auth_api.dart';
 import '../../data/sources/remote/family_api.dart';
 import '../../data/sources/remote/map_api.dart';
+import '../../data/sources/remote/prediction_api.dart';
 import '../../data/sources/remote/rescue_api.dart';
 import '../config/api_config.dart';
 import '../config/env.dart';
@@ -30,7 +32,8 @@ Future<AppDependencies> configureDependencies() async {
 
 class AppDependencies {
   AppDependencies({required ApiConfig apiConfig})
-    : apiClient = ApiClient(config: apiConfig) {
+    : apiClient = ApiClient(config: apiConfig),
+      aiClient = ApiClient(config: Env.aiConfig) {
     localStorage = LocalStorage();
     cacheManager = CacheManager(storage: localStorage);
     storageService = StorageService(localStorage: localStorage);
@@ -46,6 +49,7 @@ class AppDependencies {
     rescueApi = RescueApi(apiClient);
     mapApi = MapApi(apiClient);
     familyApi = FamilyApi(apiClient);
+    predictionApi = PredictionApi(aiClient);
 
     authRepository = AuthRepository(remote: authApi, storage: storageService);
     alertRepository = AlertRepository(remote: alertsApi);
@@ -53,12 +57,14 @@ class AppDependencies {
       remote: rescueApi,
       loraService: loraService,
     );
-    mapRepository = MapRepository(remote: mapApi, mapService: mapService);
+    mapRepository = MapRepository(remote: mapApi);
     familyRepository = FamilyRepository(remote: familyApi);
+    predictionRepository = PredictionRepository(remote: predictionApi);
     dashboardRepository = DashboardRepository(alertRepository: alertRepository);
   }
 
   final ApiClient apiClient;
+  final ApiClient aiClient;
 
   late final LocalStorage localStorage;
   late final CacheManager cacheManager;
@@ -75,12 +81,14 @@ class AppDependencies {
   late final RescueApi rescueApi;
   late final MapApi mapApi;
   late final FamilyApi familyApi;
+  late final PredictionApi predictionApi;
 
   late final AuthRepository authRepository;
   late final AlertRepository alertRepository;
   late final RescueRepository rescueRepository;
   late final MapRepository mapRepository;
   late final FamilyRepository familyRepository;
+  late final PredictionRepository predictionRepository;
   late final DashboardRepository dashboardRepository;
 }
 

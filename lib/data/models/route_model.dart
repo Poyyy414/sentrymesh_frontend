@@ -20,15 +20,28 @@ class RouteModel {
   factory RouteModel.fromJson(Map<String, Object?> json) {
     final rawWaypoints = json['waypoints'];
     final waypoints = rawWaypoints is List
-        ? rawWaypoints.whereType<Map<String, Object?>>().map(_pointFromJson).toList()
+        ? rawWaypoints
+              .map(_mapFrom)
+              .where((point) => point.isNotEmpty)
+              .map(_pointFromJson)
+              .toList()
         : <GeoPoint>[];
 
     return RouteModel(
       id: json['id']?.toString() ?? '',
       label: json['label']?.toString() ?? '',
-      distanceKm: _asDouble(json['distance_km']),
-      estimatedMinutes: int.tryParse(json['estimated_minutes']?.toString() ?? '') ?? 0,
-      riskLevel: json['risk_level']?.toString() ?? 'Unknown',
+      distanceKm: _asDouble(json['distance_km'] ?? json['distanceKm']),
+      estimatedMinutes:
+          int.tryParse(
+            (json['estimated_minutes'] ?? json['estimatedMinutes'])
+                    ?.toString() ??
+                '',
+          ) ??
+          0,
+      riskLevel:
+          json['risk_level']?.toString() ??
+          json['riskLevel']?.toString() ??
+          'Unknown',
       waypoints: waypoints,
     );
   }
@@ -46,13 +59,25 @@ class RouteModel {
 
   static GeoPoint _pointFromJson(Map<String, Object?> json) {
     return GeoPoint(
-      latitude: _asDouble(json['latitude']),
-      longitude: _asDouble(json['longitude']),
+      latitude: _asDouble(json['latitude'] ?? json['lat']),
+      longitude: _asDouble(json['longitude'] ?? json['lng'] ?? json['lon']),
     );
   }
 
   static double _asDouble(Object? value) {
     if (value is num) return value.toDouble();
     return double.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static Map<String, Object?> _mapFrom(Object? value) {
+    if (value is Map<String, Object?>) {
+      return value;
+    }
+
+    if (value is Map) {
+      return value.map((key, item) => MapEntry(key.toString(), item));
+    }
+
+    return const {};
   }
 }

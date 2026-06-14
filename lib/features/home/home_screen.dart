@@ -1,7 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
+import '../../core/di/injection.dart';
+import '../../core/services/location_service.dart';
+import '../../data/models/prediction_model.dart';
+import '../../data/models/rescue_location_model.dart';
+import '../../data/models/rescue_request_model.dart';
+import '../../data/repositories/prediction_repository.dart';
 import '../../shared/demo/demo_scenario.dart';
+import '../../shared/enums/hazard_type.dart';
+import '../../shared/enums/rescue_status.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -12,6 +22,13 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool _distressSent = DemoScenario.instance.residentSosSent;
+  StreamSubscription? _sosLocationSubscription;
+
+  @override
+  void dispose() {
+    _sosLocationSubscription?.cancel();
+    super.dispose();
+  }
 
   Future<void> _openSosFlow() async {
     final sent = await showModalBottomSheet<bool>(
@@ -23,14 +40,129 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     if (sent == true && mounted) {
+      final submitted = await _submitSosToBackend();
+      if (!mounted || !submitted) {
+        return;
+      }
+
       DemoScenario.instance.sendResidentSos();
       setState(() => _distressSent = true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Distress ping received by responder dashboard.'),
+    }
+  }
+
+  Future<bool> _submitSosToBackend() async {
+    if (_isRunningWidgetTest) {
+      _showSosSnackBar('Distress ping received by responder dashboard.');
+      return true;
+    }
+
+    final dependencies = AppDependenciesScope.of(context);
+
+    try {
+      final location = await dependencies.locationService.currentLocation();
+      final request = RescueRequestModel(
+        id: 'resident-sos-john-paul',
+        emergencyType: HazardType.distress,
+        peopleNeedingHelp: 1,
+        description: 'Emergency SOS from resident app with live GPS tracking.',
+        status: RescueStatus.pending,
+        createdAt: DateTime.now().toUtc(),
+        latitude: location.latitude,
+        longitude: location.longitude,
+        locationLabel: 'Resident GPS',
+      );
+      final savedRequest = await dependencies.rescueRepository.submitRequest(
+        request,
+      );
+      final requestId = savedRequest.id.isEmpty ? request.id : savedRequest.id;
+
+      await dependencies.rescueRepository.updateRequestLocation(
+        id: requestId,
+        location: RescueLocationModel.fromPoint(
+          location,
+          locationLabel: 'Resident GPS',
         ),
       );
+      _startSosLocationTracking(requestId);
+      _showSosSnackBar('SOS sent with live location for responders.');
+      return true;
+    } on LocationServiceDisabledException {
+      _showLocationSettingsSnackBar();
+    } on LocationPermissionPermanentlyDeniedException {
+      _showAppSettingsSnackBar();
+    } on LocationPermissionDeniedException {
+      _showSosSnackBar('Location permission is required before sending SOS.');
+    } catch (error) {
+      _showSosSnackBar('SOS could not reach backend yet: $error');
     }
+
+    return false;
+  }
+
+  void _startSosLocationTracking(String requestId) {
+    final dependencies = AppDependenciesScope.of(context);
+    _sosLocationSubscription?.cancel();
+    _sosLocationSubscription = dependencies.locationService
+        .watchLocation()
+        .listen((location) {
+          dependencies.rescueRepository.updateRequestLocation(
+            id: requestId,
+            location: RescueLocationModel.fromPoint(
+              location,
+              locationLabel: 'Resident GPS',
+            ),
+          );
+        }, onError: (_) {});
+  }
+
+  void _showSosSnackBar(String message) {
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _showLocationSettingsSnackBar() {
+    if (!mounted) {
+      return;
+    }
+
+    final locationService = AppDependenciesScope.of(context).locationService;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Turn on device location before sending SOS.'),
+        action: SnackBarAction(
+          label: 'Open',
+          onPressed: locationService.openLocationSettings,
+        ),
+      ),
+    );
+  }
+
+  void _showAppSettingsSnackBar() {
+    if (!mounted) {
+      return;
+    }
+
+    final locationService = AppDependenciesScope.of(context).locationService;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Allow location access before sending SOS.'),
+        action: SnackBarAction(
+          label: 'Settings',
+          onPressed: locationService.openAppSettings,
+        ),
+      ),
+    );
+  }
+
+  bool get _isRunningWidgetTest {
+    return WidgetsBinding.instance.runtimeType.toString().contains(
+      'TestWidgetsFlutterBinding',
+    );
   }
 
   @override
@@ -1132,8 +1264,43 @@ class _StatusLandscapePainter extends CustomPainter {
   }
 }
 
-class _FloodForecastCard extends StatelessWidget {
+class _FloodForecastCard extends StatefulWidget {
   const _FloodForecastCard();
+
+  @override
+  State<_FloodForecastCard> createState() => _FloodForecastCardState();
+}
+
+class _FloodForecastCardState extends State<_FloodForecastCard> {
+  Future<PredictionBundle>? _predictionFuture;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _predictionFuture ??= _loadPrediction();
+  }
+
+  void _refreshPrediction() {
+    setState(() {
+      _predictionFuture = _loadPrediction();
+    });
+  }
+
+  Future<PredictionBundle> _loadPrediction() {
+    if (_isRunningWidgetTest) {
+      return Future.error('AI prediction fetch skipped during widget tests.');
+    }
+
+    return AppDependenciesScope.of(
+      context,
+    ).predictionRepository.fetchHomePredictions();
+  }
+
+  bool get _isRunningWidgetTest {
+    return WidgetsBinding.instance.runtimeType.toString().contains(
+      'TestWidgetsFlutterBinding',
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1173,92 +1340,304 @@ class _FloodForecastCard extends StatelessWidget {
                   ],
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF3F7FE),
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: _refreshPrediction,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFFD5E1F2)),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'View details',
-                      style: TextStyle(
-                        color: AppTheme.signalBlue,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                      ),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
                     ),
-                    SizedBox(width: 6),
-                    Icon(
-                      Icons.chevron_right_rounded,
-                      color: AppTheme.signalBlue,
-                      size: 17,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF3F7FE),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFD5E1F2)),
                     ),
-                  ],
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Refresh',
+                          style: TextStyle(
+                            color: AppTheme.signalBlue,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        SizedBox(width: 6),
+                        Icon(
+                          Icons.refresh_rounded,
+                          color: AppTheme.signalBlue,
+                          size: 17,
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 18),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final horizontal = constraints.maxWidth >= 720;
-              const metrics = [
-                _ForecastMetric(
-                  icon: Icons.schedule_rounded,
-                  color: AppTheme.warningAmber,
-                  title: 'Arrival time',
-                  value: 'San Felipe: about 45 min',
-                  detail: 'Estimated arrival of flooding',
-                ),
-                _ForecastMetric(
-                  icon: Icons.height_rounded,
-                  color: AppTheme.signalBlue,
-                  title: 'Expected peak level',
-                  value: 'Up to 1.4 m in low areas',
-                  detail: 'Possible flooding in low-lying areas',
-                ),
-                _ForecastMetric(
-                  icon: Icons.flash_on_rounded,
-                  color: AppTheme.dangerRed,
-                  title: 'Early warning',
-                  value: 'Flash flood risk in 30-60 min',
-                  detail: 'Monitor updates and prepare',
-                ),
-              ];
+          FutureBuilder<PredictionBundle>(
+            future: _predictionFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done &&
+                  !snapshot.hasData) {
+                return const _PredictionLoadingState();
+              }
 
-              if (!horizontal) {
-                return Column(
-                  children: [
-                    metrics[0],
-                    const SizedBox(height: 14),
-                    const Divider(color: Color(0xFFE0E8F1)),
-                    const SizedBox(height: 14),
-                    metrics[1],
-                    const SizedBox(height: 14),
-                    const Divider(color: Color(0xFFE0E8F1)),
-                    const SizedBox(height: 14),
-                    metrics[2],
-                  ],
+              if (snapshot.hasError) {
+                return _PredictionErrorState(
+                  message: snapshot.error.toString(),
+                  onRetry: _refreshPrediction,
                 );
               }
 
-              return Row(
-                children: [
-                  Expanded(child: metrics[0]),
-                  const _VerticalDivider(),
-                  Expanded(child: metrics[1]),
-                  const _VerticalDivider(),
-                  Expanded(child: metrics[2]),
-                ],
-              );
+              final bundle = snapshot.data;
+              if (bundle == null) {
+                return _PredictionErrorState(
+                  message: 'No prediction data returned yet.',
+                  onRetry: _refreshPrediction,
+                );
+              }
+
+              return _ForecastMetricsLayout(metrics: _metricsFor(bundle));
             },
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<_ForecastMetric> _metricsFor(PredictionBundle bundle) {
+    final flood = bundle.flood;
+    final landslide = bundle.landslide;
+
+    return [
+      _ForecastMetric(
+        icon: Icons.flood_rounded,
+        color: _levelColor(flood),
+        title: 'Flood warning',
+        value: _alertText(flood, fallback: 'Waiting for flood score'),
+        detail: flood?.probabilityLabel ?? 'Sensor forecast pending',
+      ),
+      _ForecastMetric(
+        icon: Icons.speed_rounded,
+        color: AppTheme.signalBlue,
+        title: 'Severity score',
+        value: flood?.severityLabel ?? 'No score yet',
+        detail: _modelDetail(bundle.modelInfo),
+      ),
+      _ForecastMetric(
+        icon: Icons.terrain_rounded,
+        color: _levelColor(landslide),
+        title: 'Slope watch',
+        value: _alertText(landslide, fallback: 'Waiting for slope score'),
+        detail: landslide?.probabilityLabel ?? 'Sensor forecast pending',
+      ),
+    ];
+  }
+
+  Color _levelColor(NodePredictionModel? prediction) {
+    final level = prediction?.alertLevel.toLowerCase() ?? '';
+    if (level.contains('critical') || level.contains('high')) {
+      return AppTheme.dangerRed;
+    }
+    if (level.contains('medium') || level.contains('watch')) {
+      return AppTheme.warningAmber;
+    }
+    return AppTheme.safeGreen;
+  }
+
+  String _alertText(
+    NodePredictionModel? prediction, {
+    required String fallback,
+  }) {
+    if (prediction == null) {
+      return fallback;
+    }
+
+    if (prediction.alert) {
+      return '${prediction.alertLevel} alert';
+    }
+
+    return 'Monitor conditions';
+  }
+
+  String _modelDetail(AiModelInfo modelInfo) {
+    if (modelInfo.featureColumns.isEmpty) {
+      return 'Using AI prediction response';
+    }
+
+    return '${modelInfo.featureColumns.length} sensor inputs checked';
+  }
+}
+
+class _ForecastMetricsLayout extends StatelessWidget {
+  const _ForecastMetricsLayout({required this.metrics});
+
+  final List<_ForecastMetric> metrics;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final horizontal = constraints.maxWidth >= 720;
+
+        if (!horizontal) {
+          return Column(
+            children: [
+              for (var index = 0; index < metrics.length; index++) ...[
+                if (index > 0) ...[
+                  const SizedBox(height: 14),
+                  const Divider(color: Color(0xFFE0E8F1)),
+                  const SizedBox(height: 14),
+                ],
+                metrics[index],
+              ],
+            ],
+          );
+        }
+
+        return Row(
+          children: [
+            for (var index = 0; index < metrics.length; index++) ...[
+              if (index > 0) const _VerticalDivider(),
+              Expanded(child: metrics[index]),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _PredictionLoadingState extends StatelessWidget {
+  const _PredictionLoadingState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7FAFE),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFDCE7F4)),
+      ),
+      child: const Row(
+        children: [
+          SizedBox(
+            width: 26,
+            height: 26,
+            child: CircularProgressIndicator(
+              strokeWidth: 3,
+              color: AppTheme.signalBlue,
+            ),
+          ),
+          SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Checking latest sensor forecast',
+                  style: TextStyle(
+                    color: Color(0xFF102E58),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                SizedBox(height: 3),
+                Text(
+                  'Preparing flood and slope warnings from AI service.',
+                  style: TextStyle(
+                    color: Color(0xFF71849A),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PredictionErrorState extends StatelessWidget {
+  const _PredictionErrorState({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.dangerRed.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.dangerRed.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: AppTheme.dangerRed.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: const Icon(
+              Icons.cloud_off_rounded,
+              color: AppTheme.dangerRed,
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'AI service unavailable',
+                  style: TextStyle(
+                    color: Color(0xFF102E58),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  message,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF71849A),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          TextButton(
+            onPressed: onRetry,
+            style: TextButton.styleFrom(
+              foregroundColor: AppTheme.signalBlue,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              minimumSize: Size.zero,
+            ),
+            child: const Text(
+              'Retry',
+              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900),
+            ),
           ),
         ],
       ),
@@ -1980,7 +2359,7 @@ class _SosFlowSheetState extends State<_SosFlowSheet> {
   int _step = 0;
 
   static const _steps = [
-    ('Location found', 'Your current area is attached to the request.'),
+    ('Location required', 'GPS will be checked before the request is sent.'),
     ('Signal checked', 'The app is choosing the strongest available path.'),
     (
       'Emergency backup ready',

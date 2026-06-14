@@ -575,6 +575,8 @@ class _SignInContent extends StatelessWidget {
                     TextFormField(
                       key: const Key('login_email_field'),
                       controller: emailController,
+                      style: const TextStyle(color: AppTheme.textPrimary),
+                      cursorColor: AppTheme.signalBlue,
                       keyboardType: TextInputType.emailAddress,
                       textInputAction: TextInputAction.next,
                       validator: validateEmail,
@@ -587,6 +589,8 @@ class _SignInContent extends StatelessWidget {
                     TextFormField(
                       key: const Key('login_password_field'),
                       controller: passwordController,
+                      style: const TextStyle(color: AppTheme.textPrimary),
+                      cursorColor: AppTheme.signalBlue,
                       obscureText: obscurePassword,
                       textInputAction: TextInputAction.done,
                       validator: validatePassword,

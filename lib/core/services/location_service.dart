@@ -3,13 +3,22 @@ import 'dart:async';
 import 'package:geolocator/geolocator.dart';
 
 class GeoPoint {
-  const GeoPoint({required this.latitude, required this.longitude});
+  const GeoPoint({
+    required this.latitude,
+    required this.longitude,
+    this.accuracyMeters,
+  });
 
   final double latitude;
   final double longitude;
+  final double? accuracyMeters;
 
   Map<String, Object?> toJson() {
-    return {'latitude': latitude, 'longitude': longitude};
+    return {
+      'latitude': latitude,
+      'longitude': longitude,
+      if (accuracyMeters != null) 'accuracy_m': accuracyMeters,
+    };
   }
 }
 
@@ -50,6 +59,7 @@ class LocationService {
       return GeoPoint(
         latitude: position.latitude,
         longitude: position.longitude,
+        accuracyMeters: position.accuracy,
       );
     } on TimeoutException {
       final lastKnownPosition = await Geolocator.getLastKnownPosition();
@@ -57,6 +67,7 @@ class LocationService {
         return GeoPoint(
           latitude: lastKnownPosition.latitude,
           longitude: lastKnownPosition.longitude,
+          accuracyMeters: lastKnownPosition.accuracy,
         );
       }
 
@@ -70,6 +81,7 @@ class LocationService {
       return GeoPoint(
         latitude: position.latitude,
         longitude: position.longitude,
+        accuracyMeters: position.accuracy,
       );
     } catch (_) {
       final lastKnownPosition = await Geolocator.getLastKnownPosition();
@@ -77,6 +89,7 @@ class LocationService {
         return GeoPoint(
           latitude: lastKnownPosition.latitude,
           longitude: lastKnownPosition.longitude,
+          accuracyMeters: lastKnownPosition.accuracy,
         );
       }
 
@@ -93,8 +106,11 @@ class LocationService {
         distanceFilter: 10,
       ),
     ).map(
-      (position) =>
-          GeoPoint(latitude: position.latitude, longitude: position.longitude),
+      (position) => GeoPoint(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        accuracyMeters: position.accuracy,
+      ),
     );
   }
 

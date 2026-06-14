@@ -4,7 +4,7 @@ import 'package:sentrymesh_frontend/app/app.dart';
 import 'package:sentrymesh_frontend/core/di/injection.dart';
 
 void main() {
-  testWidgets('registration keeps validation and account creation flow', (
+  testWidgets('registration keeps validation and backend error flow', (
     tester,
   ) async {
     final dependencies = await configureDependencies();
@@ -55,8 +55,8 @@ void main() {
     await tester.tap(find.byKey(const Key('register_submit_button')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Home'), findsOneWidget);
-    expect(find.text('SOS'), findsWidgets);
+    expect(find.textContaining('API request failed'), findsOneWidget);
+    expect(find.text('Create your account'), findsOneWidget);
   });
 
   testWidgets('registration stacks fields on a compact phone', (tester) async {

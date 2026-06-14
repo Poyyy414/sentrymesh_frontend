@@ -2,20 +2,28 @@ import 'package:flutter/material.dart';
 
 import '../../../app/theme.dart';
 import '../../../core/services/location_service.dart';
+import '../../../data/models/route_model.dart';
 
 class RouteSummaryCard extends StatelessWidget {
   const RouteSummaryCard({
     required this.countryName,
     required this.userLocation,
+    required this.route,
+    required this.isLoading,
+    this.message,
     super.key,
   });
 
   final String countryName;
   final GeoPoint? userLocation;
+  final RouteModel? route;
+  final bool isLoading;
+  final String? message;
 
   @override
   Widget build(BuildContext context) {
     final ready = userLocation != null;
+    final hasRoute = route != null;
 
     return Card(
       child: Padding(
@@ -44,14 +52,25 @@ class RouteSummaryCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        ready ? 'Route Ready' : 'Route Preview',
+                        isLoading
+                            ? 'Checking Route'
+                            : hasRoute
+                            ? 'Backend Route Ready'
+                            : 'Route Waiting',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        ready
-                            ? 'Follow the highlighted path and avoid marked flood zones.'
-                            : 'Choose $countryName or tap locate to preview nearby routes.',
+                        isLoading
+                            ? 'Fetching route waypoints from the backend.'
+                            : hasRoute
+                            ? route!.label.isEmpty
+                                  ? 'Route waypoints loaded from backend.'
+                                  : route!.label
+                            : message ??
+                                  (ready
+                                      ? 'No backend route returned yet.'
+                                      : 'Choose $countryName or tap locate to request a route.'),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],
@@ -61,15 +80,26 @@ class RouteSummaryCard extends StatelessWidget {
             ),
             const SizedBox(height: 14),
             Row(
-              children: const [
+              children: [
                 Expanded(
-                  child: _RouteMetric(value: '4.2 km', label: 'Distance'),
+                  child: _RouteMetric(
+                    value: hasRoute
+                        ? '${route!.distanceKm.toStringAsFixed(1)} km'
+                        : '--',
+                    label: 'Distance',
+                  ),
                 ),
                 Expanded(
-                  child: _RouteMetric(value: '12 min', label: 'Est. time'),
+                  child: _RouteMetric(
+                    value: hasRoute ? '${route!.estimatedMinutes} min' : '--',
+                    label: 'Est. time',
+                  ),
                 ),
                 Expanded(
-                  child: _RouteMetric(value: 'Low', label: 'Risk'),
+                  child: _RouteMetric(
+                    value: hasRoute ? route!.riskLevel : '--',
+                    label: 'Risk',
+                  ),
                 ),
               ],
             ),

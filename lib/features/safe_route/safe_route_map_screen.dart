@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
+import '../../core/di/injection.dart';
 import '../../core/services/location_service.dart';
 import '../../core/widgets/custom_button.dart';
+import '../../data/models/route_model.dart';
 import 'state/asean_country.dart';
 import 'widgets/map_legend.dart';
 import 'widgets/map_view.dart';
@@ -19,7 +21,10 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
   final _locationService = const LocationService();
   AseanCountry _selectedCountry = AseanCountry.defaultCountry;
   GeoPoint? _userLocation;
+  RouteModel? _route;
   bool _isLocating = false;
+  bool _isRouteLoading = false;
+  String? _routeMessage;
   MapLayerVisibility _layers = const MapLayerVisibility();
 
   @override
@@ -61,6 +66,7 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
                   MapView(
                     country: _selectedCountry,
                     userLocation: _userLocation,
+                    route: _route,
                     layers: _layers,
                   ),
                   Positioned(
@@ -77,6 +83,8 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
                             setState(() {
                               _selectedCountry = country;
                               _userLocation = null;
+                              _route = null;
+                              _routeMessage = null;
                             });
                           },
                         ),
@@ -90,6 +98,16 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
                     child: _MapLayerControls(
                       layers: _layers,
                       onChanged: (layers) => setState(() => _layers = layers),
+                    ),
+                  ),
+                  Positioned(
+                    top: 188,
+                    left: 16,
+                    right: 16,
+                    child: _BackendLayerStatus(
+                      isLoading: _isRouteLoading,
+                      route: _route,
+                      message: _routeMessage,
                     ),
                   ),
                   Positioned(
@@ -116,16 +134,38 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
                   RouteSummaryCard(
                     countryName: _selectedCountry.name,
                     userLocation: _userLocation,
+                    route: _route,
+                    isLoading: _isRouteLoading,
+                    message: _routeMessage,
                   ),
                   const SizedBox(height: 12),
                   SentryButton(
                     label: 'Start Guidance',
                     icon: Icons.navigation,
                     onPressed: () {
+                      final route = _route;
+                      if (_isRouteLoading) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Still fetching route from backend.'),
+                          ),
+                        );
+                        return;
+                      }
+                      if (route == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'No backend route available yet. Tap locate again after the API is deployed.',
+                            ),
+                          ),
+                        );
+                        return;
+                      }
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
+                        SnackBar(
                           content: Text(
-                            'Guidance started. Follow the highlighted safe path.',
+                            'Guidance ready: ${route.label.isEmpty ? 'backend route' : route.label}.',
                           ),
                         ),
                       );
@@ -154,8 +194,9 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
       }
 
       setState(() => _userLocation = location);
+      await _fetchRoute(location);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('GPS locked. Evacuation route ready.')),
+        const SnackBar(content: Text('GPS locked. Checking backend route.')),
       );
     } on LocationServiceDisabledException {
       if (!mounted) {
@@ -219,6 +260,120 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
         action: SnackBarAction(
           label: 'Settings',
           onPressed: _locationService.openLocationSettings,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _fetchRoute(GeoPoint origin) async {
+    setState(() {
+      _isRouteLoading = true;
+      _route = null;
+      _routeMessage = null;
+    });
+
+    final destination = GeoPoint(
+      latitude: _selectedCountry.latitude,
+      longitude: _selectedCountry.longitude,
+    );
+
+    try {
+      final route = await AppDependenciesScope.of(
+        context,
+      ).mapRepository.fetchSafeRoute(origin: origin, destination: destination);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _route = route;
+        _routeMessage = route == null
+            ? 'Backend did not return safe-route waypoints yet.'
+            : null;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _route = null;
+        _routeMessage = 'Route fetch failed: $error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isRouteLoading = false);
+      }
+    }
+  }
+}
+
+class _BackendLayerStatus extends StatelessWidget {
+  const _BackendLayerStatus({
+    required this.isLoading,
+    required this.route,
+    required this.message,
+  });
+
+  final bool isLoading;
+  final RouteModel? route;
+  final String? message;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasRoute = route != null;
+    final color = isLoading
+        ? AppTheme.signalBlue
+        : hasRoute
+        ? AppTheme.safeGreen
+        : AppTheme.warningAmber;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.22)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 14,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            if (isLoading)
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              Icon(
+                hasRoute ? Icons.route : Icons.cloud_sync_outlined,
+                color: color,
+                size: 19,
+              ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                isLoading
+                    ? 'Fetching route and hazard layers from backend...'
+                    : hasRoute
+                    ? 'Backend route loaded. No demo heatmap is being drawn.'
+                    : message ??
+                          'Waiting for backend route and hazard layer data.',
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: AppTheme.textPrimary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

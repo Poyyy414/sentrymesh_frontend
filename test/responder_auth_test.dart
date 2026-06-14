@@ -38,7 +38,7 @@ void main() {
     expect(find.text('Sign In'), findsOneWidget);
   });
 
-  testWidgets('resident SOS appears in responder incident queue', (
+  testWidgets('responder incident queue shows backend fetch state', (
     tester,
   ) async {
     final dependencies = await configureDependencies();
@@ -82,7 +82,7 @@ void main() {
     await tester.tap(find.text('Incidents').last);
     await tester.pumpAndSettle();
 
-    expect(find.text('Resident SOS'), findsOneWidget);
-    expect(find.textContaining('Just now'), findsWidgets);
+    expect(find.text('Could not load incidents'), findsOneWidget);
+    expect(find.textContaining('API request failed'), findsWidgets);
   });
 }

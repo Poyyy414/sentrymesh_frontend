@@ -543,6 +543,8 @@ class _RegisterContent extends StatelessWidget {
                         final firstNameField = TextFormField(
                           key: const Key('register_first_name_field'),
                           controller: firstNameController,
+                          style: const TextStyle(color: AppTheme.textPrimary),
+                          cursorColor: AppTheme.signalBlue,
                           textInputAction: TextInputAction.next,
                           validator: (value) =>
                               requiredValidator(value, 'First name'),
@@ -555,6 +557,8 @@ class _RegisterContent extends StatelessWidget {
                         final lastNameField = TextFormField(
                           key: const Key('register_last_name_field'),
                           controller: lastNameController,
+                          style: const TextStyle(color: AppTheme.textPrimary),
+                          cursorColor: AppTheme.signalBlue,
                           textInputAction: TextInputAction.next,
                           validator: (value) =>
                               requiredValidator(value, 'Last name'),
@@ -588,6 +592,8 @@ class _RegisterContent extends StatelessWidget {
                     TextFormField(
                       key: const Key('register_email_field'),
                       controller: emailController,
+                      style: const TextStyle(color: AppTheme.textPrimary),
+                      cursorColor: AppTheme.signalBlue,
                       keyboardType: TextInputType.emailAddress,
                       textInputAction: TextInputAction.next,
                       validator: validateEmail,
@@ -601,6 +607,8 @@ class _RegisterContent extends StatelessWidget {
                     TextFormField(
                       key: const Key('register_address_field'),
                       controller: addressController,
+                      style: const TextStyle(color: AppTheme.textPrimary),
+                      cursorColor: AppTheme.signalBlue,
                       textInputAction: TextInputAction.next,
                       validator: (value) => requiredValidator(value, 'Address'),
                       decoration: _fieldDecoration(
@@ -741,6 +749,8 @@ class _PasswordField extends StatelessWidget {
         TextFormField(
           key: const Key('register_password_field'),
           controller: controller,
+          style: const TextStyle(color: AppTheme.textPrimary),
+          cursorColor: AppTheme.signalBlue,
           obscureText: obscurePassword,
           textInputAction: TextInputAction.done,
           validator: validatePassword,

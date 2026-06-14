@@ -10,6 +10,9 @@ class RescueRequestModel {
     required this.status,
     required this.createdAt,
     this.photoUrl,
+    this.latitude,
+    this.longitude,
+    this.locationLabel,
   });
 
   final String id;
@@ -19,6 +22,9 @@ class RescueRequestModel {
   final RescueStatus status;
   final DateTime createdAt;
   final String? photoUrl;
+  final double? latitude;
+  final double? longitude;
+  final String? locationLabel;
 
   factory RescueRequestModel.fromJson(Map<String, Object?> json) {
     return RescueRequestModel(
@@ -27,14 +33,22 @@ class RescueRequestModel {
         (type) => type.name == json['emergency_type']?.toString(),
         orElse: () => HazardType.distress,
       ),
-      peopleNeedingHelp: int.tryParse(json['people_needing_help']?.toString() ?? '') ?? 1,
+      peopleNeedingHelp:
+          int.tryParse(json['people_needing_help']?.toString() ?? '') ?? 1,
       description: json['description']?.toString() ?? '',
       status: RescueStatus.values.firstWhere(
         (status) => status.name == json['status']?.toString(),
         orElse: () => RescueStatus.pending,
       ),
-      createdAt: DateTime.tryParse(json['created_at']?.toString() ?? '') ?? DateTime.now(),
+      createdAt:
+          DateTime.tryParse(json['created_at']?.toString() ?? '') ??
+          DateTime.now(),
       photoUrl: json['photo_url']?.toString(),
+      latitude: _doubleFrom(json['latitude'] ?? json['lat']),
+      longitude: _doubleFrom(json['longitude'] ?? json['lng'] ?? json['lon']),
+      locationLabel:
+          json['location_label']?.toString() ??
+          json['locationLabel']?.toString(),
     );
   }
 
@@ -47,6 +61,30 @@ class RescueRequestModel {
       'status': status.name,
       'created_at': createdAt.toIso8601String(),
       'photo_url': photoUrl,
+      if (latitude != null) 'latitude': latitude,
+      if (longitude != null) 'longitude': longitude,
+      if (locationLabel != null) 'location_label': locationLabel,
     };
+  }
+
+  Map<String, Object?> toCreateJson() {
+    return {
+      'emergency_type': emergencyType.name,
+      'people_needing_help': peopleNeedingHelp,
+      'description': description,
+      'status': status.name,
+      if (photoUrl != null) 'photo_url': photoUrl,
+      if (latitude != null) 'latitude': latitude,
+      if (longitude != null) 'longitude': longitude,
+      if (locationLabel != null) 'location_label': locationLabel,
+    };
+  }
+
+  static double? _doubleFrom(Object? value) {
+    if (value is num) {
+      return value.toDouble();
+    }
+
+    return double.tryParse(value?.toString() ?? '');
   }
 }

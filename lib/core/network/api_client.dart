@@ -21,6 +21,10 @@ class ApiClient {
     return _send('POST', path, body: body);
   }
 
+  Future<Map<String, Object?>> patch(String path, {Object? body}) async {
+    return _send('PATCH', path, body: body);
+  }
+
   Future<Map<String, Object?>> _send(
     String method,
     String path, {
@@ -63,10 +67,10 @@ class ApiClient {
       throw NetworkException('Request timed out: $uri');
     } on SocketException catch (error) {
       throw NetworkException(
-        'Could not connect to FastAPI at $uri. ${error.message}',
+        'Could not connect to API at $uri. ${error.message}',
       );
     } on FormatException {
-      throw NetworkException('FastAPI returned invalid JSON: $uri');
+      throw NetworkException('API returned invalid JSON: $uri');
     } finally {
       client.close(force: true);
     }
@@ -86,7 +90,7 @@ class ApiClient {
 
   String _errorMessage(String body, int statusCode) {
     if (body.trim().isEmpty) {
-      return 'FastAPI request failed with status $statusCode.';
+      return 'API request failed with status $statusCode.';
     }
 
     try {
