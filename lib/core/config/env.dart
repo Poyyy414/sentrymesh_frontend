@@ -5,7 +5,7 @@ class Env {
 
   static const apiBaseUrl = String.fromEnvironment(
     'SENTRYMESH_API_BASE_URL',
-    defaultValue: 'https://sentrymesh-backend.onrender.com',
+    defaultValue: 'https://backend-mesh-iz8d.onrender.com',
   );
 
   static const aiBaseUrl = String.fromEnvironment(
