@@ -11,6 +11,7 @@ class ApiEndpoints {
   static const landslidePrediction = '/predictions/landslide';
   static const predictions = '/predictions';
   static const familyMembers = '/family/members';
+  static const familyMyStatus = '/family/my-status';
   static const dashboard = '/dashboard';
   static const weatherSubscriptions = '/weather/subscriptions';
   static const typhoonStatus = '/weather/typhoon-status';

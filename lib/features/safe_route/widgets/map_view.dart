@@ -139,7 +139,7 @@ class _MapViewState extends State<MapView> {
         minZoom: 3,
         maxZoom: 18,
         backgroundColor: const Color(0xFFE6ECF2),
-        keepAlive: true,
+        keepAlive: false,
         onMapReady: _onMapReady,
       ),
       children: [

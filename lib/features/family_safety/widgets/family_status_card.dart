@@ -3,10 +3,44 @@ import 'package:flutter/material.dart';
 import '../../../app/theme.dart';
 
 class FamilyStatusCard extends StatelessWidget {
-  const FamilyStatusCard({super.key});
+  const FamilyStatusCard({
+    required this.status,
+    required this.updatedAt,
+    required this.onUpdateStatus,
+    super.key,
+  });
+
+  final String status;
+  final DateTime updatedAt;
+  final VoidCallback onUpdateStatus;
+
+  static String _label(String status) {
+    return switch (status) {
+      'safe' => 'You are Safe',
+      'need_help' => 'Need Help!',
+      _ => 'Status Unknown',
+    };
+  }
+
+  static Color _color(String status) {
+    return switch (status) {
+      'safe' => AppTheme.safeGreen,
+      'need_help' => AppTheme.dangerRed,
+      _ => AppTheme.warningAmber,
+    };
+  }
+
+  static String _timeLabel(DateTime dt) {
+    final diff = DateTime.now().difference(dt.toLocal());
+    if (diff.inSeconds < 60) return 'just now';
+    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+    if (diff.inDays < 1) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
 
   @override
   Widget build(BuildContext context) {
+    final statusColor = _color(status);
     return Container(
       key: const Key('family_status_card'),
       decoration: BoxDecoration(
@@ -37,8 +71,8 @@ class FamilyStatusCard extends StatelessWidget {
                     colorBlendMode: BlendMode.srcOver,
                   ),
                 ),
-                const DecoratedBox(
-                  decoration: BoxDecoration(
+                DecoratedBox(
+                  decoration: const BoxDecoration(
                     gradient: LinearGradient(
                       begin: Alignment.centerLeft,
                       end: Alignment.centerRight,
@@ -51,11 +85,11 @@ class FamilyStatusCard extends StatelessWidget {
                     ),
                   ),
                   child: Padding(
-                    padding: EdgeInsets.fromLTRB(16, 14, 16, 16),
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
+                        const Text(
                           'Your Status',
                           style: TextStyle(
                             color: Color(0xFF102E58),
@@ -63,28 +97,28 @@ class FamilyStatusCard extends StatelessWidget {
                             fontWeight: FontWeight.w900,
                           ),
                         ),
-                        SizedBox(height: 14),
+                        const SizedBox(height: 14),
                         Row(
                           children: [
-                            _SafeShield(),
-                            SizedBox(width: 16),
+                            _StatusShield(status: status),
+                            const SizedBox(width: 16),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'You are Safe',
+                                    _label(status),
                                     style: TextStyle(
-                                      color: AppTheme.safeGreen,
+                                      color: statusColor,
                                       fontSize: 22,
                                       height: 1.1,
                                       fontWeight: FontWeight.w900,
                                     ),
                                   ),
-                                  SizedBox(height: 5),
+                                  const SizedBox(height: 5),
                                   Text(
-                                    'Last updated: Today, 7:45 AM',
-                                    style: TextStyle(
+                                    'Last updated: ${_timeLabel(updatedAt)}',
+                                    style: const TextStyle(
                                       color: Color(0xFF687B92),
                                       fontSize: 12,
                                       fontWeight: FontWeight.w600,
@@ -122,7 +156,7 @@ class FamilyStatusCard extends StatelessWidget {
                 ),
                 child: ElevatedButton.icon(
                   key: const Key('update_family_status_button'),
-                  onPressed: _ignoreTap,
+                  onPressed: onUpdateStatus,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.transparent,
                     shadowColor: Colors.transparent,
@@ -146,22 +180,47 @@ class FamilyStatusCard extends StatelessWidget {
   }
 }
 
-class _SafeShield extends StatelessWidget {
-  const _SafeShield();
+class _StatusShield extends StatelessWidget {
+  const _StatusShield({required this.status});
+
+  final String status;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 58,
-      height: 58,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
+    final (gradient, icon) = switch (status) {
+      'safe' => (
+        const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [Color(0xFF20C576), Color(0xFF079954)],
         ),
+        Icons.shield_rounded,
+      ),
+      'need_help' => (
+        const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFF4C5E), Color(0xFFCC1627)],
+        ),
+        Icons.sos_rounded,
+      ),
+      _ => (
+        const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
+        ),
+        Icons.help_outline_rounded,
+      ),
+    };
+
+    return Container(
+      width: 58,
+      height: 58,
+      decoration: BoxDecoration(
+        gradient: gradient,
         shape: BoxShape.circle,
-        boxShadow: [
+        boxShadow: const [
           BoxShadow(
             color: Color(0x2514A267),
             blurRadius: 10,
@@ -169,9 +228,7 @@ class _SafeShield extends StatelessWidget {
           ),
         ],
       ),
-      child: const Icon(Icons.shield_rounded, color: Colors.white, size: 32),
+      child: Icon(icon, color: Colors.white, size: 32),
     );
   }
 }
-
-void _ignoreTap() {}

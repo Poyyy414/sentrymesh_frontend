@@ -32,4 +32,11 @@ class FamilyRepository {
 
     return FamilyMemberModel.fromJson(payload);
   }
+
+  Future<void> updateMyStatus({
+    required String name,
+    required String status,
+  }) async {
+    await _remote.updateMyStatus(name: name, status: status);
+  }
 }

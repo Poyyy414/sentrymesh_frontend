@@ -218,10 +218,16 @@ class _HomeScreenState extends State<HomeScreen> {
             final isWide = constraints.maxWidth >= 980;
             final horizontalPadding = isWide ? 22.0 : 14.0;
 
+            final userName =
+                AppDependenciesScope.of(
+                  context,
+                ).authRepository.currentUser?.name ??
+                'Resident';
+
             return ListView(
               padding: EdgeInsets.zero,
               children: [
-                _HomeHeader(isWide: isWide),
+                _HomeHeader(isWide: isWide, userName: userName),
                 Padding(
                   padding: EdgeInsets.fromLTRB(
                     horizontalPadding,
@@ -295,9 +301,22 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _HomeHeader extends StatelessWidget {
-  const _HomeHeader({required this.isWide});
+  const _HomeHeader({required this.isWide, required this.userName});
 
   final bool isWide;
+  final String userName;
+
+  static String _initials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts[0][0].toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+
+  static String _firstName(String name) {
+    final first = name.trim().split(RegExp(r'\s+')).first;
+    return first.isEmpty ? name : first;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -331,7 +350,7 @@ class _HomeHeader extends StatelessWidget {
                         badge: '2',
                       ),
                       const SizedBox(width: 12),
-                      const _HeaderUser(),
+                      _HeaderUser(userName: userName),
                       const SizedBox(width: 12),
                     ],
                     if (isWide) const _LiveBadge(),
@@ -340,12 +359,12 @@ class _HomeHeader extends StatelessWidget {
                 SizedBox(height: isWide ? 22 : 18),
                 Row(
                   children: [
-                    const CircleAvatar(
+                    CircleAvatar(
                       radius: 27,
                       backgroundColor: Colors.white,
                       child: Text(
-                        'JP',
-                        style: TextStyle(
+                        _initials(userName),
+                        style: const TextStyle(
                           color: AppTheme.signalBlue,
                           fontSize: 16,
                           fontWeight: FontWeight.w900,
@@ -358,7 +377,7 @@ class _HomeHeader extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Welcome, John Paul!',
+                            'Welcome, ${_firstName(userName)}!',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -502,7 +521,9 @@ class _HeaderIcon extends StatelessWidget {
 }
 
 class _HeaderUser extends StatelessWidget {
-  const _HeaderUser();
+  const _HeaderUser({required this.userName});
+
+  final String userName;
 
   @override
   Widget build(BuildContext context) {
@@ -519,9 +540,9 @@ class _HeaderUser extends StatelessWidget {
           child: const Icon(Icons.person_rounded, color: Colors.white),
         ),
         const SizedBox(width: 9),
-        const Text(
-          'John Paul',
-          style: TextStyle(
+        Text(
+          userName,
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 13,
             fontWeight: FontWeight.w800,

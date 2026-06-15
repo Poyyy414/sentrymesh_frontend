@@ -19,6 +19,7 @@ class SentryMeshShell extends StatefulWidget {
 
 class _SentryMeshShellState extends State<SentryMeshShell> {
   int _currentIndex = 0;
+  bool _mapTabCreated = false;
 
   Future<void> _logout() async {
     await AppDependenciesScope.of(context).authRepository.logout();
@@ -36,7 +37,7 @@ class _SentryMeshShellState extends State<SentryMeshShell> {
     final screens = [
       const HomeScreen(),
       const AlertsScreen(),
-      const SafeRouteMapScreen(),
+      _mapTabCreated ? const SafeRouteMapScreen() : const SizedBox.shrink(),
       const MessagesScreen(),
       Stack(
         children: [
@@ -54,7 +55,10 @@ class _SentryMeshShellState extends State<SentryMeshShell> {
       body: IndexedStack(index: _currentIndex, children: screens),
       bottomNavigationBar: SentryBottomNavBar(
         currentIndex: _currentIndex,
-        onTap: (index) => setState(() => _currentIndex = index),
+        onTap: (index) => setState(() {
+          _currentIndex = index;
+          if (index == 2) _mapTabCreated = true;
+        }),
       ),
     );
   }

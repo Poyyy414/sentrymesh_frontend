@@ -13,5 +13,15 @@ class FamilyApi {
   Future<Map<String, Object?>> addMember(Map<String, Object?> data) async {
     return _client.post(ApiEndpoints.familyMembers, body: data);
   }
+
+  Future<Map<String, Object?>> updateMyStatus({
+    required String name,
+    required String status,
+  }) async {
+    return _client.patch(ApiEndpoints.familyMyStatus, body: {
+      'name': name,
+      'status': status,
+    });
   }
+}
 
