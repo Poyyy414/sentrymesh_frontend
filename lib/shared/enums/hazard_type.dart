@@ -1,8 +1,1 @@
-enum HazardType {
-  flood,
-  landslide,
-  typhoon,
-  medical,
-  distress,
-  infrastructure,
-}
+enum HazardType { flood, landslide, typhoon, medical, distress, infrastructure }

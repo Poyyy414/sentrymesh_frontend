@@ -4,11 +4,7 @@ import '../../data/models/alert_model.dart';
 import '../../shared/enums/alert_severity.dart';
 
 class AlertCard extends StatelessWidget {
-  const AlertCard({
-    required this.alert,
-    this.onTap,
-    super.key,
-  });
+  const AlertCard({required this.alert, this.onTap, super.key});
 
   final AlertModel alert;
   final VoidCallback? onTap;
@@ -40,7 +36,10 @@ class AlertCard extends StatelessWidget {
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
                         ),
-                        _SeverityBadge(label: alert.severity.label, color: color),
+                        _SeverityBadge(
+                          label: alert.severity.label,
+                          color: color,
+                        ),
                       ],
                     ),
                     const SizedBox(height: 6),
@@ -71,10 +70,7 @@ class AlertCard extends StatelessWidget {
 }
 
 class _SeverityBadge extends StatelessWidget {
-  const _SeverityBadge({
-    required this.label,
-    required this.color,
-  });
+  const _SeverityBadge({required this.label, required this.color});
 
   final String label;
   final Color color;
@@ -90,9 +86,9 @@ class _SeverityBadge extends StatelessWidget {
       child: Text(
         label,
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: color,
-              fontWeight: FontWeight.w700,
-            ),
+          color: color,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }

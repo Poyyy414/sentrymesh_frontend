@@ -1,14 +1,23 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+
+import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
 import 'network_exceptions.dart';
 
 class ApiClient {
-  const ApiClient({required this.config});
+  ApiClient({required this.config, http.Client? client})
+    : _client = client ?? http.Client();
 
   final ApiConfig config;
+  final http.Client _client;
+  String? _authToken;
+
+  void setAuthToken(String? token) {
+    final normalized = token?.trim();
+    _authToken = normalized == null || normalized.isEmpty ? null : normalized;
+  }
 
   Future<Map<String, Object?>> get(
     String path, {
@@ -32,22 +41,27 @@ class ApiClient {
     Object? body,
   }) async {
     final uri = config.resolve(path, queryParameters: queryParameters);
-    final client = HttpClient()..connectionTimeout = config.timeout;
 
     try {
-      final request = await client.openUrl(method, uri).timeout(config.timeout);
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-
-      if (body != null) {
-        request.headers.contentType = ContentType.json;
-        request.write(jsonEncode(body));
+      final headers = <String, String>{'accept': 'application/json'};
+      if (_authToken != null) {
+        headers['authorization'] = 'Bearer $_authToken';
       }
 
-      final response = await request.close().timeout(config.timeout);
-      final responseText = await utf8.decoder
-          .bind(response)
-          .join()
+      if (body != null) {
+        headers['content-type'] = 'application/json';
+      }
+
+      final request = http.Request(method, uri)
+        ..headers.addAll(headers)
+        ..body = body == null ? '' : jsonEncode(body);
+      final streamedResponse = await _client
+          .send(request)
           .timeout(config.timeout);
+      final response = await http.Response.fromStream(
+        streamedResponse,
+      ).timeout(config.timeout);
+      final responseText = response.body;
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw NetworkException(
@@ -65,14 +79,12 @@ class ApiClient {
       rethrow;
     } on TimeoutException {
       throw NetworkException('Request timed out: $uri');
-    } on SocketException catch (error) {
+    } on http.ClientException catch (error) {
       throw NetworkException(
         'Could not connect to API at $uri. ${error.message}',
       );
     } on FormatException {
       throw NetworkException('API returned invalid JSON: $uri');
-    } finally {
-      client.close(force: true);
     }
   }
 

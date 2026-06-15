@@ -11,9 +11,9 @@ class ProfileScreen extends StatelessWidget {
         children: [
           Text(
             'Profile',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 16),
           const Card(

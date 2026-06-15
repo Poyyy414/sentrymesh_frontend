@@ -53,24 +53,23 @@ class SosButton extends StatelessWidget {
                       children: [
                         Text(
                           'EMERGENCY',
-                          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                          style: Theme.of(context).textTheme.labelMedium
+                              ?.copyWith(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w800,
                               ),
                         ),
                         Text(
                           'SOS',
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                color: Colors.white,
-                                fontSize: 31,
-                              ),
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(color: Colors.white, fontSize: 31),
                         ),
                         const SizedBox(height: 2),
                         Text(
                           'Press and hold to send distress signal',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Colors.white,
-                              ),
+                          style: Theme.of(
+                            context,
+                          ).textTheme.bodySmall?.copyWith(color: Colors.white),
                         ),
                       ],
                     ),

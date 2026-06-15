@@ -26,7 +26,9 @@ class CommunityReportModel {
         orElse: () => HazardType.distress,
       ),
       confidenceScore: _asDouble(json['confidence_score']),
-      submittedAt: DateTime.tryParse(json['submitted_at']?.toString() ?? '') ?? DateTime.now(),
+      submittedAt:
+          DateTime.tryParse(json['submitted_at']?.toString() ?? '') ??
+          DateTime.now(),
       locationLabel: json['location_label']?.toString(),
     );
   }

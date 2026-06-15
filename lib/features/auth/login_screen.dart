@@ -60,11 +60,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  void _fillDemoAccount(String email) {
-    _emailController.text = email;
-    _passwordController.text = '12345678';
-  }
-
   void _showMessage(String message) {
     if (!mounted) {
       return;
@@ -168,8 +163,6 @@ class _LoginScreenState extends State<LoginScreen> {
           _obscurePassword = !_obscurePassword;
         });
       },
-      onResidentTap: () => _fillDemoAccount('user123@gmail.com'),
-      onResponderTap: () => _fillDemoAccount('responder123@gmail.com'),
       onCreateAccount: () =>
           Navigator.of(context).pushNamed(AppRouter.register),
     );
@@ -470,8 +463,6 @@ class _SignInContent extends StatelessWidget {
     required this.validatePassword,
     required this.onSubmit,
     required this.onTogglePassword,
-    required this.onResidentTap,
-    required this.onResponderTap,
     required this.onCreateAccount,
   });
 
@@ -485,8 +476,6 @@ class _SignInContent extends StatelessWidget {
   final FormFieldValidator<String> validatePassword;
   final VoidCallback onSubmit;
   final VoidCallback onTogglePassword;
-  final VoidCallback onResidentTap;
-  final VoidCallback onResponderTap;
   final VoidCallback onCreateAccount;
 
   @override
@@ -524,50 +513,6 @@ class _SignInContent extends StatelessWidget {
                 ),
               ),
               SizedBox(height: compact ? 22 : 25),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final cardsSideBySide = constraints.maxWidth >= 560;
-                  final residentCard = _AccessCard(
-                    key: const Key('resident_access_card'),
-                    title: 'Resident access',
-                    email: 'user123@gmail.com',
-                    icon: Icons.person_rounded,
-                    color: AppTheme.signalBlue,
-                    horizontal: !cardsSideBySide,
-                    onTap: onResidentTap,
-                  );
-                  final responderCard = _AccessCard(
-                    key: const Key('responder_access_card'),
-                    title: 'Responder access',
-                    email: 'responder123@gmail.com',
-                    icon: Icons.health_and_safety_rounded,
-                    color: AppTheme.safeGreen,
-                    horizontal: !cardsSideBySide,
-                    onTap: onResponderTap,
-                  );
-
-                  if (!cardsSideBySide) {
-                    return Column(
-                      children: [
-                        residentCard,
-                        const SizedBox(height: 10),
-                        responderCard,
-                      ],
-                    );
-                  }
-
-                  return Row(
-                    children: [
-                      Expanded(child: residentCard),
-                      const SizedBox(width: 18),
-                      Expanded(child: responderCard),
-                    ],
-                  );
-                },
-              ),
-              SizedBox(height: compact ? 18 : 22),
-              const _LabeledDivider(label: 'or sign in with email'),
-              SizedBox(height: compact ? 18 : 20),
               Form(
                 key: formKey,
                 child: Column(
@@ -689,167 +634,6 @@ class _SignInContent extends StatelessWidget {
         borderRadius: BorderRadius.circular(11),
         borderSide: const BorderSide(color: AppTheme.dangerRed, width: 1.5),
       ),
-    );
-  }
-}
-
-class _AccessCard extends StatelessWidget {
-  const _AccessCard({
-    required this.title,
-    required this.email,
-    required this.icon,
-    required this.color,
-    required this.horizontal,
-    required this.onTap,
-    super.key,
-  });
-
-  final String title;
-  final String email;
-  final IconData icon;
-  final Color color;
-  final bool horizontal;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final content = horizontal
-        ? Row(
-            children: [
-              _AccessIcon(icon: icon, color: color, compact: true),
-              const SizedBox(width: 14),
-              Expanded(
-                child: _AccessText(
-                  title: title,
-                  email: email,
-                  color: color,
-                  centered: false,
-                ),
-              ),
-              Icon(
-                Icons.chevron_right_rounded,
-                color: color.withValues(alpha: 0.75),
-              ),
-            ],
-          )
-        : Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _AccessIcon(icon: icon, color: color),
-              const SizedBox(height: 13),
-              _AccessText(
-                title: title,
-                email: email,
-                color: color,
-                centered: true,
-              ),
-            ],
-          );
-
-    return Material(
-      color: color.withValues(alpha: 0.045),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(13),
-        side: BorderSide(color: color.withValues(alpha: 0.2)),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(13),
-        onTap: onTap,
-        child: SizedBox(
-          height: horizontal ? 88 : 142,
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: horizontal ? 15 : 12,
-              vertical: horizontal ? 12 : 14,
-            ),
-            child: content,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _AccessIcon extends StatelessWidget {
-  const _AccessIcon({
-    required this.icon,
-    required this.color,
-    this.compact = false,
-  });
-
-  final IconData icon;
-  final Color color;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final size = compact ? 48.0 : 58.0;
-
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        shape: BoxShape.circle,
-        border: Border.all(color: color.withValues(alpha: 0.12)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x140F365F),
-            blurRadius: 10,
-            offset: Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Icon(icon, color: color, size: compact ? 26 : 31),
-    );
-  }
-}
-
-class _AccessText extends StatelessWidget {
-  const _AccessText({
-    required this.title,
-    required this.email,
-    required this.color,
-    required this.centered,
-  });
-
-  final String title;
-  final String email;
-  final Color color;
-  final bool centered;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: centered
-          ? CrossAxisAlignment.center
-          : CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          textAlign: centered ? TextAlign.center : TextAlign.start,
-          style: TextStyle(
-            color: color == AppTheme.safeGreen
-                ? const Color(0xFF13563E)
-                : const Color(0xFF0A3873),
-            fontSize: 14,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(height: 5),
-        Text(
-          email,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: centered ? TextAlign.center : TextAlign.start,
-          style: TextStyle(
-            color: color,
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-      ],
     );
   }
 }

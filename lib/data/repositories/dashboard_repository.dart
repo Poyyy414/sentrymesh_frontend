@@ -2,7 +2,7 @@ import 'alert_repository.dart';
 
 class DashboardRepository {
   const DashboardRepository({required AlertRepository alertRepository})
-      : _alertRepository = alertRepository;
+    : _alertRepository = alertRepository;
 
   final AlertRepository _alertRepository;
 

@@ -1,7 +1,1 @@
-enum RescueStatus {
-  pending,
-  acknowledged,
-  inProgress,
-  resolved,
-  cancelled,
-}
+enum RescueStatus { pending, acknowledged, inProgress, resolved, cancelled }

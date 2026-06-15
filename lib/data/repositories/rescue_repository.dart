@@ -5,16 +5,20 @@ import '../models/rescue_navigation_model.dart';
 import '../models/rescue_request_model.dart';
 import '../sources/remote/rescue_api.dart';
 import '../../shared/enums/rescue_status.dart';
+import 'map_repository.dart';
 
 class RescueRepository {
   const RescueRepository({
     required RescueApi remote,
     required LoRaService loraService,
+    required MapRepository mapRepository,
   }) : _remote = remote,
-       _loraService = loraService;
+       _loraService = loraService,
+       _mapRepository = mapRepository;
 
   final RescueApi _remote;
   final LoRaService _loraService;
+  final MapRepository _mapRepository;
 
   Future<List<RescueRequestModel>> fetchRequests() async {
     final payload = await _remote.fetchRequests();
@@ -53,15 +57,7 @@ class RescueRepository {
     required String id,
     required RescueLocationModel location,
   }) async {
-    final payload = await _remote.updateRequestLocation(
-      id: id,
-      location: location,
-    );
-    if (payload.isEmpty) {
-      return location;
-    }
-
-    return RescueLocationModel.fromJson(payload);
+    return location;
   }
 
   Future<RescueRequestModel?> updateRequestStatus({
@@ -77,26 +73,39 @@ class RescueRepository {
   }
 
   Future<RescueLocationModel?> fetchRequestLocation(String id) async {
-    final payload = await _remote.fetchRequestLocation(id);
-    if (payload.isEmpty) {
+    final requests = await fetchRequests();
+    final request = requests.where((item) => item.id == id).firstOrNull;
+    if (request?.latitude == null || request?.longitude == null) {
       return null;
     }
 
-    return RescueLocationModel.fromJson(payload);
+    return RescueLocationModel(
+      latitude: request!.latitude!,
+      longitude: request.longitude!,
+      locationLabel: request.locationLabel,
+    );
   }
 
   Future<RescueNavigationModel?> fetchNavigation({
     required String id,
     required GeoPoint responderLocation,
   }) async {
-    final payload = await _remote.fetchRequestNavigation(
-      id: id,
-      responderLocation: responderLocation,
-    );
-    if (payload.isEmpty) {
+    final residentLocation = await fetchRequestLocation(id);
+    if (residentLocation == null) {
       return null;
     }
 
-    return RescueNavigationModel.fromJson(payload);
+    final route = await _mapRepository.fetchSafeRoute(
+      origin: responderLocation,
+      destination: residentLocation.point,
+    );
+
+    return RescueNavigationModel(
+      directDistanceKm: route?.distanceKm ?? 0,
+      bearingDegrees: 0,
+      route: route,
+      navigationUrl:
+          'https://www.google.com/maps/dir/?api=1&destination=${residentLocation.latitude},${residentLocation.longitude}&travelmode=driving',
+    );
   }
 }

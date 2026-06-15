@@ -12,13 +12,20 @@ class SentryMeshApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final initialUser = dependencies.initialUser;
+    final initialRoute = initialUser == null
+        ? AppRouter.login
+        : initialUser.role == 'responder'
+        ? AppRouter.responderShell
+        : AppRouter.appShell;
+
     return AppDependenciesScope(
       dependencies: dependencies,
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         title: AppConstants.appName,
         theme: AppTheme.light,
-        initialRoute: AppRouter.root,
+        initialRoute: initialRoute,
         onGenerateRoute: AppRouter.onGenerateRoute,
       ),
     );

@@ -4,63 +4,28 @@ import '../models/user_model.dart';
 import '../sources/remote/auth_api.dart';
 
 class AuthRepository {
-  const AuthRepository({
-    required AuthApi remote,
-    required StorageService storage,
-  }) : _remote = remote,
-       _storage = storage;
+  AuthRepository({required AuthApi remote, required StorageService storage})
+    : _remote = remote,
+      _storage = storage;
 
   final AuthApi _remote;
   final StorageService _storage;
+  UserModel? _currentUser;
 
-  static final Map<String, _MockAuthAccount> _accounts = {
-    'user123@gmail.com': const _MockAuthAccount(
-      id: 'mock-user-001',
-      firstName: 'Sentry',
-      lastName: 'User',
-      email: 'user123@gmail.com',
-      address: 'Naga City, Camarines Sur',
-      password: '12345678',
-      role: 'user',
-    ),
-    'responder123@gmail.com': const _MockAuthAccount(
-      id: 'mock-responder-001',
-      firstName: 'Sentry',
-      lastName: 'Responder',
-      email: 'responder123@gmail.com',
-      address: 'Naga City Command Center',
-      password: '12345678',
-      role: 'responder',
-    ),
-  };
+  UserModel? get currentUser => _currentUser;
 
   Future<UserModel> login({
     required String email,
     required String password,
   }) async {
     final normalizedEmail = email.trim().toLowerCase();
-
-    // Keep the built-in demo accounts working without hitting the backend.
-    final mockAccount = _accounts[normalizedEmail];
-    if (mockAccount != null) {
-      if (mockAccount.password != password) {
-        throw const AuthException('Invalid email or password.');
-      }
-
-      await _storage.saveAuthToken(
-        'mock-${mockAccount.role}-${mockAccount.email}',
-      );
-      return mockAccount.toUserModel();
-    }
-
-    // All other accounts go through the real API.
     try {
       final payload = await _remote.login(
         email: normalizedEmail,
         password: password,
       );
 
-      final token = _tokenFromPayload(payload) ?? 'api-user-$normalizedEmail';
+      final token = _requiredToken(payload);
       final user = _userFromPayload(
         payload,
         firstName: '',
@@ -68,7 +33,7 @@ class AuthRepository {
         email: normalizedEmail,
       );
 
-      await _storage.saveAuthToken(token);
+      await _saveSession(token, user);
       return user;
     } on NetworkException catch (error) {
       throw AuthException(error.message);
@@ -91,7 +56,7 @@ class AuthRepository {
         password: password,
       );
 
-      final token = _tokenFromPayload(payload) ?? 'api-user-${email.trim()}';
+      final token = _requiredToken(payload);
       final user = _userFromPayload(
         payload,
         firstName: firstName,
@@ -99,15 +64,57 @@ class AuthRepository {
         email: email,
       );
 
-      await _storage.saveAuthToken(token);
+      await _saveSession(token, user);
       return user;
     } on NetworkException catch (error) {
       throw AuthException(error.message);
     }
   }
 
-  String? _tokenFromPayload(Map<String, Object?> payload) {
-    return (payload['access_token'] ?? payload['token'])?.toString();
+  Future<UserModel?> restoreSession() async {
+    final token = _storage.readAuthToken();
+    if (token == null || token.isEmpty) return null;
+
+    _remote.setAuthToken(token);
+    try {
+      final payload = await _remote.currentUser();
+      final savedUser = _storage.readAuthUser();
+      final user = _userFromPayload(
+        payload,
+        firstName: '',
+        lastName: '',
+        email: savedUser?['email']?.toString() ?? '',
+      );
+      _currentUser = user;
+      await _storage.saveAuthUser(user.toJson());
+      return user;
+    } on NetworkException catch (error) {
+      if (error.statusCode == 401 || error.statusCode == 403) {
+        await logout();
+        return null;
+      }
+
+      final savedUser = _storage.readAuthUser();
+      if (savedUser != null) {
+        _currentUser = UserModel.fromJson(savedUser);
+      }
+      return _currentUser;
+    }
+  }
+
+  String _requiredToken(Map<String, Object?> payload) {
+    final token = (payload['access_token'] ?? payload['token'])?.toString();
+    if (token == null || token.isEmpty) {
+      throw const AuthException('Backend returned an invalid login response.');
+    }
+    return token;
+  }
+
+  Future<void> _saveSession(String token, UserModel user) async {
+    _remote.setAuthToken(token);
+    _currentUser = user;
+    await _storage.saveAuthToken(token);
+    await _storage.saveAuthUser(user.toJson());
   }
 
   UserModel _userFromPayload(
@@ -157,8 +164,10 @@ class AuthRepository {
     );
   }
 
-  Future<void> logout() {
-    return _storage.clearAuthToken();
+  Future<void> logout() async {
+    _remote.setAuthToken(null);
+    _currentUser = null;
+    await _storage.clearAuthSession();
   }
 }
 
@@ -170,34 +179,5 @@ class AuthException implements Exception {
   @override
   String toString() {
     return message;
-  }
-}
-
-class _MockAuthAccount {
-  const _MockAuthAccount({
-    required this.id,
-    required this.firstName,
-    required this.lastName,
-    required this.email,
-    required this.address,
-    required this.password,
-    required this.role,
-  });
-
-  final String id;
-  final String firstName;
-  final String lastName;
-  final String email;
-  final String address;
-  final String password;
-  final String role;
-
-  UserModel toUserModel() {
-    return UserModel(
-      id: id,
-      name: '$firstName $lastName',
-      email: email,
-      role: role,
-    );
   }
 }

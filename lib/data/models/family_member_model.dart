@@ -21,7 +21,9 @@ class FamilyMemberModel {
       name: json['name']?.toString() ?? '',
       relationship: json['relationship']?.toString() ?? '',
       status: json['status']?.toString() ?? 'waiting',
-      updatedAt: DateTime.tryParse(json['updated_at']?.toString() ?? '') ?? DateTime.now(),
+      updatedAt:
+          DateTime.tryParse(json['updated_at']?.toString() ?? '') ??
+          DateTime.now(),
       avatarUrl: json['avatar_url']?.toString(),
     );
   }

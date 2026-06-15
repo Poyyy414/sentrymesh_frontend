@@ -42,21 +42,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isLoading = true);
 
     try {
-      await AppDependenciesScope.of(context).authRepository.register(
-        firstName: _firstNameController.text,
-        lastName: _lastNameController.text,
-        email: _emailController.text,
-        address: _addressController.text,
-        password: _passwordController.text,
-      );
+      final user = await AppDependenciesScope.of(context).authRepository
+          .register(
+            firstName: _firstNameController.text,
+            lastName: _lastNameController.text,
+            email: _emailController.text,
+            address: _addressController.text,
+            password: _passwordController.text,
+          );
 
       if (!mounted) {
         return;
       }
 
-      Navigator.of(
-        context,
-      ).pushNamedAndRemoveUntil(AppRouter.appShell, (_) => false);
+      final route = user.role == 'responder'
+          ? AppRouter.responderShell
+          : AppRouter.appShell;
+      Navigator.of(context).pushNamedAndRemoveUntil(route, (_) => false);
     } on AuthException catch (error) {
       _showMessage(error.message);
     } catch (_) {

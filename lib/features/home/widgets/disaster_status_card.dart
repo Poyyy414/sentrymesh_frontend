@@ -55,18 +55,18 @@ class DisasterStatusCard extends StatelessWidget {
                       Text(
                         'DISASTER STATUS',
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              color: AppTheme.textMuted,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0,
-                            ),
+                          color: AppTheme.textMuted,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0,
+                        ),
                       ),
                       const SizedBox(height: 6),
                       Text(
                         'SAFE',
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              color: AppTheme.safeGreen,
-                              fontSize: 28,
-                            ),
+                          color: AppTheme.safeGreen,
+                          fontSize: 28,
+                        ),
                       ),
                       const SizedBox(height: 2),
                       Text(

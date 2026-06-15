@@ -6,7 +6,6 @@ import '../../app/theme.dart';
 import '../../core/di/injection.dart';
 import '../../core/services/location_service.dart';
 import '../../data/models/prediction_model.dart';
-import '../../data/models/rescue_location_model.dart';
 import '../../data/models/rescue_request_model.dart';
 import '../../data/repositories/prediction_repository.dart';
 import '../../shared/demo/demo_scenario.dart';
@@ -22,13 +21,6 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool _distressSent = DemoScenario.instance.residentSosSent;
-  StreamSubscription? _sosLocationSubscription;
-
-  @override
-  void dispose() {
-    _sosLocationSubscription?.cancel();
-    super.dispose();
-  }
 
   Future<void> _openSosFlow() async {
     final sent = await showModalBottomSheet<bool>(
@@ -71,20 +63,8 @@ class _HomeScreenState extends State<HomeScreen> {
         longitude: location.longitude,
         locationLabel: 'Resident GPS',
       );
-      final savedRequest = await dependencies.rescueRepository.submitRequest(
-        request,
-      );
-      final requestId = savedRequest.id.isEmpty ? request.id : savedRequest.id;
-
-      await dependencies.rescueRepository.updateRequestLocation(
-        id: requestId,
-        location: RescueLocationModel.fromPoint(
-          location,
-          locationLabel: 'Resident GPS',
-        ),
-      );
-      _startSosLocationTracking(requestId);
-      _showSosSnackBar('SOS sent with live location for responders.');
+      await dependencies.rescueRepository.submitRequest(request);
+      _showSosSnackBar('SOS sent with your current location for responders.');
       return true;
     } on LocationServiceDisabledException {
       _showLocationSettingsSnackBar();
@@ -97,22 +77,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return false;
-  }
-
-  void _startSosLocationTracking(String requestId) {
-    final dependencies = AppDependenciesScope.of(context);
-    _sosLocationSubscription?.cancel();
-    _sosLocationSubscription = dependencies.locationService
-        .watchLocation()
-        .listen((location) {
-          dependencies.rescueRepository.updateRequestLocation(
-            id: requestId,
-            location: RescueLocationModel.fromPoint(
-              location,
-              locationLabel: 'Resident GPS',
-            ),
-          );
-        }, onError: (_) {});
   }
 
   void _showSosSnackBar(String message) {

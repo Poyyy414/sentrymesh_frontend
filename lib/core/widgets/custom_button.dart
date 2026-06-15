@@ -57,11 +57,7 @@ class SentryButton extends StatelessWidget {
     return ElevatedButton.icon(
       onPressed: effectiveOnPressed,
       icon: Icon(icon, size: 19),
-      label: Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
+      label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
       style: style,
     );
   }

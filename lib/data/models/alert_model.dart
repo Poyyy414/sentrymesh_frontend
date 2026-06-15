@@ -28,7 +28,9 @@ class AlertModel {
       message: json['message']?.toString() ?? '',
       severity: _severityFromJson(json['severity']),
       hazardType: _hazardTypeFromJson(json['hazard_type']),
-      issuedAt: DateTime.tryParse(json['issued_at']?.toString() ?? '') ?? DateTime.now(),
+      issuedAt:
+          DateTime.tryParse(json['issued_at']?.toString() ?? '') ??
+          DateTime.now(),
     );
   }
 

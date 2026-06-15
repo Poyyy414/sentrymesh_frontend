@@ -2,7 +2,8 @@ class ApiEndpoints {
   const ApiEndpoints._();
 
   static const authLogin = '/auth/login';
-  static const authRegister = '/auth/register';
+  static const authMe = '/auth/me';
+  static const authRegister = '/api/v1/auth/register';
   static const alerts = '/alerts';
   static const rescueRequests = '/rescue-requests';
   static const safeRoutes = '/safe-routes';
@@ -11,6 +12,9 @@ class ApiEndpoints {
   static const predictions = '/predictions';
   static const familyMembers = '/family/members';
   static const dashboard = '/dashboard';
+  static const weatherSubscriptions = '/weather/subscriptions';
+  static const typhoonStatus = '/weather/typhoon-status';
+  static const typhoonAlerts = '/weather/typhoon-alerts';
 
   static String rescueRequestById(String id) {
     return '/rescue-requests/$id';

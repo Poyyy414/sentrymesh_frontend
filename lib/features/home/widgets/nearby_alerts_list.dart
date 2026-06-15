@@ -70,13 +70,16 @@ class NearbyAlertsList extends StatelessWidget {
                       child: Text(
                         'Medium',
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              color: AppTheme.warningAmber,
-                              fontWeight: FontWeight.w800,
-                            ),
+                          color: AppTheme.warningAmber,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text('1h ago', style: Theme.of(context).textTheme.labelSmall),
+                    Text(
+                      '1h ago',
+                      style: Theme.of(context).textTheme.labelSmall,
+                    ),
                   ],
                 ),
               ],

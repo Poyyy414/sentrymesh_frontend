@@ -135,7 +135,9 @@ Future<void> _launchNavigation({
   if (uri == null) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Resident location is not available yet.')),
+        const SnackBar(
+          content: Text('Resident location is not available yet.'),
+        ),
       );
     }
     return;
@@ -143,9 +145,9 @@ Future<void> _launchNavigation({
 
   final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
   if (!launched && context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Could not open maps app.')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Could not open maps app.')));
   }
 }
 
@@ -411,13 +413,30 @@ class _ActiveIncidentsScreenState extends State<ActiveIncidentsScreen> {
   }
 }
 
-class ResponderIncidentDetailScreen extends StatelessWidget {
-  const ResponderIncidentDetailScreen({required this.incident, super.key});
+class _ResponderIncidentDetailScreen extends StatelessWidget {
+  const _ResponderIncidentDetailScreen({required this.incident});
 
   final _Incident incident;
 
   @override
   Widget build(BuildContext context) {
+    Future<void> updateStatus(RescueStatus status, String confirmation) async {
+      try {
+        await AppDependenciesScope.of(
+          context,
+        ).rescueRepository.updateRequestStatus(id: incident.id, status: status);
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(confirmation)));
+      } catch (error) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not update incident: $error')),
+        );
+      }
+    }
+
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
@@ -490,47 +509,47 @@ class ResponderIncidentDetailScreen extends StatelessWidget {
           SentryButton(
             label: 'Dispatch Team',
             icon: Icons.airport_shuttle,
-            onPressed: () {
-              DemoScenario.instance.dispatchTeam(incident.id);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Team dispatched to ${incident.location}.'),
-                ),
-              );
-            },
+            onPressed: () => updateStatus(
+              RescueStatus.acknowledged,
+              'Team dispatched to ${incident.location}.',
+            ),
           ),
           const SizedBox(height: 10),
           SentryButton(
             label: 'Navigate to Location',
             icon: Icons.navigation,
             backgroundColor: AppTheme.safeGreen,
-            onPressed: () {
-              DemoScenario.instance.markEnRoute(incident.id);
+            onPressed: () async {
+              await updateStatus(
+                RescueStatus.inProgress,
+                'Incident marked as en route.',
+              );
+              if (!context.mounted) return;
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (_) => ResponderNavigationScreen(incident: incident),
+                  builder: (_) =>
+                      _ResponderNavigationScreen(incident: incident),
                 ),
               );
             },
           ),
           const SizedBox(height: 10),
           OutlinedButton.icon(
-            onPressed: () {
-              DemoScenario.instance.markEnRoute(incident.id);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Incident marked as on-route.')),
-              );
-            },
+            onPressed: () => updateStatus(
+              RescueStatus.inProgress,
+              'Incident marked as on-route.',
+            ),
             icon: const Icon(Icons.flag),
             label: const Text('Mark as On-Route'),
           ),
           const SizedBox(height: 10),
           OutlinedButton.icon(
-            onPressed: () {
-              DemoScenario.instance.resolveIncident(incident.id);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Incident marked resolved.')),
+            onPressed: () async {
+              await updateStatus(
+                RescueStatus.resolved,
+                'Incident marked resolved.',
               );
+              if (!context.mounted) return;
               Navigator.of(context).pop();
             },
             icon: const Icon(Icons.check_circle_outline),
@@ -542,17 +561,18 @@ class ResponderIncidentDetailScreen extends StatelessWidget {
   }
 }
 
-class ResponderNavigationScreen extends StatefulWidget {
-  const ResponderNavigationScreen({required this.incident, super.key});
+class _ResponderNavigationScreen extends StatefulWidget {
+  const _ResponderNavigationScreen({required this.incident});
 
   final _Incident incident;
 
   @override
-  State<ResponderNavigationScreen> createState() =>
+  State<_ResponderNavigationScreen> createState() =>
       _ResponderNavigationScreenState();
 }
 
-class _ResponderNavigationScreenState extends State<ResponderNavigationScreen> {
+class _ResponderNavigationScreenState
+    extends State<_ResponderNavigationScreen> {
   final _mapController = MapController();
 
   GeoPoint? _responderLocation;
@@ -603,10 +623,7 @@ class _ResponderNavigationScreenState extends State<ResponderNavigationScreen> {
     try {
       responderLocation = await dependencies.locationService.currentLocation();
     } catch (error) {
-      message = [
-        ?message,
-        'Responder GPS is not available: $error',
-      ].join('\n');
+      message = [?message, 'Responder GPS is not available: $error'].join('\n');
     }
 
     if (residentLocation != null && responderLocation != null) {
@@ -1744,7 +1761,8 @@ class _IncidentCard extends StatelessWidget {
         onTap: () {
           Navigator.of(context).push(
             MaterialPageRoute<void>(
-              builder: (_) => ResponderIncidentDetailScreen(incident: incident),
+              builder: (_) =>
+                  _ResponderIncidentDetailScreen(incident: incident),
             ),
           );
         },
@@ -1798,21 +1816,6 @@ class _Incident {
     this.latitude,
     this.longitude,
   });
-
-  factory _Incident.fromDemo(DemoIncident incident) {
-    return _Incident(
-      id: incident.id,
-      icon: _demoIncidentIcon(incident.type),
-      title: incident.title,
-      location: incident.location,
-      meta:
-          '${incident.people} people - ${incident.timeLabel} - ${_statusLabel(incident.status)}',
-      severity: incident.severity,
-      color: _severityColor(incident.severity),
-      people: incident.people,
-      status: _statusLabel(incident.status),
-    );
-  }
 
   factory _Incident.fromRescueRequest(RescueRequestModel request) {
     final severityLabel = _severityLabelFromPeople(request.peopleNeedingHelp);

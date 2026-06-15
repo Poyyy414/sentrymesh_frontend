@@ -22,99 +22,27 @@ class PredictionRepository {
   final PredictionApi _remote;
 
   Future<PredictionBundle> fetchHomePredictions() async {
-    final modelInfo = await _remote.fetchModelInfo();
-    final featureColumns = modelInfo.featureColumns.isEmpty
-        ? _fallbackFeatureColumns
-        : modelInfo.featureColumns;
-
-    final response = await _remote.predictNodes(
-      nodes: [
-        _nodePayload(
-          nodeId: 42,
-          featureColumns: featureColumns,
-          signals: _nagaFloodSignals,
-        ),
-        _nodePayload(
-          nodeId: 73,
-          featureColumns: featureColumns,
-          signals: _nagaLandslideSignals,
-        ),
-      ],
-    );
-
-    final flood = _nodeById(response.nodes, '42') ?? response.firstNode;
-    final landslide =
-        _nodeById(response.nodes, '73') ??
-        (response.nodes.length > 1 ? response.nodes[1] : null);
+    final responses = await Future.wait([
+      _remote.predictFlood(payload: _predictionPayload(_nagaFloodSignals)),
+      _remote.predictLandslide(
+        payload: _predictionPayload(_nagaLandslideSignals),
+      ),
+    ]);
 
     return PredictionBundle(
-      modelInfo: modelInfo,
-      flood: flood,
-      landslide: landslide,
+      modelInfo: const AiModelInfo(featureColumns: _fallbackFeatureColumns),
+      flood: responses[0].firstNode,
+      landslide: responses[1].firstNode,
       fetchedAt: DateTime.now(),
     );
   }
 
-  Map<String, Object?> _nodePayload({
-    required int nodeId,
-    required List<String> featureColumns,
-    required Map<String, num> signals,
-  }) {
+  Map<String, Object?> _predictionPayload(Map<String, num> signals) {
     return {
-      'node_id': nodeId,
-      'features': [
-        for (var index = 0; index < featureColumns.length; index++)
-          _featureValueFor(featureColumns[index], index, signals),
-      ],
+      for (final entry in signals.entries) entry.key: entry.value,
+      'location_label': 'Naga City, Camarines Sur',
     };
   }
-
-  double _featureValueFor(
-    String featureName,
-    int index,
-    Map<String, num> signals,
-  ) {
-    final normalized = _normalize(featureName);
-
-    for (final entry in signals.entries) {
-      if (_normalize(entry.key) == normalized) {
-        return entry.value.toDouble();
-      }
-    }
-
-    for (final alias in _featureAliases.entries) {
-      if (alias.value.any((item) => normalized.contains(item))) {
-        return signals[alias.key]?.toDouble() ?? _fallbackValue(index);
-      }
-    }
-
-    return _fallbackValue(index);
-  }
-
-  double _fallbackValue(int index) {
-    if (index < _fallbackFeatures.length) {
-      return _fallbackFeatures[index].toDouble();
-    }
-
-    return 0;
-  }
-
-  NodePredictionModel? _nodeById(
-    List<NodePredictionModel> nodes,
-    String nodeId,
-  ) {
-    for (final node in nodes) {
-      if (node.nodeId == nodeId) {
-        return node;
-      }
-    }
-
-    return null;
-  }
-}
-
-String _normalize(String value) {
-  return value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
 }
 
 const _fallbackFeatureColumns = [
@@ -138,50 +66,6 @@ const _fallbackFeatureColumns = [
   'distance_to_river',
   'recent_reports',
 ];
-
-const _fallbackFeatures = [
-  14.5,
-  121.0,
-  6,
-  162,
-  14,
-  1,
-  8.2,
-  7.3,
-  0.3,
-  0.6,
-  0.4,
-  0.2,
-  0.05,
-  65,
-  985,
-  18,
-  120,
-  20,
-  4,
-];
-
-const _featureAliases = {
-  'latitude': ['latitude', 'lat'],
-  'longitude': ['longitude', 'lng', 'lon'],
-  'hour': ['hour', 'time'],
-  'rainfall_mm': ['rainfall', 'rain', 'precipitation'],
-  'wind_speed_kph': ['wind'],
-  'hazard_type': ['hazard', 'type'],
-  'water_level_m': ['waterlevel', 'flooddepth', 'waterheight'],
-  'river_level_m': ['riverlevel', 'streamlevel'],
-  'slope': ['slope'],
-  'soil_moisture': ['soilmoisture', 'soil', 'saturation'],
-  'surface_runoff': ['runoff'],
-  'upstream_water_level': ['upstream'],
-  'ground_movement': ['groundmovement', 'movement'],
-  'humidity': ['humidity'],
-  'pressure': ['pressure'],
-  'temperature': ['temperature', 'temp'],
-  'elevation': ['elevation', 'altitude'],
-  'distance_to_river': ['distancetoriver', 'riverdistance'],
-  'recent_reports': ['report', 'pulse', 'community'],
-};
 
 const _nagaFloodSignals = {
   'latitude': 13.6218,

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 class PeopleCounter extends StatefulWidget {
-  const PeopleCounter({super.key});
+  const PeopleCounter({this.onChanged, super.key});
+
+  final ValueChanged<int>? onChanged;
 
   @override
   State<PeopleCounter> createState() => _PeopleCounterState();
@@ -36,7 +38,12 @@ class _PeopleCounterState extends State<PeopleCounter> {
               child: Row(
                 children: [
                   IconButton(
-                    onPressed: _count > 1 ? () => setState(() => _count--) : null,
+                    onPressed: _count > 1
+                        ? () {
+                            setState(() => _count--);
+                            widget.onChanged?.call(_count);
+                          }
+                        : null,
                     tooltip: 'Decrease people count',
                     icon: const Icon(Icons.remove, size: 17),
                     visualDensity: VisualDensity.compact,
@@ -54,7 +61,10 @@ class _PeopleCounterState extends State<PeopleCounter> {
                     ),
                   ),
                   IconButton(
-                    onPressed: () => setState(() => _count++),
+                    onPressed: () {
+                      setState(() => _count++);
+                      widget.onChanged?.call(_count);
+                    },
                     tooltip: 'Increase people count',
                     icon: const Icon(Icons.add, size: 17),
                     visualDensity: VisualDensity.compact,

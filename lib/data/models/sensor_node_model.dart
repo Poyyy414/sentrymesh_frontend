@@ -26,8 +26,11 @@ class SensorNodeModel {
         latitude: _asDouble(json['latitude']),
         longitude: _asDouble(json['longitude']),
       ),
-      batteryPercent: int.tryParse(json['battery_percent']?.toString() ?? '') ?? 0,
-      lastSeenAt: DateTime.tryParse(json['last_seen_at']?.toString() ?? '') ?? DateTime.now(),
+      batteryPercent:
+          int.tryParse(json['battery_percent']?.toString() ?? '') ?? 0,
+      lastSeenAt:
+          DateTime.tryParse(json['last_seen_at']?.toString() ?? '') ??
+          DateTime.now(),
       waterLevelMeters: _nullableDouble(json['water_level_meters']),
       soilMoisture: _nullableDouble(json['soil_moisture']),
       signalStrength: _nullableDouble(json['signal_strength']),

@@ -70,11 +70,7 @@ class _ContactTile extends StatelessWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      subtitle: Text(
-        phone,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
+      subtitle: Text(phone, maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: IconButton(
         onPressed: () {},
         tooltip: 'Call $name',

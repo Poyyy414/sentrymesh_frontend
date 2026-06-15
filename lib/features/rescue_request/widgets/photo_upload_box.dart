@@ -10,14 +10,8 @@ class PhotoUploadBox extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Upload Photo',
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        Text(
-          '(optional)',
-          style: Theme.of(context).textTheme.labelSmall,
-        ),
+        Text('Upload Photo', style: Theme.of(context).textTheme.titleSmall),
+        Text('(optional)', style: Theme.of(context).textTheme.labelSmall),
         const SizedBox(height: 8),
         InkWell(
           onTap: () {},

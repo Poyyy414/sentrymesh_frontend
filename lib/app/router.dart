@@ -42,9 +42,6 @@ class AppRouter {
       _ => const LoginScreen(),
     };
 
-    return MaterialPageRoute<void>(
-      builder: (_) => page,
-      settings: settings,
-    );
+    return MaterialPageRoute<void>(builder: (_) => page, settings: settings);
   }
 }

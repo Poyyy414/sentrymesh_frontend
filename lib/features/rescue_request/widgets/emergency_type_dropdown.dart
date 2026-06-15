@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 class EmergencyTypeDropdown extends StatefulWidget {
-  const EmergencyTypeDropdown({super.key});
+  const EmergencyTypeDropdown({this.onChanged, super.key});
+
+  final ValueChanged<String>? onChanged;
 
   @override
   State<EmergencyTypeDropdown> createState() => _EmergencyTypeDropdownState();
@@ -27,10 +29,7 @@ class _EmergencyTypeDropdownState extends State<EmergencyTypeDropdown> {
           value: 'Medical Emergency',
           child: Text('Medical Emergency'),
         ),
-        DropdownMenuItem(
-          value: 'Flood Rescue',
-          child: Text('Flood Rescue'),
-        ),
+        DropdownMenuItem(value: 'Flood Rescue', child: Text('Flood Rescue')),
         DropdownMenuItem(
           value: 'Landslide Rescue',
           child: Text('Landslide Rescue'),
@@ -43,6 +42,7 @@ class _EmergencyTypeDropdownState extends State<EmergencyTypeDropdown> {
       onChanged: (value) {
         if (value != null) {
           setState(() => _value = value);
+          widget.onChanged?.call(value);
         }
       },
     );

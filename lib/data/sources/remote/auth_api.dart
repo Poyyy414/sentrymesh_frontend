@@ -6,6 +6,14 @@ class AuthApi {
 
   final ApiClient _client;
 
+  void setAuthToken(String? token) {
+    _client.setAuthToken(token);
+  }
+
+  Future<Map<String, Object?>> currentUser() {
+    return _client.get(ApiEndpoints.authMe);
+  }
+
   Future<Map<String, Object?>> login({
     required String email,
     required String password,

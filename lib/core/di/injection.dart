@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 
+import '../../data/models/user_model.dart';
 import '../../data/repositories/alert_repository.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../data/repositories/dashboard_repository.dart';
@@ -27,14 +28,19 @@ import '../services/offline/offline_map_cache.dart';
 import '../services/storage_service.dart';
 
 Future<AppDependencies> configureDependencies() async {
-  return AppDependencies(apiConfig: Env.apiConfig);
+  final localStorage = await LocalStorage.create();
+  final dependencies = AppDependencies(
+    apiConfig: Env.apiConfig,
+    localStorage: localStorage,
+  );
+  dependencies.initialUser = await dependencies.authRepository.restoreSession();
+  return dependencies;
 }
 
 class AppDependencies {
-  AppDependencies({required ApiConfig apiConfig})
+  AppDependencies({required ApiConfig apiConfig, required this.localStorage})
     : apiClient = ApiClient(config: apiConfig),
       aiClient = ApiClient(config: Env.aiConfig) {
-    localStorage = LocalStorage();
     cacheManager = CacheManager(storage: localStorage);
     storageService = StorageService(localStorage: localStorage);
     connectivityService = ConnectivityService();
@@ -49,15 +55,16 @@ class AppDependencies {
     rescueApi = RescueApi(apiClient);
     mapApi = MapApi(apiClient);
     familyApi = FamilyApi(apiClient);
-    predictionApi = PredictionApi(aiClient);
+    predictionApi = PredictionApi(apiClient);
 
     authRepository = AuthRepository(remote: authApi, storage: storageService);
     alertRepository = AlertRepository(remote: alertsApi);
+    mapRepository = MapRepository(remote: mapApi);
     rescueRepository = RescueRepository(
       remote: rescueApi,
       loraService: loraService,
+      mapRepository: mapRepository,
     );
-    mapRepository = MapRepository(remote: mapApi);
     familyRepository = FamilyRepository(remote: familyApi);
     predictionRepository = PredictionRepository(remote: predictionApi);
     dashboardRepository = DashboardRepository(alertRepository: alertRepository);
@@ -65,8 +72,9 @@ class AppDependencies {
 
   final ApiClient apiClient;
   final ApiClient aiClient;
+  UserModel? initialUser;
 
-  late final LocalStorage localStorage;
+  final LocalStorage localStorage;
   late final CacheManager cacheManager;
   late final StorageService storageService;
   late final ConnectivityService connectivityService;

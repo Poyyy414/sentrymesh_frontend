@@ -9,7 +9,9 @@ class MessageDetailsScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('Message')),
       body: const Padding(
         padding: EdgeInsets.all(20),
-        child: Text('Evacuation route remains open. Follow responder instructions.'),
+        child: Text(
+          'Evacuation route remains open. Follow responder instructions.',
+        ),
       ),
     );
   }

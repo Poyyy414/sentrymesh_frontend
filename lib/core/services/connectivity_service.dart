@@ -1,8 +1,4 @@
-enum ConnectivityStatus {
-  online,
-  limited,
-  offline,
-}
+enum ConnectivityStatus { online, limited, offline }
 
 class ConnectivityService {
   const ConnectivityService();

@@ -26,7 +26,9 @@ class HazardModel {
       ),
       confidence: _asDouble(json['confidence']),
       severityScore: _asDouble(json['severity_score']),
-      updatedAt: DateTime.tryParse(json['updated_at']?.toString() ?? '') ?? DateTime.now(),
+      updatedAt:
+          DateTime.tryParse(json['updated_at']?.toString() ?? '') ??
+          DateTime.now(),
       locationLabel: json['location_label']?.toString(),
     );
   }

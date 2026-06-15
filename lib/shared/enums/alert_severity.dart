@@ -1,9 +1,4 @@
-enum AlertSeverity {
-  low,
-  medium,
-  high,
-  critical,
-}
+enum AlertSeverity { low, medium, high, critical }
 
 extension AlertSeverityLabel on AlertSeverity {
   String get label {

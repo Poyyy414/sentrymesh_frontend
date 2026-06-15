@@ -1,11 +1,53 @@
 import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
+import '../../core/di/injection.dart';
+import '../../data/models/family_member_model.dart';
 import 'widgets/family_member_tile.dart';
 import 'widgets/family_status_card.dart';
 
-class FamilySafetyScreen extends StatelessWidget {
+class FamilySafetyScreen extends StatefulWidget {
   const FamilySafetyScreen({super.key});
+
+  @override
+  State<FamilySafetyScreen> createState() => _FamilySafetyScreenState();
+}
+
+class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
+  List<FamilyMemberModel> _members = const [];
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_isLoading && _members.isEmpty && _error == null) {
+      _loadMembers();
+    }
+  }
+
+  Future<void> _loadMembers() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final members = await AppDependenciesScope.of(
+        context,
+      ).familyRepository.fetchMembers();
+      if (!mounted) return;
+      setState(() {
+        _members = members;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.toString();
+        _isLoading = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -31,54 +73,51 @@ class FamilySafetyScreen extends StatelessWidget {
                       Center(
                         child: ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 1280),
-                          child: const Column(
+                          child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              FamilyStatusCard(),
-                              SizedBox(height: 20),
-                              _FamilyMembersHeading(),
-                              SizedBox(height: 10),
-                              FamilyMemberTile(
-                                key: Key('family_member_maria'),
-                                initials: 'ML',
-                                name: 'Maria Lopez',
-                                relationship: 'Wife',
-                                status: 'Safe',
-                                updated: 'Updated: 5m ago',
-                                color: AppTheme.safeGreen,
-                              ),
-                              SizedBox(height: 8),
-                              FamilyMemberTile(
-                                key: Key('family_member_antonio'),
-                                initials: 'AD',
-                                name: 'Antonio Dela Cruz',
-                                relationship: 'Son',
-                                status: 'Waiting',
-                                updated: 'Updated: 15m ago',
-                                color: AppTheme.warningAmber,
-                              ),
-                              SizedBox(height: 8),
-                              FamilyMemberTile(
-                                key: Key('family_member_carmen'),
-                                initials: 'CP',
-                                name: 'Carmen Paul',
-                                relationship: 'Mother',
-                                status: 'Needs Help',
-                                updated: 'Updated: 20m ago',
-                                color: AppTheme.dangerRed,
-                              ),
-                              SizedBox(height: 8),
-                              FamilyMemberTile(
-                                key: Key('family_member_bea'),
-                                initials: 'BD',
-                                name: 'Bea Dela Cruz',
-                                relationship: 'Daughter',
-                                status: 'Safe',
-                                updated: 'Updated: 1h ago',
-                                color: AppTheme.safeGreen,
-                              ),
-                              SizedBox(height: 16),
-                              _FamilyActionRow(
+                              const FamilyStatusCard(),
+                              const SizedBox(height: 20),
+                              _FamilyMembersHeading(count: _members.length),
+                              const SizedBox(height: 10),
+                              if (_isLoading)
+                                const Center(
+                                  child: Padding(
+                                    padding: EdgeInsets.all(32),
+                                    child: CircularProgressIndicator(),
+                                  ),
+                                )
+                              else if (_error != null)
+                                Center(
+                                  child: Column(
+                                    children: [
+                                      Text(
+                                        'Could not load family members: $_error',
+                                        textAlign: TextAlign.center,
+                                      ),
+                                      const SizedBox(height: 10),
+                                      OutlinedButton.icon(
+                                        onPressed: _loadMembers,
+                                        icon: const Icon(Icons.refresh),
+                                        label: const Text('Retry'),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              else if (_members.isEmpty)
+                                const Padding(
+                                  padding: EdgeInsets.all(28),
+                                  child: Center(
+                                    child: Text('No family members added yet.'),
+                                  ),
+                                )
+                              else
+                                for (final member in _members) ...[
+                                  _MemberTile(member: member),
+                                  const SizedBox(height: 8),
+                                ],
+                              const SizedBox(height: 16),
+                              const _FamilyActionRow(
                                 key: Key('check_in_all_family_action'),
                                 icon: Icons.groups_rounded,
                                 title: 'Check-in All Family',
@@ -86,8 +125,8 @@ class FamilySafetyScreen extends StatelessWidget {
                                     'Send a check-in request to all family members',
                                 color: AppTheme.signalBlue,
                               ),
-                              SizedBox(height: 8),
-                              _FamilyActionRow(
+                              const SizedBox(height: 8),
+                              const _FamilyActionRow(
                                 key: Key('send_family_location_action'),
                                 icon: Icons.location_on_rounded,
                                 title: 'Send My Location',
@@ -95,8 +134,8 @@ class FamilySafetyScreen extends StatelessWidget {
                                     'Share your current location with your family',
                                 color: AppTheme.signalBlue,
                               ),
-                              SizedBox(height: 8),
-                              _FamilyActionRow(
+                              const SizedBox(height: 8),
+                              const _FamilyActionRow(
                                 key: Key('family_emergency_message_action'),
                                 icon: Icons.sos_rounded,
                                 title: 'Emergency Message',
@@ -166,13 +205,15 @@ class _FamilySafetyHeader extends StatelessWidget {
 }
 
 class _FamilyMembersHeading extends StatelessWidget {
-  const _FamilyMembersHeading();
+  const _FamilyMembersHeading({required this.count});
+
+  final int count;
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
+    return Row(
       children: [
-        Expanded(
+        const Expanded(
           child: Text(
             'Family Members',
             style: TextStyle(
@@ -182,11 +223,11 @@ class _FamilyMembersHeading extends StatelessWidget {
             ),
           ),
         ),
-        Icon(Icons.groups_outlined, color: AppTheme.signalBlue, size: 18),
-        SizedBox(width: 7),
+        const Icon(Icons.groups_outlined, color: AppTheme.signalBlue, size: 18),
+        const SizedBox(width: 7),
         Text(
-          '4 Members',
-          style: TextStyle(
+          '$count ${count == 1 ? 'Member' : 'Members'}',
+          style: const TextStyle(
             color: Color(0xFF607895),
             fontSize: 11,
             fontWeight: FontWeight.w700,
@@ -195,6 +236,46 @@ class _FamilyMembersHeading extends StatelessWidget {
       ],
     );
   }
+}
+
+class _MemberTile extends StatelessWidget {
+  const _MemberTile({required this.member});
+
+  final FamilyMemberModel member;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalized = member.status.toLowerCase();
+    final color = normalized.contains('help')
+        ? AppTheme.dangerRed
+        : normalized.contains('safe')
+        ? AppTheme.safeGreen
+        : AppTheme.warningAmber;
+    final words = member.name.trim().split(RegExp(r'\s+'));
+    final initials = words
+        .where((word) => word.isNotEmpty)
+        .take(2)
+        .map((word) => word[0].toUpperCase())
+        .join();
+
+    return FamilyMemberTile(
+      key: ValueKey('family_member_${member.id}'),
+      initials: initials.isEmpty ? '?' : initials,
+      name: member.name,
+      relationship: member.relationship,
+      status: member.status,
+      updated: 'Updated: ${_relativeTime(member.updatedAt)}',
+      color: color,
+    );
+  }
+}
+
+String _relativeTime(DateTime value) {
+  final difference = DateTime.now().difference(value.toLocal());
+  if (difference.inMinutes < 1) return 'just now';
+  if (difference.inHours < 1) return '${difference.inMinutes}m ago';
+  if (difference.inDays < 1) return '${difference.inHours}h ago';
+  return '${difference.inDays}d ago';
 }
 
 class _FamilyActionRow extends StatelessWidget {
