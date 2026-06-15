@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -50,6 +52,8 @@ class MapView extends StatefulWidget {
     required this.layers,
     this.route,
     this.userLocation,
+    this.isDaytime = true,
+    this.rainfallMmPh = 0.0,
     super.key,
   });
 
@@ -57,6 +61,8 @@ class MapView extends StatefulWidget {
   final GeoPoint? userLocation;
   final MapLayerVisibility layers;
   final RouteModel? route;
+  final bool isDaytime;
+  final double rainfallMmPh;
 
   @override
   State<MapView> createState() => _MapViewState();
@@ -131,80 +137,263 @@ class _MapViewState extends State<MapView> {
             .toList() ??
         const <LatLng>[];
 
-    return FlutterMap(
-      mapController: _mapController,
-      options: MapOptions(
-        initialCenter: _targetPoint,
-        initialZoom: _targetZoom,
-        minZoom: 3,
-        maxZoom: 18,
-        backgroundColor: const Color(0xFFE6ECF2),
-        keepAlive: false,
-        onMapReady: _onMapReady,
-      ),
+    return Stack(
       children: [
-        TileLayer(
-          urlTemplate: MapTileConfig.mapboxStreetsUrl,
-          userAgentPackageName: 'com.example.sentrymesh_frontend',
-          maxZoom: 18,
-        ),
-        if (widget.layers.safeRoute && routePoints.length > 1)
-          PolylineLayer(
-            polylines: [
-              Polyline(
-                points: routePoints,
-                strokeWidth: 7,
-                color: Colors.white.withValues(alpha: 0.92),
-              ),
-              Polyline(
-                points: routePoints,
-                strokeWidth: 4,
-                color: AppTheme.safeGreen,
-              ),
-            ],
+        FlutterMap(
+          mapController: _mapController,
+          options: MapOptions(
+            initialCenter: _targetPoint,
+            initialZoom: _targetZoom,
+            minZoom: 3,
+            maxZoom: 18,
+            backgroundColor: const Color(0xFFE6ECF2),
+            keepAlive: false,
+            onMapReady: _onMapReady,
           ),
-        if (widget.layers.location && userPoint != null)
-          CircleLayer(
-            circles: [
-              CircleMarker(
-                point: userPoint,
-                radius: 120,
-                useRadiusInMeter: true,
-                color: AppTheme.signalBlue.withValues(alpha: 0.18),
-                borderColor: AppTheme.signalBlue.withValues(alpha: 0.45),
-                borderStrokeWidth: 1.5,
+          children: [
+            TileLayer(
+              urlTemplate: MapTileConfig.mapboxStreetsUrl,
+              userAgentPackageName: 'com.example.sentrymesh_frontend',
+              maxZoom: 18,
+            ),
+            if (widget.layers.safeRoute && routePoints.length > 1)
+              PolylineLayer(
+                polylines: [
+                  Polyline(
+                    points: routePoints,
+                    strokeWidth: 7,
+                    color: Colors.white.withValues(alpha: 0.92),
+                  ),
+                  Polyline(
+                    points: routePoints,
+                    strokeWidth: 4,
+                    color: AppTheme.safeGreen,
+                  ),
+                ],
               ),
-            ],
-          ),
-        MarkerLayer(
-          markers: [
-            if (widget.layers.location)
-              if (userPoint != null)
-                Marker(
-                  point: userPoint,
-                  width: 44,
-                  height: 44,
-                  child: const _UserLocationMarker(),
-                )
-              else
-                Marker(
-                  point: _countryPoint,
-                  width: 42,
-                  height: 42,
-                  child: _CountryCenterMarker(countryCode: widget.country.code),
-                ),
+            if (widget.layers.location && userPoint != null)
+              CircleLayer(
+                circles: [
+                  CircleMarker(
+                    point: userPoint,
+                    radius: 120,
+                    useRadiusInMeter: true,
+                    color: AppTheme.signalBlue.withValues(alpha: 0.18),
+                    borderColor: AppTheme.signalBlue.withValues(alpha: 0.45),
+                    borderStrokeWidth: 1.5,
+                  ),
+                ],
+              ),
+            MarkerLayer(
+              markers: [
+                if (widget.layers.location)
+                  if (userPoint != null)
+                    Marker(
+                      point: userPoint,
+                      width: 44,
+                      height: 44,
+                      child: const _UserLocationMarker(),
+                    )
+                  else
+                    Marker(
+                      point: _countryPoint,
+                      width: 42,
+                      height: 42,
+                      child: _CountryCenterMarker(
+                        countryCode: widget.country.code,
+                      ),
+                    ),
+              ],
+            ),
+            const RichAttributionWidget(
+              showFlutterMapAttribution: false,
+              attributions: [
+                TextSourceAttribution('Mapbox, OpenStreetMap contributors'),
+              ],
+            ),
           ],
         ),
-        const RichAttributionWidget(
-          showFlutterMapAttribution: false,
-          attributions: [
-            TextSourceAttribution('Mapbox, OpenStreetMap contributors'),
-          ],
-        ),
+        // Night overlay — dark blue tint when it's nighttime
+        if (!widget.isDaytime) const _NightOverlay(),
+        // Rain particle animation overlay
+        if (widget.rainfallMmPh > 0.5)
+          _RainOverlay(intensityMmPh: widget.rainfallMmPh),
       ],
     );
   }
 }
+
+// ── Night overlay ──────────────────────────────────────────────────────────
+
+class _NightOverlay extends StatelessWidget {
+  const _NightOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: const ColoredBox(
+        color: Color(0x88000B20),
+        child: _StarField(),
+      ),
+    );
+  }
+}
+
+class _StarField extends StatelessWidget {
+  const _StarField();
+
+  static final _rand = math.Random(7);
+  static final _stars = List.generate(
+    40,
+    (_) => (
+      x: _rand.nextDouble(),
+      y: _rand.nextDouble() * 0.5, // stars only in upper half
+      r: 0.8 + _rand.nextDouble() * 1.4,
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _StarPainter(_stars),
+      child: const SizedBox.expand(),
+    );
+  }
+}
+
+class _StarPainter extends CustomPainter {
+  const _StarPainter(this.stars);
+
+  final List<({double x, double y, double r})> stars;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = Colors.white.withValues(alpha: 0.55);
+    for (final s in stars) {
+      canvas.drawCircle(Offset(s.x * size.width, s.y * size.height), s.r, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_StarPainter old) => false;
+}
+
+// ── Rain overlay ───────────────────────────────────────────────────────────
+
+class _RainOverlay extends StatefulWidget {
+  const _RainOverlay({required this.intensityMmPh});
+
+  final double intensityMmPh;
+
+  @override
+  State<_RainOverlay> createState() => _RainOverlayState();
+}
+
+class _RainOverlayState extends State<_RainOverlay>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: AnimatedBuilder(
+        animation: _ctrl,
+        builder: (_, _) => CustomPaint(
+          painter: _RainPainter(
+            progress: _ctrl.value,
+            intensityMmPh: widget.intensityMmPh,
+          ),
+          child: const SizedBox.expand(),
+        ),
+      ),
+    );
+  }
+}
+
+class _RainPainter extends CustomPainter {
+  const _RainPainter({
+    required this.progress,
+    required this.intensityMmPh,
+  });
+
+  final double progress;
+  final double intensityMmPh;
+
+  // Fixed-seed random so particles are stable across frames
+  static final _rand = math.Random(42);
+  static final _xFracs = List.generate(120, (_) => _rand.nextDouble());
+  static final _phases = List.generate(120, (_) => _rand.nextDouble());
+  static final _speeds = List.generate(
+    120,
+    (_) => 0.55 + _rand.nextDouble() * 0.9,
+  );
+  static final _lengths = List.generate(
+    120,
+    (_) => 10.0 + _rand.nextDouble() * 8,
+  );
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final count = intensityMmPh < 5
+        ? 28
+        : intensityMmPh < 15
+        ? 60
+        : 110;
+
+    final dropPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.38)
+      ..strokeWidth = 1.3
+      ..strokeCap = StrokeCap.round;
+
+    final splashPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.18)
+      ..strokeWidth = 0.8;
+
+    for (var i = 0; i < count; i++) {
+      final t = (progress * _speeds[i] + _phases[i]) % 1.0;
+      // slight rightward angle (wind-driven rain)
+      final x = _xFracs[i] * size.width + t * size.height * 0.12;
+      final y = t * (size.height + 30) - 15;
+      final len = _lengths[i];
+
+      canvas.drawLine(
+        Offset(x, y),
+        Offset(x + len * 0.18, y + len),
+        dropPaint,
+      );
+
+      // tiny splash when drop hits bottom
+      if (t > 0.92) {
+        final splashY = size.height - 4;
+        canvas.drawLine(
+          Offset(x - 3, splashY),
+          Offset(x + 3, splashY),
+          splashPaint,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RainPainter old) => old.progress != progress;
+}
+
+// ── Standard map markers ───────────────────────────────────────────────────
 
 class _UserLocationMarker extends StatelessWidget {
   const _UserLocationMarker();

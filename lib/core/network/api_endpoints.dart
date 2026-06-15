@@ -16,6 +16,7 @@ class ApiEndpoints {
   static const weatherSubscriptions = '/weather/subscriptions';
   static const typhoonStatus = '/weather/typhoon-status';
   static const typhoonAlerts = '/weather/typhoon-alerts';
+  static const weatherCurrent = '/weather/current';
 
   static String rescueRequestById(String id) {
     return '/rescue-requests/$id';
