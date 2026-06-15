@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../app/theme.dart';
 
@@ -72,7 +73,7 @@ class _ContactTile extends StatelessWidget {
       ),
       subtitle: Text(phone, maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: IconButton(
-        onPressed: () {},
+        onPressed: () => launchUrl(Uri(scheme: 'tel', path: phone)),
         tooltip: 'Call $name',
         icon: const Icon(Icons.phone, color: AppTheme.textMuted),
       ),

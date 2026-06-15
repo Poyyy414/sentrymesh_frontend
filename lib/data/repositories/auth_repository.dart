@@ -46,6 +46,7 @@ class AuthRepository {
     required String email,
     required String address,
     required String password,
+    String? responderCode,
   }) async {
     try {
       final payload = await _remote.register(
@@ -54,6 +55,7 @@ class AuthRepository {
         email: email.trim().toLowerCase(),
         address: address.trim(),
         password: password,
+        responderCode: responderCode,
       );
 
       final token = _requiredToken(payload);

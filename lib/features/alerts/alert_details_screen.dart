@@ -1,12 +1,18 @@
 import 'package:flutter/material.dart';
 
+import '../../app/router.dart';
 import '../../app/theme.dart';
+import '../../data/models/alert_model.dart';
+import '../../shared/enums/alert_severity.dart';
+import '../../shared/enums/hazard_type.dart';
 
 class AlertDetailsScreen extends StatelessWidget {
   const AlertDetailsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final alert = ModalRoute.of(context)?.settings.arguments as AlertModel?;
+
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFD),
       appBar: AppBar(
@@ -16,7 +22,7 @@ class AlertDetailsScreen extends StatelessWidget {
           onPressed: () => Navigator.of(context).pop(),
           icon: const Icon(Icons.arrow_back_rounded),
         ),
-        title: const Text('Alert Details'),
+        title: Text(alert?.title ?? 'Alert Details'),
         flexibleSpace: const DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -41,18 +47,18 @@ class AlertDetailsScreen extends StatelessWidget {
               Center(
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 980),
-                  child: const Column(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _AlertSummaryCard(),
-                      SizedBox(height: 18),
-                      _OverviewSection(),
-                      SizedBox(height: 17),
-                      _PotentialImpactCard(),
-                      SizedBox(height: 19),
-                      _TakeActionSection(),
-                      SizedBox(height: 17),
-                      _EmergencySosAction(),
+                      _AlertSummaryCard(alert: alert),
+                      const SizedBox(height: 18),
+                      _OverviewSection(message: alert?.message),
+                      const SizedBox(height: 17),
+                      const _PotentialImpactCard(),
+                      const SizedBox(height: 19),
+                      _TakeActionSection(alert: alert),
+                      const SizedBox(height: 17),
+                      const _EmergencySosAction(),
                     ],
                   ),
                 ),
@@ -65,22 +71,72 @@ class AlertDetailsScreen extends StatelessWidget {
   }
 }
 
+IconData _hazardIcon(HazardType? type) {
+  return switch (type) {
+    HazardType.flood => Icons.flood_rounded,
+    HazardType.landslide => Icons.terrain_rounded,
+    HazardType.typhoon => Icons.cyclone_rounded,
+    HazardType.medical => Icons.medical_services_rounded,
+    HazardType.distress => Icons.sos_rounded,
+    HazardType.infrastructure => Icons.car_crash_rounded,
+    null => Icons.warning_amber_rounded,
+  };
+}
+
+Color _severityColor(AlertSeverity? severity) {
+  return switch (severity) {
+    AlertSeverity.critical => AppTheme.dangerRed,
+    AlertSeverity.high => AppTheme.dangerRed,
+    AlertSeverity.medium => AppTheme.warningAmber,
+    AlertSeverity.low => AppTheme.safeGreen,
+    null => AppTheme.warningAmber,
+  };
+}
+
+String _severityLabel(AlertSeverity? severity) {
+  return switch (severity) {
+    AlertSeverity.critical => 'Critical Severity',
+    AlertSeverity.high => 'High Severity',
+    AlertSeverity.medium => 'Medium Severity',
+    AlertSeverity.low => 'Low Severity',
+    null => 'Unknown Severity',
+  };
+}
+
+String _formatDate(DateTime dt) {
+  final months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  final hour = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+  final minute = dt.minute.toString().padLeft(2, '0');
+  final ampm = dt.hour < 12 ? 'AM' : 'PM';
+  return '$hour:$minute $ampm\n${months[dt.month - 1]} ${dt.day}, ${dt.year}';
+}
+
 class _AlertSummaryCard extends StatelessWidget {
-  const _AlertSummaryCard();
+  const _AlertSummaryCard({required this.alert});
+
+  final AlertModel? alert;
 
   @override
   Widget build(BuildContext context) {
+    final color = _severityColor(alert?.severity);
+    final bgStart = Color.lerp(color.withValues(alpha: 0.05), Colors.white, 0.4)!;
+    final bgEnd = color.withValues(alpha: 0.08);
+    final borderColor = color.withValues(alpha: 0.22);
+
     return Container(
       key: const Key('alert_summary_card'),
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFFFFF8F8), Color(0xFFFFEEEE)],
+          colors: [bgStart, bgEnd],
         ),
         borderRadius: BorderRadius.circular(13),
-        border: Border.all(color: const Color(0xFFFFE1E1)),
+        border: Border.all(color: borderColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -91,24 +147,24 @@ class _AlertSummaryCard extends StatelessWidget {
                 width: 72,
                 height: 72,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFF5F5),
+                  color: color.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(13),
-                  border: Border.all(color: const Color(0xFFFFDADA)),
+                  border: Border.all(color: color.withValues(alpha: 0.2)),
                 ),
-                child: const Icon(
-                  Icons.flood_rounded,
-                  color: AppTheme.dangerRed,
+                child: Icon(
+                  _hazardIcon(alert?.hazardType),
+                  color: color,
                   size: 43,
                 ),
               ),
               const SizedBox(width: 18),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Flood Warning',
-                      style: TextStyle(
+                      alert?.title ?? 'Hazard Alert',
+                      style: const TextStyle(
                         color: Color(0xFF102E58),
                         fontSize: 24,
                         height: 1.1,
@@ -116,8 +172,11 @@ class _AlertSummaryCard extends StatelessWidget {
                         letterSpacing: -0.4,
                       ),
                     ),
-                    SizedBox(height: 9),
-                    _OutlinedSeverityBadge(),
+                    const SizedBox(height: 9),
+                    _OutlinedSeverityBadge(
+                      label: _severityLabel(alert?.severity),
+                      color: color,
+                    ),
                   ],
                 ),
               ),
@@ -127,16 +186,20 @@ class _AlertSummaryCard extends StatelessWidget {
           LayoutBuilder(
             builder: (context, constraints) {
               final horizontal = constraints.maxWidth >= 640;
-              const items = [
+              final items = [
                 _SummaryMetadata(
                   icon: Icons.location_on_outlined,
-                  label: 'San Felipe, Naga City\nand nearby areas',
+                  label: alert?.location.isNotEmpty == true
+                      ? alert!.location
+                      : 'Location not specified',
                 ),
                 _SummaryMetadata(
                   icon: Icons.schedule_rounded,
-                  label: 'Today, 6:30 AM\nMay 12, 2025',
+                  label: alert != null
+                      ? _formatDate(alert!.issuedAt)
+                      : 'Time unknown',
                 ),
-                _SummaryMetadata(
+                const _SummaryMetadata(
                   icon: Icons.notifications_none_rounded,
                   label: 'Source\nSentryMesh System',
                 ),
@@ -195,21 +258,24 @@ class _AlertSummaryCard extends StatelessWidget {
 }
 
 class _OutlinedSeverityBadge extends StatelessWidget {
-  const _OutlinedSeverityBadge();
+  const _OutlinedSeverityBadge({required this.label, required this.color});
+
+  final String label;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 5),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF4F4),
+        color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFFFBFC2)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
-      child: const Text(
-        'High Severity',
+      child: Text(
+        label,
         style: TextStyle(
-          color: AppTheme.dangerRed,
+          color: color,
           fontSize: 11,
           fontWeight: FontWeight.w900,
         ),
@@ -261,19 +327,23 @@ class _MetadataDivider extends StatelessWidget {
 }
 
 class _OverviewSection extends StatelessWidget {
-  const _OverviewSection();
+  const _OverviewSection({required this.message});
+
+  final String? message;
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _SectionTitle(label: 'Overview'),
-        SizedBox(height: 7),
+        const _SectionTitle(label: 'Overview'),
+        const SizedBox(height: 7),
         Text(
-          'Rising water has been reported near low-lying barangays. '
-          'Avoid flooded roads and monitor local responder updates.',
-          style: TextStyle(
+          message?.isNotEmpty == true
+              ? message!
+              : 'Monitor local conditions and follow responder guidance. '
+                  'Avoid affected areas and keep emergency contacts ready.',
+          style: const TextStyle(
             color: Color(0xFF425B79),
             fontSize: 12,
             height: 1.55,
@@ -400,7 +470,9 @@ class _ImpactDivider extends StatelessWidget {
 }
 
 class _TakeActionSection extends StatelessWidget {
-  const _TakeActionSection();
+  const _TakeActionSection({required this.alert});
+
+  final AlertModel? alert;
 
   @override
   Widget build(BuildContext context) {
@@ -423,15 +495,17 @@ class _TakeActionSection extends StatelessWidget {
                 icon: Icons.map_outlined,
                 title: 'Open Safe Route Map',
                 subtitle: 'View recommended safe evacuation routes',
-                onTap: () {},
+                onTap: () =>
+                    Navigator.of(context).pushNamed(AppRouter.safeRoute),
               ),
               const Divider(height: 1, color: Color(0xFFE3E9F0)),
               _ActionRow(
                 key: const Key('community_report_action'),
                 icon: Icons.groups_outlined,
-                title: 'Send Community Report',
-                subtitle: 'Report conditions and help your community',
-                onTap: () {},
+                title: 'Send Rescue Request',
+                subtitle: 'Request help and share your location',
+                onTap: () =>
+                    Navigator.of(context).pushNamed(AppRouter.rescueRequest),
               ),
               const Divider(height: 1, color: Color(0xFFE3E9F0)),
               const _UpdatesRow(),
@@ -544,17 +618,15 @@ class _UpdatesRow extends StatelessWidget {
             ),
           ),
           Switch(
-            key: Key('alert_updates_switch'),
+            key: const Key('alert_updates_switch'),
             value: true,
-            onChanged: _ignoreUpdateToggle,
+            onChanged: (_) {},
           ),
         ],
       ),
     );
   }
 }
-
-void _ignoreUpdateToggle(bool _) {}
 
 class _EmergencySosAction extends StatelessWidget {
   const _EmergencySosAction();
@@ -565,7 +637,7 @@ class _EmergencySosAction extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         key: const Key('alert_emergency_sos_action'),
-        onTap: _ignoreTap,
+        onTap: () => Navigator.of(context).pushNamed(AppRouter.rescueRequest),
         borderRadius: BorderRadius.circular(11),
         child: Ink(
           padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 14),
@@ -620,8 +692,6 @@ class _EmergencySosAction extends StatelessWidget {
     );
   }
 }
-
-void _ignoreTap() {}
 
 class _SectionTitle extends StatelessWidget {
   const _SectionTitle({required this.label});

@@ -16,7 +16,6 @@ import '../../data/models/rescue_location_model.dart';
 import '../../data/models/rescue_navigation_model.dart';
 import '../../data/models/rescue_request_model.dart';
 import '../../data/models/route_model.dart';
-import '../../shared/demo/demo_scenario.dart';
 import '../../shared/enums/hazard_type.dart';
 import '../../shared/enums/rescue_status.dart';
 
@@ -40,15 +39,6 @@ IconData _incidentIcon(HazardType type) {
   };
 }
 
-IconData _demoIncidentIcon(DemoIncidentType type) {
-  return switch (type) {
-    DemoIncidentType.flood => Icons.flood,
-    DemoIncidentType.landslide => Icons.warning_amber_rounded,
-    DemoIncidentType.trapped => Icons.personal_injury,
-    DemoIncidentType.roadBlocked => Icons.car_crash,
-    DemoIncidentType.sos => Icons.sos,
-  };
-}
 
 String _hazardTitle(HazardType type) {
   return switch (type) {
@@ -151,23 +141,6 @@ Future<void> _launchNavigation({
   }
 }
 
-Color _severityColor(String severity) {
-  return switch (severity) {
-    'High' => AppTheme.dangerRed,
-    'Medium' => AppTheme.warningAmber,
-    'Low' => AppTheme.safeGreen,
-    _ => AppTheme.signalBlue,
-  };
-}
-
-String _statusLabel(DemoIncidentStatus status) {
-  return switch (status) {
-    DemoIncidentStatus.active => 'Active',
-    DemoIncidentStatus.dispatched => 'Dispatched',
-    DemoIncidentStatus.enRoute => 'En Route',
-    DemoIncidentStatus.resolved => 'Resolved',
-  };
-}
 
 class ResponderShell extends StatefulWidget {
   const ResponderShell({super.key});
@@ -234,15 +207,108 @@ class _ResponderShellState extends State<ResponderShell> {
   }
 }
 
-class ResponderDashboardScreen extends StatelessWidget {
+class _DashboardStats {
+  const _DashboardStats({
+    required this.activeIncidents,
+    required this.peopleNeedHelp,
+    required this.deployedTeams,
+    required this.activeAlerts,
+    required this.recentRequests,
+  });
+
+  final int activeIncidents;
+  final int peopleNeedHelp;
+  final int deployedTeams;
+  final int activeAlerts;
+  final List<RescueRequestModel> recentRequests;
+}
+
+class ResponderDashboardScreen extends StatefulWidget {
   const ResponderDashboardScreen({super.key});
 
   @override
+  State<ResponderDashboardScreen> createState() =>
+      _ResponderDashboardScreenState();
+}
+
+class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
+  _DashboardStats? _stats;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _load();
+    });
+  }
+
+  Future<void> _load() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final deps = AppDependenciesScope.of(context);
+      final results = await Future.wait([
+        deps.rescueRepository.fetchRequests(),
+        deps.alertRepository.fetchAlerts(),
+      ]);
+
+      if (!mounted) return;
+
+      final requests = results[0] as List<RescueRequestModel>;
+      final alerts = results[1];
+
+      final active = requests
+          .where(
+            (r) =>
+                r.status == RescueStatus.pending ||
+                r.status == RescueStatus.acknowledged ||
+                r.status == RescueStatus.inProgress,
+          )
+          .toList();
+
+      setState(() {
+        _stats = _DashboardStats(
+          activeIncidents: active.length,
+          peopleNeedHelp: active.fold(0, (sum, r) => sum + r.peopleNeedingHelp),
+          deployedTeams: active
+              .where(
+                (r) =>
+                    r.status == RescueStatus.acknowledged ||
+                    r.status == RescueStatus.inProgress,
+              )
+              .length,
+          activeAlerts: alerts.length,
+          recentRequests: requests.take(3).toList(),
+        );
+        _isLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _stats = const _DashboardStats(
+          activeIncidents: 0,
+          peopleNeedHelp: 0,
+          deployedTeams: 0,
+          activeAlerts: 0,
+          recentRequests: [],
+        );
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final stats = _stats;
+    final now = TimeOfDay.now();
+    final timeStr =
+        '${now.hourOfPeriod}:${now.minute.toString().padLeft(2, '0')} ${now.period.name.toUpperCase()}';
+
     return _ResponderPage(
       header: _ResponderHeader(
         title: 'Responder Console',
-        trailing: _BellBadge(count: 3),
+        trailing: _BellBadge(count: stats?.activeAlerts ?? 0),
         child: Row(
           children: [
             const CircleAvatar(
@@ -256,7 +322,7 @@ class ResponderDashboardScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Naga City Response Team',
+                    'Response Team',
                     style: Theme.of(
                       context,
                     ).textTheme.titleSmall?.copyWith(color: Colors.white),
@@ -295,22 +361,31 @@ class ResponderDashboardScreen extends StatelessWidget {
         ),
       ),
       children: [
-        const _ResponderStatusBanner(),
+        _LiveStatusBanner(
+          activeIncidents: stats?.activeIncidents ?? 0,
+          isLoading: _isLoading,
+        ),
         const SizedBox(height: 14),
-        const _SectionTitle(
+        _SectionTitle(
           title: 'Situation Overview',
-          subtitle: 'Updated 9:41 AM',
+          subtitle: _isLoading ? 'Loading…' : 'Updated $timeStr',
         ),
         const SizedBox(height: 10),
-        const _ResponderStatsGrid(),
+        _LiveStatsGrid(stats: stats, isLoading: _isLoading),
         const SizedBox(height: 18),
-        const _SectionTitle(title: 'Live Risk Map', chip: 'High'),
+        const _SectionTitle(title: 'Live Risk Map', chip: 'Active'),
         const SizedBox(height: 10),
         const _HeatmapPreview(),
         const SizedBox(height: 18),
-        const _SectionTitle(title: 'Recent Incidents', action: 'View all'),
+        _SectionTitle(
+          title: 'Recent Incidents',
+          action: stats != null ? 'View all' : null,
+        ),
         const SizedBox(height: 10),
-        const _RecentIncidentsList(),
+        _LiveRecentIncidents(
+          requests: stats?.recentRequests ?? [],
+          isLoading: _isLoading,
+        ),
       ],
     );
   }
@@ -945,82 +1020,205 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
   }
 }
 
-class ResponderTeamsScreen extends StatelessWidget {
+class ResponderTeamsScreen extends StatefulWidget {
   const ResponderTeamsScreen({super.key});
 
   @override
+  State<ResponderTeamsScreen> createState() => _ResponderTeamsScreenState();
+}
+
+class _ResponderTeamsScreenState extends State<ResponderTeamsScreen> {
+  List<RescueRequestModel> _requests = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _load();
+    });
+  }
+
+  Future<void> _load() async {
+    setState(() => _isLoading = true);
+    try {
+      final requests = await AppDependenciesScope.of(
+        context,
+      ).rescueRepository.fetchRequests();
+      if (!mounted) return;
+      setState(() {
+        _requests = requests;
+        _isLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final active = _requests
+        .where(
+          (r) =>
+              r.status == RescueStatus.pending ||
+              r.status == RescueStatus.acknowledged ||
+              r.status == RescueStatus.inProgress,
+        )
+        .toList();
+
     return _ResponderPage(
       header: const _SimpleResponderHeader(title: 'Team Coordination'),
-      children: const [
-        _SegmentedHeader(left: 'Teams', right: 'Messages', badge: '2'),
-        SizedBox(height: 18),
-        _SectionTitle(title: 'Deployed Teams (8)', action: 'View all'),
-        SizedBox(height: 10),
-        _TeamTile(
-          name: 'Team Alpha',
-          area: 'San Felipe - 12 min ago',
-          status: 'On Mission',
-          members: 4,
+      children: [
+        _SectionTitle(
+          title: _isLoading
+              ? 'Active Deployments'
+              : 'Active Deployments (${active.length})',
         ),
-        _TeamTile(
-          name: 'Team Bravo',
-          area: 'Concepcion - 18 min ago',
-          status: 'On Mission',
-          members: 4,
-        ),
-        _TeamTile(
-          name: 'Team Charlie',
-          area: 'Pacol - 5 min ago',
-          status: 'En Route',
-          members: 3,
-        ),
-        _TeamTile(
-          name: 'Team Delta',
-          area: 'Command Center',
-          status: 'Standby',
-          members: 5,
-        ),
-        SizedBox(height: 18),
-        _SectionTitle(title: 'Quick Actions'),
-        SizedBox(height: 10),
-        _QuickActionGrid(),
+        const SizedBox(height: 10),
+        if (_isLoading)
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: CircularProgressIndicator(),
+            ),
+          )
+        else if (active.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(
+              child: Text(
+                'No active deployments at this time.',
+                style: TextStyle(color: AppTheme.textMuted),
+              ),
+            ),
+          )
+        else
+          for (final req in active)
+            _DeploymentTile(request: req),
+        const SizedBox(height: 18),
+        const _SectionTitle(title: 'Quick Actions'),
+        const SizedBox(height: 10),
+        const _QuickActionGrid(),
       ],
     );
   }
 }
 
-class ResponderReportsScreen extends StatelessWidget {
+class ResponderReportsScreen extends StatefulWidget {
   const ResponderReportsScreen({super.key});
 
   @override
+  State<ResponderReportsScreen> createState() => _ResponderReportsScreenState();
+}
+
+class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
+  int _activeIncidents = 0;
+  int _resolvedToday = 0;
+  int _dispatched = 0;
+  int _activeAlerts = 0;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _load();
+    });
+  }
+
+  Future<void> _load() async {
+    setState(() => _isLoading = true);
+    try {
+      final deps = AppDependenciesScope.of(context);
+      final results = await Future.wait([
+        deps.rescueRepository.fetchRequests(),
+        deps.alertRepository.fetchAlerts(),
+      ]);
+
+      if (!mounted) return;
+
+      final requests = results[0] as List<RescueRequestModel>;
+      final alerts = results[1];
+      final today = DateTime.now();
+
+      setState(() {
+        _activeIncidents = requests
+            .where(
+              (r) =>
+                  r.status == RescueStatus.pending ||
+                  r.status == RescueStatus.acknowledged ||
+                  r.status == RescueStatus.inProgress,
+            )
+            .length;
+        _resolvedToday = requests
+            .where(
+              (r) =>
+                  r.status == RescueStatus.resolved &&
+                  r.createdAt.year == today.year &&
+                  r.createdAt.month == today.month &&
+                  r.createdAt.day == today.day,
+            )
+            .length;
+        _dispatched = requests
+            .where(
+              (r) =>
+                  r.status == RescueStatus.acknowledged ||
+                  r.status == RescueStatus.inProgress,
+            )
+            .length;
+        _activeAlerts = alerts.length;
+        _isLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final timeStr = _formatTime(DateTime.now());
+
     return _ResponderPage(
       header: const _SimpleResponderHeader(title: 'Reports'),
-      children: const [
+      children: [
         _SectionTitle(
           title: 'Response Reports',
-          subtitle: 'Brief updates for the team',
+          subtitle: _isLoading ? 'Loading…' : 'Updated $timeStr',
         ),
-        SizedBox(height: 12),
+        const SizedBox(height: 12),
         _ReportTile(
           title: 'Situation Report',
-          subtitle: '23 active incidents - 9:41 AM',
+          subtitle: _isLoading
+              ? 'Loading…'
+              : '$_activeIncidents active · $_resolvedToday resolved today',
           icon: Icons.summarize,
         ),
         _ReportTile(
           title: 'Team Status',
-          subtitle: '8 teams deployed - network healthy',
+          subtitle: _isLoading
+              ? 'Loading…'
+              : '$_dispatched dispatched · network healthy',
           icon: Icons.inventory_2,
         ),
         _ReportTile(
-          title: 'Message History',
-          subtitle: 'Advisories and team updates',
+          title: 'Alert Summary',
+          subtitle: _isLoading
+              ? 'Loading…'
+              : '$_activeAlerts active alert${_activeAlerts == 1 ? '' : 's'} in the system',
           icon: Icons.forum,
         ),
       ],
     );
   }
+}
+
+String _formatTime(DateTime dt) {
+  final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+  final m = dt.minute.toString().padLeft(2, '0');
+  final ampm = dt.hour < 12 ? 'AM' : 'PM';
+  return '$h:$m $ampm';
 }
 
 class _ResponderPage extends StatelessWidget {
@@ -1157,55 +1355,63 @@ class _SimpleResponderHeader extends StatelessWidget {
   }
 }
 
-class _ResponderStatusBanner extends StatelessWidget {
-  const _ResponderStatusBanner();
+class _LiveStatusBanner extends StatelessWidget {
+  const _LiveStatusBanner({
+    required this.activeIncidents,
+    required this.isLoading,
+  });
+
+  final int activeIncidents;
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: DemoScenario.instance,
-      builder: (context, _) {
-        return Card(
-          color: AppTheme.deepNavy,
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: AppTheme.safeGreen.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(Icons.sensors, color: AppTheme.safeGreen),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Command Center Ready',
-                        style: Theme.of(
-                          context,
-                        ).textTheme.titleSmall?.copyWith(color: Colors.white),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        DemoScenario.instance.lastResponderAction,
-                        style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(color: Colors.white70),
-                      ),
-                    ],
-                  ),
-                ),
-                const _SeverityPill(label: 'Live', color: AppTheme.safeGreen),
-              ],
+    final subtitle = isLoading
+        ? 'Loading incident data…'
+        : activeIncidents == 0
+        ? 'No active incidents — all clear'
+        : '$activeIncidents active incident${activeIncidents == 1 ? '' : 's'} in progress';
+
+    return Card(
+      color: AppTheme.deepNavy,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: AppTheme.safeGreen.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.sensors, color: AppTheme.safeGreen),
             ),
-          ),
-        );
-      },
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Command Center Ready',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.titleSmall?.copyWith(color: Colors.white),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const _SeverityPill(label: 'Live', color: AppTheme.safeGreen),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1299,51 +1505,48 @@ class _ReasonLine extends StatelessWidget {
   }
 }
 
-class _ResponderStatsGrid extends StatelessWidget {
-  const _ResponderStatsGrid();
+class _LiveStatsGrid extends StatelessWidget {
+  const _LiveStatsGrid({required this.stats, required this.isLoading});
+
+  final _DashboardStats? stats;
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: DemoScenario.instance,
-      builder: (context, _) {
-        final scenario = DemoScenario.instance;
-
-        return GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 2,
-          childAspectRatio: 1.85,
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
-          children: [
-            _StatTile(
-              icon: Icons.crisis_alert,
-              value: '${scenario.activeIncidentCount}',
-              label: 'Active Incidents',
-              color: AppTheme.dangerRed,
-            ),
-            _StatTile(
-              icon: Icons.personal_injury,
-              value: '${scenario.peopleNeedHelp}',
-              label: 'People Need Help',
-              color: AppTheme.warningAmber,
-            ),
-            _StatTile(
-              icon: Icons.groups,
-              value: '${scenario.deployedTeams}',
-              label: 'Teams Deployed',
-              color: AppTheme.signalBlue,
-            ),
-            const _StatTile(
-              icon: Icons.shield,
-              value: '92%',
-              label: 'Signal Health',
-              color: AppTheme.safeGreen,
-            ),
-          ],
-        );
-      },
+    final s = stats;
+    return GridView.count(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      crossAxisCount: 2,
+      childAspectRatio: 1.85,
+      crossAxisSpacing: 10,
+      mainAxisSpacing: 10,
+      children: [
+        _StatTile(
+          icon: Icons.crisis_alert,
+          value: isLoading ? '…' : '${s?.activeIncidents ?? 0}',
+          label: 'Active Incidents',
+          color: AppTheme.dangerRed,
+        ),
+        _StatTile(
+          icon: Icons.personal_injury,
+          value: isLoading ? '…' : '${s?.peopleNeedHelp ?? 0}',
+          label: 'People Need Help',
+          color: AppTheme.warningAmber,
+        ),
+        _StatTile(
+          icon: Icons.groups,
+          value: isLoading ? '…' : '${s?.deployedTeams ?? 0}',
+          label: 'Dispatched',
+          color: AppTheme.signalBlue,
+        ),
+        _StatTile(
+          icon: Icons.notifications_active,
+          value: isLoading ? '…' : '${s?.activeAlerts ?? 0}',
+          label: 'Active Alerts',
+          color: AppTheme.safeGreen,
+        ),
+      ],
     );
   }
 }
@@ -1392,33 +1595,53 @@ class _StatTile extends StatelessWidget {
   }
 }
 
-class _RecentIncidentsList extends StatelessWidget {
-  const _RecentIncidentsList();
+class _LiveRecentIncidents extends StatelessWidget {
+  const _LiveRecentIncidents({
+    required this.requests,
+    required this.isLoading,
+  });
+
+  final List<RescueRequestModel> requests;
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: DemoScenario.instance,
-      builder: (context, _) {
-        final incidents = DemoScenario.instance.incidents.take(3).toList();
+    if (isLoading) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 16),
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
 
-        return Column(
-          children: [
-            for (var index = 0; index < incidents.length; index++) ...[
-              _CompactIncidentTile(
-                icon: _demoIncidentIcon(incidents[index].type),
-                title:
-                    '${incidents[index].title} - ${incidents[index].location}',
-                subtitle:
-                    '${incidents[index].timeLabel} - ${incidents[index].people} people - ${_statusLabel(incidents[index].status)}',
-                severity: incidents[index].severity,
-                severityColor: _severityColor(incidents[index].severity),
-              ),
-              if (index != incidents.length - 1) const SizedBox(height: 8),
-            ],
-          ],
-        );
-      },
+    if (requests.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: Center(
+          child: Text(
+            'No recent incidents.',
+            style: TextStyle(color: AppTheme.textMuted),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        for (var i = 0; i < requests.length; i++) ...[
+          _CompactIncidentTile(
+            icon: _incidentIcon(requests[i].emergencyType),
+            title:
+                '${_hazardTitle(requests[i].emergencyType)} — ${requests[i].locationLabel ?? 'Unknown location'}',
+            subtitle:
+                '${_timeAgoLabel(requests[i].createdAt)} · ${requests[i].peopleNeedingHelp} people · ${_rescueStatusLabel(requests[i].status)}',
+            severity: _severityLabelFromPeople(requests[i].peopleNeedingHelp),
+            severityColor: _severityFromPeople(requests[i].peopleNeedingHelp),
+          ),
+          if (i != requests.length - 1) const SizedBox(height: 8),
+        ],
+      ],
     );
   }
 }
@@ -2350,19 +2573,19 @@ class _NavigationPanel extends StatelessWidget {
             Row(
               children: [
                 const Icon(Icons.chevron_right, color: AppTheme.textMuted),
-                const Expanded(child: Text('San Felipe response area')),
-                Text('4.2 km', style: Theme.of(context).textTheme.titleSmall),
+                Expanded(
+                  child: Text(
+                    hasLiveLocation ? 'Responder position active' : 'No route selected',
+                  ),
+                ),
+                Text('—', style: Theme.of(context).textTheme.titleSmall),
               ],
             ),
             const Divider(height: 20),
             Row(
               children: [
-                const Expanded(
-                  child: _MiniMetric(value: '12 min', label: 'Est. time'),
-                ),
-                const Expanded(
-                  child: _MiniMetric(value: 'Low', label: 'Traffic'),
-                ),
+                const Expanded(child: _MiniMetric(value: '—', label: 'Est. time')),
+                const Expanded(child: _MiniMetric(value: '—', label: 'Distance')),
                 SizedBox(
                   width: 126,
                   child: SentryButton(
@@ -2398,87 +2621,20 @@ class _MiniMetric extends StatelessWidget {
   }
 }
 
-class _SegmentedHeader extends StatelessWidget {
-  const _SegmentedHeader({
-    required this.left,
-    required this.right,
-    required this.badge,
-  });
+class _DeploymentTile extends StatelessWidget {
+  const _DeploymentTile({required this.request});
 
-  final String left;
-  final String right;
-  final String badge;
+  final RescueRequestModel request;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              decoration: BoxDecoration(
-                color: AppTheme.signalBlue,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                left,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ),
-          Expanded(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  right,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(width: 6),
-                CircleAvatar(
-                  radius: 10,
-                  backgroundColor: AppTheme.dangerRed,
-                  child: Text(
-                    badge,
-                    style: const TextStyle(color: Colors.white, fontSize: 10),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+    final status = _rescueStatusLabel(request.status);
+    final color = switch (request.status) {
+      RescueStatus.inProgress => AppTheme.safeGreen,
+      RescueStatus.acknowledged => AppTheme.warningAmber,
+      _ => AppTheme.signalBlue,
+    };
 
-class _TeamTile extends StatelessWidget {
-  const _TeamTile({
-    required this.name,
-    required this.area,
-    required this.status,
-    required this.members,
-  });
-
-  final String name;
-  final String area;
-  final String status;
-  final int members;
-
-  @override
-  Widget build(BuildContext context) {
-    final active = status == 'On Mission';
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Card(
@@ -2487,27 +2643,25 @@ class _TeamTile extends StatelessWidget {
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              color: (active ? AppTheme.safeGreen : AppTheme.signalBlue)
-                  .withValues(alpha: 0.12),
+              color: color.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Icon(
-              active ? Icons.person_pin_circle : Icons.engineering,
-              color: active ? AppTheme.safeGreen : AppTheme.signalBlue,
-            ),
+            child: Icon(_incidentIcon(request.emergencyType), color: color),
           ),
-          title: Text(name),
-          subtitle: Text(area),
+          title: Text(_hazardTitle(request.emergencyType)),
+          subtitle: Text(
+            '${request.locationLabel ?? 'Unknown location'} · ${_timeAgoLabel(request.createdAt)}',
+          ),
           trailing: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              _SeverityPill(
-                label: status,
-                color: active ? AppTheme.safeGreen : AppTheme.signalBlue,
-              ),
+              _SeverityPill(label: status, color: color),
               const SizedBox(height: 5),
-              Text('$members', style: Theme.of(context).textTheme.labelSmall),
+              Text(
+                '${request.peopleNeedingHelp} people',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
             ],
           ),
         ),

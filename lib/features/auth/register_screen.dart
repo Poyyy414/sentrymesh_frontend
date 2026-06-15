@@ -21,6 +21,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _emailController = TextEditingController();
   final _addressController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _responderCodeController = TextEditingController();
   bool _isLoading = false;
   bool _obscurePassword = true;
 
@@ -31,6 +32,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _emailController.dispose();
     _addressController.dispose();
     _passwordController.dispose();
+    _responderCodeController.dispose();
     super.dispose();
   }
 
@@ -49,6 +51,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
             email: _emailController.text,
             address: _addressController.text,
             password: _passwordController.text,
+            responderCode: _responderCodeController.text.trim().isEmpty
+                ? null
+                : _responderCodeController.text.trim(),
           );
 
       if (!mounted) {
@@ -139,6 +144,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 emailController: _emailController,
                 addressController: _addressController,
                 passwordController: _passwordController,
+                responderCodeController: _responderCodeController,
                 obscurePassword: _obscurePassword,
                 isLoading: _isLoading,
                 requiredValidator: _required,
@@ -493,6 +499,7 @@ class _RegisterContent extends StatelessWidget {
     required this.emailController,
     required this.addressController,
     required this.passwordController,
+    required this.responderCodeController,
     required this.obscurePassword,
     required this.isLoading,
     required this.requiredValidator,
@@ -510,6 +517,7 @@ class _RegisterContent extends StatelessWidget {
   final TextEditingController emailController;
   final TextEditingController addressController;
   final TextEditingController passwordController;
+  final TextEditingController responderCodeController;
   final bool obscurePassword;
   final bool isLoading;
   final RequiredValidator requiredValidator;
@@ -626,6 +634,20 @@ class _RegisterContent extends StatelessWidget {
                       validatePassword: validatePassword,
                       onTogglePassword: onTogglePassword,
                       onSubmit: onSubmit,
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      key: const Key('register_responder_code_field'),
+                      controller: responderCodeController,
+                      style: const TextStyle(color: AppTheme.textPrimary),
+                      cursorColor: AppTheme.signalBlue,
+                      textInputAction: TextInputAction.done,
+                      onFieldSubmitted: (_) => onSubmit(),
+                      decoration: _registerFieldDecoration(
+                        label: 'Responder Access Code (optional)',
+                        hint: 'Leave blank for citizen account',
+                        icon: Icons.shield_outlined,
+                      ),
                     ),
                     SizedBox(height: compact ? 18 : 22),
                     _CreateAccountButton(

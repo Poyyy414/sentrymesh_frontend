@@ -30,6 +30,7 @@ class AuthApi {
     required String email,
     required String address,
     required String password,
+    String? responderCode,
   }) {
     return _client.post(
       ApiEndpoints.authRegister,
@@ -39,6 +40,8 @@ class AuthApi {
         'email': email,
         'address': address,
         'password': password,
+        if (responderCode != null && responderCode.trim().isNotEmpty)
+          'responder_code': responderCode.trim(),
       },
     );
   }

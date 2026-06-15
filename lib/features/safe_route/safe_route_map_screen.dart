@@ -24,9 +24,9 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return ColoredBox(
-      color: AppTheme.surface,
-      child: SafeArea(
+    return Scaffold(
+      backgroundColor: AppTheme.surface,
+      body: SafeArea(
         bottom: false,
         child: Column(
           children: [
@@ -37,7 +37,7 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
               child: Row(
                 children: [
                   IconButton(
-                    onPressed: () {},
+                    onPressed: () => Navigator.of(context).pop(),
                     tooltip: 'Back',
                     icon: const Icon(Icons.arrow_back, color: Colors.white),
                   ),
@@ -119,17 +119,23 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
                   ),
                   const SizedBox(height: 12),
                   SentryButton(
-                    label: 'Start Guidance',
-                    icon: Icons.navigation,
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Guidance started. Follow the highlighted safe path.',
-                          ),
-                        ),
-                      );
-                    },
+                    label: _userLocation != null
+                        ? 'Start Guidance'
+                        : 'Locate Me First',
+                    icon: _userLocation != null
+                        ? Icons.navigation
+                        : Icons.my_location,
+                    onPressed: _userLocation != null
+                        ? () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Guidance started. Follow the highlighted safe path.',
+                                ),
+                              ),
+                            );
+                          }
+                        : _locateUser,
                   ),
                 ],
               ),

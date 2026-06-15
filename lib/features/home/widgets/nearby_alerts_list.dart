@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../app/router.dart';
 import '../../../app/theme.dart';
 
 class NearbyAlertsList extends StatelessWidget {
@@ -18,7 +19,11 @@ class NearbyAlertsList extends StatelessWidget {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
-            TextButton(onPressed: () {}, child: const Text('View all')),
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(context).pushNamed(AppRouter.alerts),
+              child: const Text('View all'),
+            ),
           ],
         ),
         Card(
