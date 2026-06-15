@@ -8,8 +8,8 @@ class RouteSummaryCard extends StatelessWidget {
   const RouteSummaryCard({
     required this.countryName,
     required this.userLocation,
-    required this.route,
-    required this.isLoading,
+    this.route,
+    this.isLoading = false,
     this.message,
     super.key,
   });
