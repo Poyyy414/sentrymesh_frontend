@@ -5,12 +5,12 @@ class Env {
 
   static const apiBaseUrl = String.fromEnvironment(
     'SENTRYMESH_API_BASE_URL',
-    defaultValue: 'https://backend-mesh-iz8d.onrender.com',
+    defaultValue: 'https://sentrymesh-backend.onrender.com',
   );
 
   static const aiBaseUrl = String.fromEnvironment(
     'SENTRYMESH_AI_BASE_URL',
-    defaultValue: 'https://apexnode-ai.onrender.com',
+    defaultValue: 'https://sentrymesh-vigilantpath-api.onrender.com',
   );
 
   static const apiConfig = ApiConfig(baseUrl: apiBaseUrl);

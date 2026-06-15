@@ -2,13 +2,17 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../app/router.dart';
 import '../../app/theme.dart';
 import '../../core/di/injection.dart';
 import '../../core/services/location_service.dart';
+import '../../data/models/alert_model.dart';
+import '../../data/models/family_member_model.dart';
 import '../../data/models/prediction_model.dart';
 import '../../data/models/rescue_request_model.dart';
 import '../../data/repositories/prediction_repository.dart';
 import '../../shared/demo/demo_scenario.dart';
+import '../../shared/enums/alert_severity.dart';
 import '../../shared/enums/hazard_type.dart';
 import '../../shared/enums/rescue_status.dart';
 
@@ -21,6 +25,80 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool _distressSent = DemoScenario.instance.residentSosSent;
+  Future<PredictionBundle>? _predictionFuture;
+  Future<List<AlertModel>>? _alertsFuture;
+  Future<List<FamilyMemberModel>>? _familyFuture;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_predictionFuture == null) {
+      _loadAllData();
+    }
+  }
+
+  void _loadAllData() {
+    final deps = AppDependenciesScope.of(context);
+    setState(() {
+      _predictionFuture = deps.predictionRepository.fetchHomePredictions();
+      _alertsFuture = deps.alertRepository.fetchAlerts();
+      _familyFuture = deps.familyRepository.fetchMembers();
+    });
+  }
+
+  void _refreshData() => _loadAllData();
+
+  Future<void> _addFamilyMember() async {
+    final nameController = TextEditingController();
+    final relationshipController = TextEditingController();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add Family Member'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(labelText: 'Full Name'),
+            ),
+            TextField(
+              controller: relationshipController,
+              decoration: const InputDecoration(labelText: 'Relationship'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      try {
+        await AppDependenciesScope.of(context).familyRepository.addMember(
+          name: nameController.text,
+          relationship: relationshipController.text,
+          status: 'Safe',
+        );
+        _loadAllData();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to add member: $e')),
+          );
+        }
+      }
+    }
+  }
 
   Future<void> _openSosFlow() async {
     final sent = await showModalBottomSheet<bool>(
@@ -160,6 +238,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           _EmergencyActions(
                             isWide: isWide,
                             onSosPressed: _openSosFlow,
+                            onAddFamily: _addFamilyMember,
                           ),
                           const SizedBox(height: 14),
                           _LocationAndStatus(
@@ -167,11 +246,40 @@ class _HomeScreenState extends State<HomeScreen> {
                             distressSent: _distressSent,
                           ),
                           const SizedBox(height: 14),
-                          const _FloodForecastCard(),
+                          FutureBuilder<PredictionBundle>(
+                            future: _predictionFuture,
+                            builder: (context, predictionSnapshot) {
+                              return FutureBuilder<List<AlertModel>>(
+                                future: _alertsFuture,
+                                builder: (context, alertSnapshot) {
+                                  return FutureBuilder<List<FamilyMemberModel>>(
+                                    future: _familyFuture,
+                                    builder: (context, familySnapshot) {
+                                      return Column(
+                                        children: [
+                                          _FloodForecastCard(
+                                            snapshot: predictionSnapshot,
+                                            onRefresh: _refreshData,
+                                          ),
+                                          const SizedBox(height: 14),
+                                          _InformationGrid(
+                                            isWide: isWide,
+                                            bundle: predictionSnapshot.data,
+                                            alerts: alertSnapshot.data,
+                                          ),
+                                        ],
+                                      );
+                                    },
+                                  );
+                                },
+                              );
+                            },
+                          ),
                           const SizedBox(height: 14),
-                          _InformationGrid(isWide: isWide),
-                          const SizedBox(height: 14),
-                          _QuickActions(onSosPressed: _openSosFlow),
+                          _QuickActions(
+                            onSosPressed: _openSosFlow,
+                            onAddFamily: _addFamilyMember,
+                          ),
                         ],
                       ),
                     ),
@@ -514,16 +622,21 @@ class _HeaderBackdropPainter extends CustomPainter {
 }
 
 class _EmergencyActions extends StatelessWidget {
-  const _EmergencyActions({required this.isWide, required this.onSosPressed});
+  const _EmergencyActions({
+    required this.isWide,
+    required this.onSosPressed,
+    required this.onAddFamily,
+  });
 
   final bool isWide;
   final VoidCallback onSosPressed;
+  final VoidCallback onAddFamily;
 
   @override
   Widget build(BuildContext context) {
     final backup = const _BackupCard();
     final sos = _EmergencySosCard(onPressed: onSosPressed);
-    final family = const _FamilyCheckInCard();
+    final family = _FamilyCheckInCard(onTap: onAddFamily);
 
     if (!isWide) {
       return Column(
@@ -641,14 +754,17 @@ class _EmergencySosCard extends StatelessWidget {
 }
 
 class _FamilyCheckInCard extends StatelessWidget {
-  const _FamilyCheckInCard();
+  const _FamilyCheckInCard({required this.onTap});
+
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return const _ActionCardShell(
-      key: Key('family_check_in_card'),
-      gradient: [Color(0xFF0B4FB2), Color(0xFF073781)],
-      child: Row(
+    return _ActionCardShell(
+      key: const Key('family_check_in_card'),
+      gradient: const [Color(0xFF0B4FB2), Color(0xFF073781)],
+      onTap: onTap,
+      child: const Row(
         children: [
           _ActionIcon(
             icon: Icons.groups_rounded,
@@ -658,8 +774,8 @@ class _FamilyCheckInCard extends StatelessWidget {
           SizedBox(width: 14),
           Expanded(
             child: _ActionText(
-              title: 'Family Check-in',
-              subtitle: 'Let your family know you are safe.',
+              title: 'Add Family Member',
+              subtitle: 'Ensure your loved ones are registered for safety.',
             ),
           ),
           _ActionChevron(),
@@ -1228,43 +1344,14 @@ class _StatusLandscapePainter extends CustomPainter {
   }
 }
 
-class _FloodForecastCard extends StatefulWidget {
-  const _FloodForecastCard();
+class _FloodForecastCard extends StatelessWidget {
+  const _FloodForecastCard({
+    required this.snapshot,
+    required this.onRefresh,
+  });
 
-  @override
-  State<_FloodForecastCard> createState() => _FloodForecastCardState();
-}
-
-class _FloodForecastCardState extends State<_FloodForecastCard> {
-  Future<PredictionBundle>? _predictionFuture;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _predictionFuture ??= _loadPrediction();
-  }
-
-  void _refreshPrediction() {
-    setState(() {
-      _predictionFuture = _loadPrediction();
-    });
-  }
-
-  Future<PredictionBundle> _loadPrediction() {
-    if (_isRunningWidgetTest) {
-      return Future.error('AI prediction fetch skipped during widget tests.');
-    }
-
-    return AppDependenciesScope.of(
-      context,
-    ).predictionRepository.fetchHomePredictions();
-  }
-
-  bool get _isRunningWidgetTest {
-    return WidgetsBinding.instance.runtimeType.toString().contains(
-      'TestWidgetsFlutterBinding',
-    );
-  }
+  final AsyncSnapshot<PredictionBundle> snapshot;
+  final VoidCallback onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -1307,7 +1394,7 @@ class _FloodForecastCardState extends State<_FloodForecastCard> {
               Material(
                 color: Colors.transparent,
                 child: InkWell(
-                  onTap: _refreshPrediction,
+                  onTap: onRefresh,
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
@@ -1344,35 +1431,33 @@ class _FloodForecastCardState extends State<_FloodForecastCard> {
             ],
           ),
           const SizedBox(height: 18),
-          FutureBuilder<PredictionBundle>(
-            future: _predictionFuture,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState != ConnectionState.done &&
-                  !snapshot.hasData) {
-                return const _PredictionLoadingState();
-              }
-
-              if (snapshot.hasError) {
-                return _PredictionErrorState(
-                  message: snapshot.error.toString(),
-                  onRetry: _refreshPrediction,
-                );
-              }
-
-              final bundle = snapshot.data;
-              if (bundle == null) {
-                return _PredictionErrorState(
-                  message: 'No prediction data returned yet.',
-                  onRetry: _refreshPrediction,
-                );
-              }
-
-              return _ForecastMetricsLayout(metrics: _metricsFor(bundle));
-            },
-          ),
+          _buildContent(context),
         ],
       ),
     );
+  }
+
+  Widget _buildContent(BuildContext context) {
+    if (snapshot.connectionState != ConnectionState.done && !snapshot.hasData) {
+      return const _PredictionLoadingState();
+    }
+
+    if (snapshot.hasError) {
+      return _PredictionErrorState(
+        message: snapshot.error.toString(),
+        onRetry: onRefresh,
+      );
+    }
+
+    final bundle = snapshot.data;
+    if (bundle == null) {
+      return _PredictionErrorState(
+        message: 'No prediction data returned yet.',
+        onRetry: onRefresh,
+      );
+    }
+
+    return _ForecastMetricsLayout(metrics: _metricsFor(bundle));
   }
 
   List<_ForecastMetric> _metricsFor(PredictionBundle bundle) {
@@ -1695,73 +1780,93 @@ class _VerticalDivider extends StatelessWidget {
 }
 
 class _InformationGrid extends StatelessWidget {
-  const _InformationGrid({required this.isWide});
+  const _InformationGrid({
+    required this.isWide,
+    required this.bundle,
+    required this.alerts,
+  });
 
   final bool isWide;
+  final PredictionBundle? bundle;
+  final List<AlertModel>? alerts;
 
   @override
   Widget build(BuildContext context) {
-    const weather = _WeatherHazardCard();
-    const alerts = _NearbyAlertsCard();
+    final weather = _WeatherHazardCard(bundle: bundle);
+    final nearbyAlerts = _NearbyAlertsCard(alerts: alerts);
 
     if (!isWide) {
-      return const Column(children: [weather, SizedBox(height: 12), alerts]);
+      return Column(children: [
+        weather,
+        const SizedBox(height: 12),
+        nearbyAlerts
+      ]);
     }
 
-    return const Row(
+    return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(flex: 6, child: weather),
-        SizedBox(width: 14),
-        Expanded(flex: 5, child: alerts),
+        const SizedBox(width: 14),
+        Expanded(flex: 5, child: nearbyAlerts),
       ],
     );
   }
 }
 
 class _WeatherHazardCard extends StatelessWidget {
-  const _WeatherHazardCard();
+  const _WeatherHazardCard({required this.bundle});
+
+  final PredictionBundle? bundle;
 
   @override
   Widget build(BuildContext context) {
-    return const _DashboardCard(
-      key: Key('weather_hazard_card'),
+    final floodRisk = bundle?.flood?.alertLevel ?? 'Low';
+    final rainfall = bundle?.rainfallMm ?? 0.0;
+    final temp = bundle?.temperatureC ?? 28.0;
+
+    final riskColor = _riskColor(bundle?.flood);
+
+    return _DashboardCard(
+      key: const Key('weather_hazard_card'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _CardSectionHeading(
             title: 'Weather & Hazard Overview',
-            subtitle: 'Updated 2 min ago',
+            subtitle: bundle != null
+                ? 'Updated ${_timeAgo(bundle!.fetchedAt)}'
+                : 'Loading conditions...',
           ),
-          SizedBox(height: 12),
+          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
                 child: _WeatherMetric(
                   icon: Icons.water_drop_rounded,
                   label: 'Flood Risk',
-                  value: 'Low',
-                  detail: 'Minimal flood risk',
-                  color: AppTheme.safeGreen,
+                  value: floodRisk,
+                  detail: bundle?.flood?.probabilityLabel ?? 'Monitoring sensor',
+                  color: riskColor,
                 ),
               ),
-              SizedBox(width: 10),
+              const SizedBox(width: 10),
               Expanded(
                 child: _WeatherMetric(
                   icon: Icons.cloudy_snowing,
                   label: 'Rainfall',
-                  value: '1.2 mm/h',
-                  detail: 'Light rain',
+                  value: '${rainfall.toStringAsFixed(1)} mm/h',
+                  detail: rainfall > 10 ? 'Heavy rain' : (rainfall > 0 ? 'Light rain' : 'No rain'),
                   color: AppTheme.signalBlue,
                 ),
               ),
-              SizedBox(width: 10),
+              const SizedBox(width: 10),
               Expanded(
                 child: _WeatherMetric(
                   icon: Icons.thermostat_rounded,
                   label: 'Temp',
-                  value: '28 C',
-                  detail: 'Feels like 31 C',
+                  value: '${temp.round()} C',
+                  detail: 'OpenWeather live',
                   color: AppTheme.dangerRed,
                 ),
               ),
@@ -1770,6 +1875,23 @@ class _WeatherHazardCard extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Color _riskColor(NodePredictionModel? prediction) {
+    final level = prediction?.alertLevel.toLowerCase() ?? '';
+    if (level.contains('critical') || level.contains('high')) {
+      return AppTheme.dangerRed;
+    }
+    if (level.contains('medium') || level.contains('moderate')) {
+      return AppTheme.warningAmber;
+    }
+    return AppTheme.safeGreen;
+  }
+
+  String _timeAgo(DateTime time) {
+    final diff = DateTime.now().difference(time);
+    if (diff.inMinutes < 1) return 'Just now';
+    return '${diff.inMinutes} min ago';
   }
 }
 
@@ -1912,35 +2034,73 @@ class _SparklinePainter extends CustomPainter {
 }
 
 class _NearbyAlertsCard extends StatelessWidget {
-  const _NearbyAlertsCard();
+  const _NearbyAlertsCard({required this.alerts});
+
+  final List<AlertModel>? alerts;
 
   @override
   Widget build(BuildContext context) {
-    return const _DashboardCard(
-      key: Key('nearby_alerts_card'),
+    return _DashboardCard(
+      key: const Key('nearby_alerts_card'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _CardSectionHeading(title: 'Nearby Alerts', action: 'View all'),
-          SizedBox(height: 12),
-          _AlertRow(
-            icon: Icons.flood_rounded,
-            title: 'Flood Warning',
-            subtitle: 'San Felipe - 12 people affected',
-            label: 'High',
-            color: AppTheme.dangerRed,
+          _CardSectionHeading(
+            title: 'Nearby Alerts',
+            action: 'View all',
+            onAction: () => Navigator.pushNamed(context, AppRouter.alerts),
           ),
-          SizedBox(height: 8),
-          _AlertRow(
-            icon: Icons.warning_amber_rounded,
-            title: 'Landslide Watch',
-            subtitle: 'Concepcion Pequena - sensor confidence 87%',
-            label: 'Medium',
-            color: AppTheme.warningAmber,
-          ),
+          const SizedBox(height: 12),
+          if (alerts == null)
+            const Center(child: CircularProgressIndicator(strokeWidth: 2))
+          else if (alerts!.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Text(
+                'No active alerts in your area.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11, color: Color(0xFF71849A)),
+              ),
+            )
+          else
+            for (final alert in alerts!.take(2)) ...[
+              _AlertRow(
+                icon: _hazardIcon(alert.hazardType),
+                title: alert.title,
+                subtitle: '${alert.location} - ${alert.issuedAt.hour}:${alert.issuedAt.minute}',
+                label: alert.severity.label,
+                color: _severityColor(alert.severity),
+                onTap: () => Navigator.pushNamed(
+                  context,
+                  AppRouter.alertDetails,
+                  arguments: alert,
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
         ],
       ),
     );
+  }
+
+  IconData _hazardIcon(HazardType type) {
+    return switch (type) {
+      HazardType.flood => Icons.flood_rounded,
+      HazardType.landslide => Icons.terrain_rounded,
+      HazardType.typhoon => Icons.cyclone_rounded,
+      HazardType.medical => Icons.medical_services_rounded,
+      HazardType.distress => Icons.sos_rounded,
+      HazardType.infrastructure => Icons.car_crash_rounded,
+    };
+  }
+
+  Color _severityColor(AlertSeverity severity) {
+    return switch (severity) {
+      AlertSeverity.critical => AppTheme.dangerRed,
+      AlertSeverity.high => AppTheme.dangerRed,
+      AlertSeverity.medium => AppTheme.warningAmber,
+      AlertSeverity.low => AppTheme.safeGreen,
+    };
   }
 }
 
@@ -1951,6 +2111,7 @@ class _AlertRow extends StatelessWidget {
     required this.subtitle,
     required this.label,
     required this.color,
+    required this.onTap,
   });
 
   final IconData icon;
@@ -1958,86 +2119,95 @@ class _AlertRow extends StatelessWidget {
   final String subtitle;
   final String label;
   final Color color;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(9),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.045),
-        borderRadius: BorderRadius.circular(9),
-        border: Border.all(color: color.withValues(alpha: 0.12)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(9),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(9),
+      child: Container(
+        padding: const EdgeInsets.all(9),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.045),
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(color: color.withValues(alpha: 0.12)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Icon(icon, color: color, size: 22),
             ),
-            child: Icon(icon, color: color, size: 22),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Color(0xFF102E58),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w900,
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Color(0xFF102E58),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF71849A),
-                    fontSize: 9,
-                    fontWeight: FontWeight.w500,
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF71849A),
+                      fontSize: 9,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Text(
-              label,
-              style: TextStyle(
-                color: color,
-                fontSize: 9,
-                fontWeight: FontWeight.w800,
+                ],
               ),
             ),
-          ),
-          const SizedBox(width: 4),
-          const Icon(
-            Icons.chevron_right_rounded,
-            color: Color(0xFF71849A),
-            size: 19,
-          ),
-        ],
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: Color(0xFF71849A),
+              size: 19,
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
 class _QuickActions extends StatelessWidget {
-  const _QuickActions({required this.onSosPressed});
+  const _QuickActions({
+    required this.onSosPressed,
+    required this.onAddFamily,
+  });
 
   final VoidCallback onSosPressed;
+  final VoidCallback onAddFamily;
 
   @override
   Widget build(BuildContext context) {
@@ -2055,23 +2225,26 @@ class _QuickActions extends StatelessWidget {
               color: AppTheme.dangerRed,
               onTap: onSosPressed,
             ),
-            const _QuickActionTile(
+            _QuickActionTile(
               icon: Icons.call_rounded,
-              title: 'Emergency Hotline',
-              subtitle: 'Call responders',
+              title: 'Rescue Path',
+              subtitle: 'Navigate safely',
               color: AppTheme.safeGreen,
+              onTap: () => Navigator.pushNamed(context, AppRouter.safeRoute),
             ),
-            const _QuickActionTile(
+            _QuickActionTile(
               icon: Icons.groups_rounded,
-              title: 'Family Check-in',
-              subtitle: 'Check on your family',
+              title: 'Add Family',
+              subtitle: 'Register member',
               color: AppTheme.signalBlue,
+              onTap: onAddFamily,
             ),
-            const _QuickActionTile(
+            _QuickActionTile(
               icon: Icons.flag_rounded,
-              title: 'Report Incident',
-              subtitle: 'Report a hazard',
+              title: 'Live Alerts',
+              subtitle: 'Real-time updates',
               color: AppTheme.violet,
+              onTap: () => Navigator.pushNamed(context, AppRouter.alerts),
             ),
           ];
 
@@ -2261,11 +2434,17 @@ class _SectionIcon extends StatelessWidget {
 }
 
 class _CardSectionHeading extends StatelessWidget {
-  const _CardSectionHeading({required this.title, this.subtitle, this.action});
+  const _CardSectionHeading({
+    required this.title,
+    this.subtitle,
+    this.action,
+    this.onAction,
+  });
 
   final String title;
   final String? subtitle;
   final String? action;
+  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) {
@@ -2299,12 +2478,19 @@ class _CardSectionHeading extends StatelessWidget {
           ),
         ),
         if (action != null)
-          Text(
-            action!,
-            style: const TextStyle(
-              color: AppTheme.signalBlue,
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
+          InkWell(
+            onTap: onAction,
+            borderRadius: BorderRadius.circular(4),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Text(
+                action!,
+                style: const TextStyle(
+                  color: AppTheme.signalBlue,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
             ),
           ),
       ],

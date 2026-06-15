@@ -48,7 +48,7 @@ class _LoginScreenState extends State<LoginScreen> {
       final route = user.role == 'responder'
           ? AppRouter.responderShell
           : AppRouter.appShell;
-      Navigator.of(context).pushReplacementNamed(route);
+      Navigator.of(context).pushNamedAndRemoveUntil(route, (_) => false);
     } on AuthException catch (error) {
       _showMessage(error.message);
     } catch (_) {

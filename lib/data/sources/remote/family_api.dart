@@ -6,7 +6,12 @@ class FamilyApi {
 
   final ApiClient _client;
 
-  Future<Map<String, Object?>> fetchMembers() {
+  Future<Map<String, Object?>> fetchMembers() async {
     return _client.get(ApiEndpoints.familyMembers);
   }
-}
+
+  Future<Map<String, Object?>> addMember(Map<String, Object?> data) async {
+    return _client.post(ApiEndpoints.familyMembers, body: data);
+  }
+  }
+

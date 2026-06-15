@@ -18,4 +18,18 @@ class FamilyRepository {
         .map(FamilyMemberModel.fromJson)
         .toList();
   }
+
+  Future<FamilyMemberModel> addMember({
+    required String name,
+    required String relationship,
+    required String status,
+  }) async {
+    final payload = await _remote.addMember({
+      'name': name,
+      'relationship': relationship,
+      'status': status,
+    });
+
+    return FamilyMemberModel.fromJson(payload);
+  }
 }

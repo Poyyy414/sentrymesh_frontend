@@ -13,6 +13,19 @@ class PredictionBundle {
   final NodePredictionModel? flood;
   final NodePredictionModel? landslide;
   final DateTime fetchedAt;
+
+  Map<String, Object?> get _weatherSource =>
+      (flood?.raw['input'] as Map<String, Object?>?) ?? const {};
+
+  double get rainfallMm => _asDouble(_weatherSource['rainfall_mm']) ?? 0;
+  double get pressureHpa => _asDouble(_weatherSource['pressure']) ?? 1013;
+  double get temperatureC => _asDouble(_weatherSource['temperature']) ?? 27;
+
+  double? _asDouble(Object? value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
 }
 
 class PredictionRepository {
