@@ -1,7 +1,7 @@
 class ApiConfig {
   const ApiConfig({
     required this.baseUrl,
-    this.timeout = const Duration(seconds: 20),
+    this.timeout = const Duration(seconds: 60),
   });
 
   final String baseUrl;
