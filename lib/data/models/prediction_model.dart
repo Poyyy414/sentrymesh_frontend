@@ -33,16 +33,29 @@ class PredictionResponseModel {
   final Map<String, Object?> raw;
 
   factory PredictionResponseModel.fromJson(Map<String, Object?> json) {
-    final items = _listFrom(
-      json['predictions'] ?? json['results'] ?? json['nodes'] ?? json['items'],
+    // The AI response may be nested under "prediction" (NestJS DB envelope)
+    final predictionPayload = _mapFrom(
+      json['prediction'] ?? json['prediction_payload'] ?? json['predictionPayload'],
     );
 
+    final items = _listFrom(
+      json['predictions'] ??
+          json['results'] ??
+          predictionPayload['nodes'] ?? // AI nodes nested inside NestJS envelope
+          json['nodes'] ??
+          json['items'],
+    );
+
+    // When individual nodes are found, merge the outer envelope so fields like
+    // hazard_type, risk_level, confidence remain accessible via raw.
     final nodes = items.isEmpty
         ? [NodePredictionModel.fromJson(json)]
         : items
-              .map(_mapFrom)
-              .where((item) => item.isNotEmpty)
-              .map(NodePredictionModel.fromJson)
+              .map((item) {
+                final nodeMap = _mapFrom(item);
+                return NodePredictionModel.fromJson({...json, ...nodeMap});
+              })
+              .where((node) => node.raw.isNotEmpty)
               .toList();
 
     return PredictionResponseModel(
@@ -67,6 +80,8 @@ class NodePredictionModel {
     required this.eventProbability,
     required this.alert,
     required this.alertLevel,
+    this.equityScore,
+    this.rescueRank,
     this.raw = const {},
   });
 
@@ -75,6 +90,8 @@ class NodePredictionModel {
   final double? eventProbability;
   final bool alert;
   final String alertLevel;
+  final double? equityScore;
+  final int? rescueRank;
   final Map<String, Object?> raw;
 
   factory NodePredictionModel.fromJson(Map<String, Object?> json) {
@@ -113,6 +130,8 @@ class NodePredictionModel {
           _isAlertLevel(alertLevel?.toString()) ??
           (eventProbability ?? 0) >= 0.5,
       alertLevel: _titleCase(alertLevel?.toString() ?? 'watch'),
+      equityScore: _doubleFrom(source['equity_score'] ?? source['equityScore']),
+      rescueRank: _intFrom(source['rescue_rank'] ?? source['rescueRank']),
       raw: source,
     );
   }

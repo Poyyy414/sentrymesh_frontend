@@ -12,6 +12,7 @@ import '../../core/config/map_tile_config.dart';
 import '../../core/di/injection.dart';
 import '../../core/services/location_service.dart';
 import '../../core/widgets/custom_button.dart';
+import '../../data/models/prediction_model.dart';
 import '../../data/models/rescue_location_model.dart';
 import '../../data/models/rescue_navigation_model.dart';
 import '../../data/models/rescue_request_model.dart';
@@ -577,7 +578,7 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 14),
-          const _AiReasoningCard(),
+          _AiReasoningCard(incident: incident),
           const SizedBox(height: 16),
           Text('Actions', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 10),
@@ -1416,11 +1417,57 @@ class _LiveStatusBanner extends StatelessWidget {
   }
 }
 
-class _AiReasoningCard extends StatelessWidget {
-  const _AiReasoningCard();
+class _AiReasoningCard extends StatefulWidget {
+  const _AiReasoningCard({required this.incident});
+
+  final _Incident incident;
+
+  @override
+  State<_AiReasoningCard> createState() => _AiReasoningCardState();
+}
+
+class _AiReasoningCardState extends State<_AiReasoningCard> {
+  NodePredictionModel? _node;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _fetch();
+    });
+  }
+
+  Future<void> _fetch() async {
+    final lat = widget.incident.latitude;
+    final lon = widget.incident.longitude;
+    if (lat == null || lon == null) {
+      setState(() => _loading = false);
+      return;
+    }
+    try {
+      final node = await AppDependenciesScope.of(
+        context,
+      ).predictionRepository.fetchIncidentPrediction(
+        latitude: lat,
+        longitude: lon,
+        hazardType: widget.incident.hazardType,
+      );
+      if (mounted) setState(() { _node = node; _loading = false; });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final node = _node;
+    final isAlert = node?.alert ?? false;
+    final alertLevel = node?.alertLevel ?? '';
+    final pillColor = isAlert ? AppTheme.dangerRed : AppTheme.safeGreen;
+    final equityScore = node?.equityScore;
+    final rescueRank = node?.rescueRank;
+
     return Card(
       color: AppTheme.signalBlue.withValues(alpha: 0.06),
       child: Padding(
@@ -1437,41 +1484,51 @@ class _AiReasoningCard extends StatelessWidget {
                     color: AppTheme.signalBlue.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(
-                    Icons.psychology,
-                    color: AppTheme.signalBlue,
-                  ),
+                  child: const Icon(Icons.psychology, color: AppTheme.signalBlue),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Flood Forecast Priority',
+                    'VigilantPath AI Assessment',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
-                const _SeverityPill(
-                  label: 'High Priority',
-                  color: AppTheme.dangerRed,
-                ),
+                if (_loading)
+                  const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else if (alertLevel.isNotEmpty)
+                  _SeverityPill(label: alertLevel, color: pillColor),
               ],
             ),
             const SizedBox(height: 12),
-            const _ReasonLine(
-              label: 'Arrival',
-              value: 'Floodwater may reach San Felipe in about 45 min',
-            ),
-            const _ReasonLine(
-              label: 'Peak',
-              value: 'Water may rise up to 1.4 m in low-lying streets',
-            ),
-            const _ReasonLine(
-              label: 'Warning',
-              value: 'Flash flood risk is elevated for the next hour',
-            ),
-            const _ReasonLine(
-              label: 'Action',
-              value: 'Dispatch before the main access road becomes unsafe',
-            ),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 4),
+                child: Text('Fetching AI hazard assessment…'),
+              )
+            else if (node == null)
+              const _ReasonLine(
+                label: 'Status',
+                value: 'AI assessment unavailable — incident location not pinned yet.',
+              )
+            else ...[
+              _ReasonLine(label: 'Risk', value: node.probabilityLabel),
+              _ReasonLine(label: 'Severity', value: node.severityLabel),
+              if (equityScore != null)
+                _ReasonLine(
+                  label: 'Equity',
+                  value:
+                      'Score ${(equityScore * 100).toStringAsFixed(0)}/100 — ranked by objective threat only',
+                ),
+              if (rescueRank != null)
+                _ReasonLine(
+                  label: 'Rank',
+                  value: 'Priority #$rescueRank in area (equity-first)',
+                ),
+            ],
           ],
         ),
       ),
@@ -2036,6 +2093,7 @@ class _Incident {
     required this.color,
     required this.people,
     required this.status,
+    required this.hazardType,
     this.latitude,
     this.longitude,
   });
@@ -2054,6 +2112,7 @@ class _Incident {
       color: _severityFromPeople(request.peopleNeedingHelp),
       people: request.peopleNeedingHelp,
       status: _rescueStatusLabel(request.status),
+      hazardType: request.emergencyType,
       latitude: request.latitude,
       longitude: request.longitude,
     );
@@ -2068,6 +2127,7 @@ class _Incident {
   final Color color;
   final int people;
   final String status;
+  final HazardType hazardType;
   final double? latitude;
   final double? longitude;
 }

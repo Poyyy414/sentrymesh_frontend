@@ -1,3 +1,4 @@
+import '../../shared/enums/hazard_type.dart';
 import '../models/prediction_model.dart';
 import '../sources/remote/prediction_api.dart';
 
@@ -33,6 +34,42 @@ class PredictionRepository {
     : _remote = remote;
 
   final PredictionApi _remote;
+
+  Future<NodePredictionModel?> fetchIncidentPrediction({
+    required double latitude,
+    required double longitude,
+    required HazardType hazardType,
+  }) async {
+    final hour = DateTime.now().hour;
+    final isLandslide = hazardType == HazardType.landslide;
+    final payload = <String, Object?>{
+      'latitude': latitude,
+      'longitude': longitude,
+      'hour': hour,
+      'hazard_type': isLandslide ? 2 : 1,
+      'rainfall_mm': 0,
+      'wind_speed_kph': 0,
+      'water_level_m': 0,
+      'river_level_m': 0,
+      'slope': isLandslide ? 15.0 : 0.05,
+      'soil_moisture': 0.5,
+      'surface_runoff': 0.3,
+      'upstream_water_level': 0,
+      'ground_movement': 0,
+      'humidity': 75,
+      'pressure': 1010,
+      'temperature': 27,
+      'elevation': isLandslide ? 80.0 : 20.0,
+      'distance_to_river': 1.0,
+      'recent_reports': 1,
+      'location_label': 'Incident location',
+    };
+
+    final response = isLandslide
+        ? await _remote.predictLandslide(payload: payload)
+        : await _remote.predictFlood(payload: payload);
+    return response.firstNode;
+  }
 
   Future<PredictionBundle> fetchHomePredictions() async {
     final responses = await Future.wait([
