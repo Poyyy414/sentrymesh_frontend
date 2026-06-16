@@ -106,37 +106,40 @@ class AlertListCard extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 14),
-                  SizedBox(
-                    height: 43,
-                    child: OutlinedButton(
-                      key: ValueKey('view_details_$title'),
-                      onPressed: onTap ?? () {},
-                      style: OutlinedButton.styleFrom(
-                        backgroundColor: Colors.white.withValues(alpha: 0.72),
-                        foregroundColor: color,
-                        side: BorderSide(color: color.withValues(alpha: 0.2)),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(9),
+                  Material(
+                    color: Colors.transparent,
+                    child: SizedBox(
+                      height: 43,
+                      child: OutlinedButton(
+                        key: ValueKey('view_details_$title'),
+                        onPressed: onTap ?? () {},
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.white.withValues(alpha: 0.72),
+                          foregroundColor: color,
+                          side: BorderSide(color: color.withValues(alpha: 0.2)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(9),
+                          ),
                         ),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            'View Details',
-                            style: TextStyle(
-                              color: color,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w900,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              'View Details',
+                              style: TextStyle(
+                                color: color,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w900,
+                              ),
                             ),
-                          ),
-                          const Spacer(),
-                          Icon(
-                            Icons.chevron_right_rounded,
-                            color: color,
-                            size: 21,
-                          ),
-                        ],
+                            const Spacer(),
+                            Icon(
+                              Icons.chevron_right_rounded,
+                              color: color,
+                              size: 21,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),

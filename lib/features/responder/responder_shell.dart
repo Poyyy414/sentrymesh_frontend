@@ -549,7 +549,16 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
           const SizedBox(height: 14),
           const _DetailTabs(),
           const SizedBox(height: 12),
-          const _ResponderMapPreview(height: 170),
+          _ResponderMapPreview(
+            height: 170,
+            residentLocation:
+                incident.latitude != null && incident.longitude != null
+                    ? GeoPoint(
+                        latitude: incident.latitude!,
+                        longitude: incident.longitude!,
+                      )
+                    : null,
+          ),
           const SizedBox(height: 14),
           Card(
             child: Column(

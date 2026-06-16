@@ -576,7 +576,7 @@ class _LiveBadge extends StatelessWidget {
           CircleAvatar(radius: 4, backgroundColor: Color(0xFF16E29A)),
           SizedBox(width: 7),
           Text(
-            'Demo Live',
+            'Live',
             style: TextStyle(
               color: Colors.white,
               fontSize: 11,

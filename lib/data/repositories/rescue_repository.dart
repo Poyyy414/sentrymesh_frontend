@@ -73,16 +73,17 @@ class RescueRepository {
   }
 
   Future<RescueLocationModel?> fetchRequestLocation(String id) async {
-    final requests = await fetchRequests();
-    final request = requests.where((item) => item.id == id).firstOrNull;
-    if (request?.latitude == null || request?.longitude == null) {
-      return null;
-    }
-
+    final payload = await _remote.fetchRequestLocation(id);
+    final lat = payload['latitude'];
+    final lon = payload['longitude'];
+    if (lat == null || lon == null) return null;
+    final latitude = lat is num ? lat.toDouble() : double.tryParse('$lat');
+    final longitude = lon is num ? lon.toDouble() : double.tryParse('$lon');
+    if (latitude == null || longitude == null) return null;
     return RescueLocationModel(
-      latitude: request!.latitude!,
-      longitude: request.longitude!,
-      locationLabel: request.locationLabel,
+      latitude: latitude,
+      longitude: longitude,
+      locationLabel: payload['location_label'] as String?,
     );
   }
 

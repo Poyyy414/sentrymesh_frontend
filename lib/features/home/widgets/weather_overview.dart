@@ -5,6 +5,18 @@ import '../../../app/theme.dart';
 class WeatherOverview extends StatelessWidget {
   const WeatherOverview({super.key});
 
+  String _nowLabel() {
+    final now = DateTime.now();
+    final months = [
+      'Jan','Feb','Mar','Apr','May','Jun',
+      'Jul','Aug','Sep','Oct','Nov','Dec',
+    ];
+    final h = now.hour % 12 == 0 ? 12 : now.hour % 12;
+    final m = now.minute.toString().padLeft(2, '0');
+    final ampm = now.hour < 12 ? 'AM' : 'PM';
+    return 'Today, ${months[now.month - 1]} ${now.day} - $h:$m $ampm';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -16,7 +28,7 @@ class WeatherOverview extends StatelessWidget {
         ),
         const SizedBox(height: 2),
         Text(
-          'Today, June 1 - 7:45 AM',
+          _nowLabel(),
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 10),
