@@ -77,7 +77,7 @@ class RescueApi {
       body: {
         'shelter_id': shelterId,
         'shelter_name': shelterName,
-        if (shelterAddress case final addr?) 'shelter_address': addr,
+        'shelter_address': shelterAddress,
       },
     );
   }
