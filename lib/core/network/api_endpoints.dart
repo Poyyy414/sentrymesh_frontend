@@ -17,6 +17,11 @@ class ApiEndpoints {
   static const typhoonStatus = '/weather/typhoon-status';
   static const typhoonAlerts = '/weather/typhoon-alerts';
   static const weatherCurrent = '/weather/current';
+  static const evacuationCenters = '/evacuation-centers';
+
+  static String rescueRequestShelter(String id) {
+    return '/rescue-requests/$id/shelter';
+  }
 
   static String rescueRequestById(String id) {
     return '/rescue-requests/$id';

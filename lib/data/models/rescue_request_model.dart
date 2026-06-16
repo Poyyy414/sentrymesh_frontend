@@ -13,6 +13,9 @@ class RescueRequestModel {
     this.latitude,
     this.longitude,
     this.locationLabel,
+    this.assignedShelterId,
+    this.assignedShelterName,
+    this.assignedShelterAddress,
   });
 
   final String id;
@@ -25,6 +28,9 @@ class RescueRequestModel {
   final double? latitude;
   final double? longitude;
   final String? locationLabel;
+  final String? assignedShelterId;
+  final String? assignedShelterName;
+  final String? assignedShelterAddress;
 
   factory RescueRequestModel.fromJson(Map<String, Object?> json) {
     return RescueRequestModel(
@@ -49,6 +55,9 @@ class RescueRequestModel {
       locationLabel:
           json['location_label']?.toString() ??
           json['locationLabel']?.toString(),
+      assignedShelterId: json['assigned_shelter_id']?.toString(),
+      assignedShelterName: json['assigned_shelter_name']?.toString(),
+      assignedShelterAddress: json['assigned_shelter_address']?.toString(),
     );
   }
 

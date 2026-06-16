@@ -61,4 +61,24 @@ class RescueApi {
       body: location.toJson(),
     );
   }
+
+  Future<Map<String, Object?>> fetchEvacuationCenters() {
+    return _client.get(ApiEndpoints.evacuationCenters);
+  }
+
+  Future<Map<String, Object?>> assignShelter({
+    required String id,
+    required String shelterId,
+    required String shelterName,
+    String? shelterAddress,
+  }) {
+    return _client.patch(
+      ApiEndpoints.rescueRequestShelter(id),
+      body: {
+        'shelter_id': shelterId,
+        'shelter_name': shelterName,
+        if (shelterAddress case final addr?) 'shelter_address': addr,
+      },
+    );
+  }
 }

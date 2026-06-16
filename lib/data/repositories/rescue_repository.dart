@@ -1,5 +1,8 @@
+import 'dart:math';
+
 import '../../core/services/lora/lora_service.dart';
 import '../../core/services/location_service.dart';
+import '../models/evacuation_center_model.dart';
 import '../models/rescue_location_model.dart';
 import '../models/rescue_navigation_model.dart';
 import '../models/rescue_request_model.dart';
@@ -103,10 +106,45 @@ class RescueRepository {
 
     return RescueNavigationModel(
       directDistanceKm: route?.distanceKm ?? 0,
-      bearingDegrees: 0,
+      bearingDegrees: _bearing(responderLocation, residentLocation.point),
       route: route,
       navigationUrl:
           'https://www.google.com/maps/dir/?api=1&destination=${residentLocation.latitude},${residentLocation.longitude}&travelmode=driving',
     );
+  }
+
+  Future<List<EvacuationCenterModel>> fetchEvacuationCenters() async {
+    final payload = await _remote.fetchEvacuationCenters();
+    final items = payload['items'];
+    if (items is! List) return const [];
+    return items
+        .whereType<Map<String, Object?>>()
+        .map(EvacuationCenterModel.fromJson)
+        .toList();
+  }
+
+  Future<RescueRequestModel?> assignShelter({
+    required String requestId,
+    required String shelterId,
+    required String shelterName,
+    String? shelterAddress,
+  }) async {
+    final payload = await _remote.assignShelter(
+      id: requestId,
+      shelterId: shelterId,
+      shelterName: shelterName,
+      shelterAddress: shelterAddress,
+    );
+    if (payload.isEmpty) return null;
+    return RescueRequestModel.fromJson(payload);
+  }
+
+  double _bearing(GeoPoint from, GeoPoint to) {
+    final lat1 = from.latitude * pi / 180;
+    final lat2 = to.latitude * pi / 180;
+    final dLon = (to.longitude - from.longitude) * pi / 180;
+    final y = sin(dLon) * cos(lat2);
+    final x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon);
+    return (atan2(y, x) * 180 / pi + 360) % 360;
   }
 }

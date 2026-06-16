@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/assets.dart';
 import '../../app/router.dart';
@@ -12,6 +11,7 @@ import '../../core/config/map_tile_config.dart';
 import '../../core/di/injection.dart';
 import '../../core/services/location_service.dart';
 import '../../core/widgets/custom_button.dart';
+import '../../data/models/evacuation_center_model.dart';
 import '../../data/models/prediction_model.dart';
 import '../../data/models/rescue_location_model.dart';
 import '../../data/models/rescue_navigation_model.dart';
@@ -94,52 +94,6 @@ String _timeAgoLabel(DateTime createdAt) {
     return '${diff.inHours} hr ago';
   }
   return '${diff.inDays} d ago';
-}
-
-String? _navigationUrlFrom(RescueNavigationModel? navigation) {
-  return navigation?.navigationUrl;
-}
-
-Future<void> _launchNavigation({
-  required BuildContext context,
-  String? navigationUrl,
-  RescueLocationModel? residentLocation,
-  GeoPoint? responderLocation,
-}) async {
-  Uri? uri;
-
-  if (navigationUrl != null && navigationUrl.isNotEmpty) {
-    uri = Uri.tryParse(navigationUrl);
-  }
-
-  if (uri == null && residentLocation != null) {
-    final destination =
-        '${residentLocation.latitude},${residentLocation.longitude}';
-    final origin = responderLocation == null
-        ? ''
-        : '&origin=${responderLocation.latitude},${responderLocation.longitude}';
-    uri = Uri.parse(
-      'https://www.google.com/maps/dir/?api=1$origin&destination=$destination&travelmode=driving',
-    );
-  }
-
-  if (uri == null) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Resident location is not available yet.'),
-        ),
-      );
-    }
-    return;
-  }
-
-  final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-  if (!launched && context.mounted) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Could not open maps app.')));
-  }
 }
 
 
@@ -481,7 +435,7 @@ class _ActiveIncidentsScreenState extends State<ActiveIncidentsScreen> {
           )
         else
           for (final incident in _incidents) ...[
-            _IncidentCard(incident: incident),
+            _IncidentCard(incident: incident, onReturn: _load),
             const SizedBox(height: 12),
           ],
       ],
@@ -755,6 +709,29 @@ class _ResponderNavigationScreenState
     );
   }
 
+  void _fitRoute() {
+    final points = <LatLng>[];
+
+    final waypoints = _route?.waypoints;
+    if (waypoints != null) {
+      points.addAll(waypoints.map((p) => LatLng(p.latitude, p.longitude)));
+    }
+    if (_responderLocation != null) {
+      points.add(LatLng(_responderLocation!.latitude, _responderLocation!.longitude));
+    }
+    if (_residentLocation != null) {
+      points.add(LatLng(_residentLocation!.latitude, _residentLocation!.longitude));
+    }
+    if (points.length < 2) return;
+
+    _mapController.fitCamera(
+      CameraFit.bounds(
+        bounds: LatLngBounds.fromPoints(points),
+        padding: const EdgeInsets.all(48),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -799,6 +776,7 @@ class _ResponderNavigationScreenState
               navigation: _navigation,
               route: _route,
               onRefresh: _loadNavigation,
+              onNavigate: _fitRoute,
               isLoading: _isLoading,
               responderLocation: _responderLocation,
             ),
@@ -820,14 +798,98 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
   final _mapController = MapController();
 
   StreamSubscription<GeoPoint>? _locationSubscription;
+  Timer? _refreshTimer;
   GeoPoint? _responderLocation;
   bool _isLocating = false;
   bool _isTracking = false;
 
+  List<RescueRequestModel> _sosRequests = const [];
+  List<EvacuationCenterModel> _shelters = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadMapData();
+    });
+    _refreshTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) { if (mounted) _loadMapData(); },
+    );
+  }
+
   @override
   void dispose() {
     _locationSubscription?.cancel();
+    _refreshTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _loadMapData() async {
+    final repo = AppDependenciesScope.of(context).rescueRepository;
+    try {
+      final results = await Future.wait([
+        repo.fetchRequests(),
+        repo.fetchEvacuationCenters(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _sosRequests = (results[0] as List<RescueRequestModel>)
+            .where((r) => r.latitude != null && r.longitude != null)
+            .toList();
+        _shelters = results[1] as List<EvacuationCenterModel>;
+      });
+    } catch (_) {
+      // Map data refresh is best-effort; silently ignore errors
+    }
+  }
+
+  void _showSosBottomSheet(BuildContext context, RescueRequestModel request) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => _SosRequestSheet(
+        request: request,
+        shelters: _shelters,
+        onShelterAssigned: (shelterId, shelterName, shelterAddress) async {
+          final repo = AppDependenciesScope.of(context).rescueRepository;
+          await repo.assignShelter(
+            requestId: request.id,
+            shelterId: shelterId,
+            shelterName: shelterName,
+            shelterAddress: shelterAddress,
+          );
+          if (context.mounted) {
+            Navigator.of(context).pop();
+            _loadMapData();
+          }
+        },
+        onNavigate: () {
+          Navigator.of(context).pop();
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => _ResponderNavigationScreen(
+                incident: _Incident.fromRescueRequest(request),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _showShelterInfoSheet(
+      BuildContext context, EvacuationCenterModel shelter) {
+    showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => _ShelterInfoSheet(shelter: shelter),
+    );
   }
 
   Future<void> _locateResponder() async {
@@ -992,6 +1054,12 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
                   height: double.infinity,
                   mapController: _mapController,
                   responderLocation: _responderLocation,
+                  sosRequests: _sosRequests,
+                  shelters: _shelters,
+                  onSosRequestTap: (request) =>
+                      _showSosBottomSheet(context, request),
+                  onShelterTap: (shelter) =>
+                      _showShelterInfoSheet(context, shelter),
                 ),
                 const Positioned(top: 12, left: 12, child: _MapLayerMenu()),
                 Positioned(
@@ -1771,6 +1839,10 @@ class _ResponderMapPreview extends StatelessWidget {
     this.responderLocation,
     this.residentLocation,
     this.route,
+    this.sosRequests = const [],
+    this.shelters = const [],
+    this.onSosRequestTap,
+    this.onShelterTap,
   });
 
   final double height;
@@ -1778,6 +1850,10 @@ class _ResponderMapPreview extends StatelessWidget {
   final GeoPoint? responderLocation;
   final GeoPoint? residentLocation;
   final RouteModel? route;
+  final List<RescueRequestModel> sosRequests;
+  final List<EvacuationCenterModel> shelters;
+  final void Function(RescueRequestModel)? onSosRequestTap;
+  final void Function(EvacuationCenterModel)? onShelterTap;
 
   static const _center = LatLng(13.6218, 123.1948);
 
@@ -1830,6 +1906,30 @@ class _ResponderMapPreview extends StatelessWidget {
             ),
           MarkerLayer(
             markers: [
+              // Evacuation center markers
+              for (final shelter in shelters)
+                Marker(
+                  point: LatLng(shelter.latitude, shelter.longitude),
+                  width: 72,
+                  height: 76,
+                  child: GestureDetector(
+                    onTap: () => onShelterTap?.call(shelter),
+                    child: _ShelterMarker(shelter: shelter),
+                  ),
+                ),
+              // SOS request markers
+              for (final request in sosRequests)
+                if (request.latitude != null && request.longitude != null)
+                  Marker(
+                    point: LatLng(request.latitude!, request.longitude!),
+                    width: 68,
+                    height: 76,
+                    child: GestureDetector(
+                      onTap: () => onSosRequestTap?.call(request),
+                      child: _SosRequestMarker(request: request),
+                    ),
+                  ),
+              // Responder / base marker
               if (responderPoint == null)
                 const Marker(
                   point: _center,
@@ -1841,14 +1941,14 @@ class _ResponderMapPreview extends StatelessWidget {
                 Marker(
                   point: responderPoint,
                   width: 84,
-                  height: 68,
+                  height: 76,
                   child: const _ResponderLocationMarker(),
                 ),
               if (residentPoint != null)
                 Marker(
                   point: residentPoint,
                   width: 64,
-                  height: 64,
+                  height: 72,
                   child: const _ResidentLocationMarker(),
                 ),
             ],
@@ -1933,6 +2033,7 @@ class _ResidentRoutePanel extends StatelessWidget {
     required this.navigation,
     required this.route,
     required this.onRefresh,
+    required this.onNavigate,
     required this.isLoading,
     required this.responderLocation,
   });
@@ -1942,6 +2043,7 @@ class _ResidentRoutePanel extends StatelessWidget {
   final RescueNavigationModel? navigation;
   final RouteModel? route;
   final VoidCallback onRefresh;
+  final VoidCallback onNavigate;
   final bool isLoading;
   final GeoPoint? responderLocation;
 
@@ -2018,15 +2120,10 @@ class _ResidentRoutePanel extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: SentryButton(
-                label: 'Navigate to Resident',
-                icon: Icons.navigation,
+                label: 'Show Route on Map',
+                icon: Icons.route,
                 backgroundColor: AppTheme.safeGreen,
-                onPressed: () => _launchNavigation(
-                  context: context,
-                  navigationUrl: _navigationUrlFrom(navigation),
-                  residentLocation: location,
-                  responderLocation: responderLocation,
-                ),
+                onPressed: onNavigate,
               ),
             ),
           ],
@@ -2037,9 +2134,10 @@ class _ResidentRoutePanel extends StatelessWidget {
 }
 
 class _IncidentCard extends StatelessWidget {
-  const _IncidentCard({required this.incident});
+  const _IncidentCard({required this.incident, this.onReturn});
 
   final _Incident incident;
+  final VoidCallback? onReturn;
 
   @override
   Widget build(BuildContext context) {
@@ -2047,13 +2145,14 @@ class _IncidentCard extends StatelessWidget {
       color: incident.color.withValues(alpha: 0.07),
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
-        onTap: () {
-          Navigator.of(context).push(
+        onTap: () async {
+          await Navigator.of(context).push(
             MaterialPageRoute<void>(
               builder: (_) =>
                   _ResponderIncidentDetailScreen(incident: incident),
             ),
           );
+          onReturn?.call();
         },
         child: Padding(
           padding: const EdgeInsets.all(14),
@@ -2948,6 +3047,103 @@ class _ResponderLocationMarker extends StatelessWidget {
   }
 }
 
+class _SosRequestMarker extends StatelessWidget {
+  const _SosRequestMarker({required this.request});
+
+  final RescueRequestModel request;
+
+  @override
+  Widget build(BuildContext context) {
+    const color = Color(0xFFE53935);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Material(
+          color: color,
+          borderRadius: BorderRadius.circular(8),
+          elevation: 4,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+            child: Text(
+              'SOS',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 9,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 3),
+        Material(
+          color: color,
+          shape: const CircleBorder(),
+          elevation: 4,
+          child: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2.5),
+            ),
+            child: const Icon(Icons.person_pin_rounded,
+                color: Colors.white, size: 20),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ShelterMarker extends StatelessWidget {
+  const _ShelterMarker({required this.shelter});
+
+  final EvacuationCenterModel shelter;
+
+  @override
+  Widget build(BuildContext context) {
+    final isFull = shelter.availableSlots <= 0;
+    final color = isFull ? const Color(0xFFE65100) : const Color(0xFF2E7D32);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Material(
+          color: color,
+          borderRadius: BorderRadius.circular(8),
+          elevation: 3,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+            child: Text(
+              isFull ? 'FULL' : '${shelter.availableSlots}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 9,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 3),
+        Material(
+          color: color,
+          shape: const CircleBorder(),
+          elevation: 3,
+          child: Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+            ),
+            child: const Icon(Icons.home_rounded, color: Colors.white, size: 18),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _ResidentLocationMarker extends StatelessWidget {
   const _ResidentLocationMarker();
 
@@ -2990,6 +3186,349 @@ class _ResidentLocationMarker extends StatelessWidget {
               size: 22,
             ),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── SOS request bottom sheet ─────────────────────────────────────────────────
+
+class _SosRequestSheet extends StatefulWidget {
+  const _SosRequestSheet({
+    required this.request,
+    required this.shelters,
+    required this.onShelterAssigned,
+    required this.onNavigate,
+  });
+
+  final RescueRequestModel request;
+  final List<EvacuationCenterModel> shelters;
+  final Future<void> Function(String id, String name, String? address)
+      onShelterAssigned;
+  final VoidCallback onNavigate;
+
+  @override
+  State<_SosRequestSheet> createState() => _SosRequestSheetState();
+}
+
+class _SosRequestSheetState extends State<_SosRequestSheet> {
+  bool _showPicker = false;
+  bool _isAssigning = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_showPicker) {
+      return _ShelterPickerView(
+        shelters: widget.shelters,
+        isAssigning: _isAssigning,
+        onBack: () => setState(() => _showPicker = false),
+        onSelect: (shelter) async {
+          setState(() => _isAssigning = true);
+          await widget.onShelterAssigned(
+              shelter.id, shelter.name, shelter.address);
+          if (mounted) setState(() => _isAssigning = false);
+        },
+      );
+    }
+
+    final request = widget.request;
+    final incident = _Incident.fromRescueRequest(request);
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+          20, 12, 20, 20 + MediaQuery.of(context).viewInsets.bottom),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              _IconBubble(icon: incident.icon, color: incident.color),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(incident.title,
+                        style: Theme.of(context).textTheme.titleMedium),
+                    Text(
+                      '${request.peopleNeedingHelp} people · ${request.status.name}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              _SeverityPill(label: incident.severity, color: incident.color),
+            ],
+          ),
+          if (request.description.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(request.description,
+                style: Theme.of(context).textTheme.bodySmall,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis),
+          ],
+          if (request.assignedShelterName != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.safeGreen.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                    color: AppTheme.safeGreen.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.home_rounded,
+                      color: AppTheme.safeGreen, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Shelter: ${request.assignedShelterName}',
+                      style: const TextStyle(
+                        color: AppTheme.safeGreen,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: SentryButton(
+                  label: 'Navigate',
+                  icon: Icons.navigation,
+                  backgroundColor: AppTheme.safeGreen,
+                  onPressed: widget.onNavigate,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: SentryButton(
+                  label: 'Assign Shelter',
+                  icon: Icons.home_rounded,
+                  onPressed: widget.shelters.isEmpty
+                      ? null
+                      : () => setState(() => _showPicker = true),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShelterPickerView extends StatelessWidget {
+  const _ShelterPickerView({
+    required this.shelters,
+    required this.isAssigning,
+    required this.onBack,
+    required this.onSelect,
+  });
+
+  final List<EvacuationCenterModel> shelters;
+  final bool isAssigning;
+  final VoidCallback onBack;
+  final void Function(EvacuationCenterModel) onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: onBack,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+              const SizedBox(width: 8),
+              Text('Assign Shelter',
+                  style: Theme.of(context).textTheme.titleMedium),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (isAssigning)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.45,
+              ),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: shelters.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (_, i) {
+                  final shelter = shelters[i];
+                  final isFull = shelter.availableSlots <= 0;
+                  final color = isFull
+                      ? const Color(0xFFE65100)
+                      : const Color(0xFF2E7D32);
+                  return ListTile(
+                    leading:
+                        Icon(Icons.home_rounded, color: color),
+                    title: Text(shelter.name,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 14)),
+                    subtitle: Text(
+                        '${shelter.address} · ${shelter.availableSlots} slots available'),
+                    trailing: isFull
+                        ? const Text('FULL',
+                            style: TextStyle(
+                                color: Color(0xFFE65100),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800))
+                        : const Icon(Icons.chevron_right),
+                    onTap: isFull ? null : () => onSelect(shelter),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Shelter info bottom sheet ─────────────────────────────────────────────────
+
+class _ShelterInfoSheet extends StatelessWidget {
+  const _ShelterInfoSheet({required this.shelter});
+
+  final EvacuationCenterModel shelter;
+
+  @override
+  Widget build(BuildContext context) {
+    final isFull = shelter.availableSlots <= 0;
+    final color =
+        isFull ? const Color(0xFFE65100) : const Color(0xFF2E7D32);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Icon(Icons.home_rounded, color: color, size: 28),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(shelter.name,
+                        style: Theme.of(context).textTheme.titleMedium),
+                    Text(shelter.address,
+                        style: Theme.of(context).textTheme.bodySmall),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                  child: _ShelterStat(
+                      label: 'Capacity',
+                      value: '${shelter.capacity}')),
+              Expanded(
+                  child: _ShelterStat(
+                      label: 'Occupied',
+                      value: '${shelter.currentOccupancy}')),
+              Expanded(
+                  child: _ShelterStat(
+                      label: 'Available',
+                      value: '${shelter.availableSlots}',
+                      color: color)),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(8)),
+            child: Text(
+              shelter.status.toUpperCase(),
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShelterStat extends StatelessWidget {
+  const _ShelterStat(
+      {required this.label, required this.value, this.color});
+
+  final String label;
+  final String value;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w900,
+            color: color ?? AppTheme.deepNavy,
+          ),
+        ),
+        Text(
+          label,
+          style: const TextStyle(
+              fontSize: 11, color: Color(0xFF607895)),
         ),
       ],
     );
