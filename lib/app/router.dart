@@ -4,6 +4,7 @@ import '../features/alerts/alert_details_screen.dart';
 import '../features/alerts/alerts_screen.dart';
 import '../features/auth/login_screen.dart';
 import '../features/auth/register_screen.dart';
+import '../features/auth/welcome_screen.dart';
 import '../features/family_safety/family_safety_screen.dart';
 import '../features/messages/message_details_screen.dart';
 import '../features/navigation/sentry_mesh_shell.dart';
@@ -18,6 +19,7 @@ class AppRouter {
   const AppRouter._();
 
   static const root = '/';
+  static const welcome = '/welcome';
   static const appShell = '/app';
   static const responderShell = '/responder';
   static const splash = '/splash';
@@ -34,7 +36,8 @@ class AppRouter {
 
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
     final page = switch (settings.name) {
-      root => const LoginScreen(),
+      root => const WelcomeScreen(),
+      welcome => const WelcomeScreen(),
       appShell => const SentryMeshShell(),
       responderShell => const ResponderShell(),
       splash => const SplashScreen(),

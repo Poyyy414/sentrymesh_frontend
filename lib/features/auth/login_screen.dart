@@ -164,7 +164,7 @@ class _LoginScreenState extends State<LoginScreen> {
         });
       },
       onCreateAccount: () =>
-          Navigator.of(context).pushNamed(AppRouter.register),
+          Navigator.of(context).pushNamed(AppRouter.welcome),
     );
   }
 }
