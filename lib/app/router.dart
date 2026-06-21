@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../features/admin/admin_shell.dart';
 import '../features/alerts/alert_details_screen.dart';
 import '../features/alerts/alerts_screen.dart';
 import '../features/auth/login_screen.dart';
@@ -22,6 +23,7 @@ class AppRouter {
   static const welcome = '/welcome';
   static const appShell = '/app';
   static const responderShell = '/responder';
+  static const adminShell = '/admin';
   static const splash = '/splash';
   static const login = '/login';
   static const register = '/register';
@@ -40,6 +42,7 @@ class AppRouter {
       welcome => const WelcomeScreen(),
       appShell => const SentryMeshShell(),
       responderShell => const ResponderShell(),
+      adminShell => const AdminShell(),
       splash => const SplashScreen(),
       login => const LoginScreen(),
       register => const RegisterScreen(),

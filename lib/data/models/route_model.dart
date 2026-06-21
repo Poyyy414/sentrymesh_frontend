@@ -27,17 +27,24 @@ class RouteModel {
               .toList()
         : <GeoPoint>[];
 
+    final distanceKm = _asDouble(json['distance_km'] ?? json['distanceKm']);
+    final rawMinutes =
+        int.tryParse(
+          (json['estimated_minutes'] ?? json['estimatedMinutes'])?.toString() ??
+              '',
+        ) ??
+        0;
+
     return RouteModel(
       id: json['id']?.toString() ?? '',
       label: json['label']?.toString() ?? '',
-      distanceKm: _asDouble(json['distance_km'] ?? json['distanceKm']),
-      estimatedMinutes:
-          int.tryParse(
-            (json['estimated_minutes'] ?? json['estimatedMinutes'])
-                    ?.toString() ??
-                '',
-          ) ??
-          0,
+      distanceKm: distanceKm,
+      // Never show 0 min for a route that actually has distance. When the
+      // backend omits/zeroes the ETA, estimate from distance (~30 km/h urban),
+      // flooring at 1 min so the metric is never misleadingly blank.
+      estimatedMinutes: rawMinutes < 1 && distanceKm > 0
+          ? (distanceKm / 30 * 60).round().clamp(1, 1 << 31)
+          : rawMinutes,
       riskLevel:
           json['risk_level']?.toString() ??
           json['riskLevel']?.toString() ??

@@ -225,6 +225,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             isWide: isWide,
                             onSosPressed: _openSosFlow,
                             onAddFamily: _addFamilyMember,
+                            onRequestAssistance: () => Navigator.of(
+                              context,
+                            ).pushNamed(AppRouter.rescueRequest),
                           ),
                           const SizedBox(height: 14),
                           _LocationAndStatus(
@@ -627,15 +630,17 @@ class _EmergencyActions extends StatelessWidget {
     required this.isWide,
     required this.onSosPressed,
     required this.onAddFamily,
+    required this.onRequestAssistance,
   });
 
   final bool isWide;
   final VoidCallback onSosPressed;
   final VoidCallback onAddFamily;
+  final VoidCallback onRequestAssistance;
 
   @override
   Widget build(BuildContext context) {
-    final backup = const _BackupCard();
+    final backup = _BackupCard(onTap: onRequestAssistance);
     final sos = _EmergencySosCard(onPressed: onSosPressed);
     final family = _FamilyCheckInCard(onTap: onAddFamily);
 
@@ -668,26 +673,29 @@ class _EmergencyActions extends StatelessWidget {
 }
 
 class _BackupCard extends StatelessWidget {
-  const _BackupCard();
+  const _BackupCard({required this.onTap});
+
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return _ActionCardShell(
       key: const Key('emergency_backup_card'),
       gradient: const [Color(0xFF06295A), Color(0xFF031D44)],
+      onTap: onTap,
       child: Row(
         children: [
           const _ActionIcon(
-            icon: Icons.hub_rounded,
+            icon: Icons.medical_services_rounded,
             foreground: Color(0xFF12D88D),
             background: Color(0xFF075A55),
           ),
           const SizedBox(width: 14),
           const Expanded(
             child: _ActionText(
-              title: 'Emergency Backup Ready',
+              title: 'Request Assistance',
               subtitle:
-                  'You can still send an emergency request if mobile signal is weak.',
+                  'Medical, flood, landslide or supply help — pick a type and send.',
             ),
           ),
           Container(
@@ -698,9 +706,9 @@ class _BackupCard extends StatelessWidget {
               shape: BoxShape.circle,
             ),
             child: const Icon(
-              Icons.wifi_tethering_rounded,
+              Icons.chevron_right_rounded,
               color: Color(0xFF53E7B0),
-              size: 18,
+              size: 20,
             ),
           ),
         ],

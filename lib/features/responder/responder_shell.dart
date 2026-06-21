@@ -557,15 +557,6 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
           Text('Actions', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 10),
           SentryButton(
-            label: 'Dispatch Team',
-            icon: Icons.airport_shuttle,
-            onPressed: () => updateStatus(
-              RescueStatus.acknowledged,
-              'Team dispatched to ${incident.location}.',
-            ),
-          ),
-          const SizedBox(height: 10),
-          SentryButton(
             label: 'Navigate to Location',
             icon: Icons.navigation,
             backgroundColor: AppTheme.safeGreen,
