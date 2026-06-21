@@ -1,3 +1,5 @@
+import '../../shared/enums/alert_severity.dart';
+import '../../shared/enums/hazard_type.dart';
 import '../models/alert_model.dart';
 import '../sources/remote/alerts_api.dart';
 
@@ -17,5 +19,23 @@ class AlertRepository {
         .whereType<Map<String, Object?>>()
         .map(AlertModel.fromJson)
         .toList();
+  }
+
+  Future<AlertModel> createAlert({
+    required String title,
+    required String location,
+    required String message,
+    required AlertSeverity severity,
+    required HazardType hazardType,
+  }) async {
+    final payload = await _remote.createAlert({
+      'title': title,
+      'location': location,
+      'message': message,
+      'severity': severity.name,
+      'hazard_type': hazardType.name,
+      'issued_at': DateTime.now().toUtc().toIso8601String(),
+    });
+    return AlertModel.fromJson(payload);
   }
 }

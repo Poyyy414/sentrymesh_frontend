@@ -53,8 +53,13 @@ class RescueRepository {
   Future<RescueRequestModel?> updateRequestStatus({
     required String id,
     required RescueStatus status,
+    String? responderId,
   }) async {
-    final payload = await _remote.updateRequestStatus(id: id, status: status);
+    final payload = await _remote.updateRequestStatus(
+      id: id,
+      status: status,
+      responderId: responderId,
+    );
     if (payload.isEmpty) {
       return null;
     }
@@ -142,6 +147,20 @@ class RescueRepository {
       shelterId: shelterId,
       shelterName: shelterName,
       shelterAddress: shelterAddress,
+    );
+    if (payload.isEmpty) return null;
+    return RescueRequestModel.fromJson(payload);
+  }
+
+  Future<RescueRequestModel?> assignResponder({
+    required String requestId,
+    required String responderId,
+    required String responderName,
+  }) async {
+    final payload = await _remote.assignResponder(
+      id: requestId,
+      responderId: responderId,
+      responderName: responderName,
     );
     if (payload.isEmpty) return null;
     return RescueRequestModel.fromJson(payload);

@@ -9,4 +9,8 @@ class AlertsApi {
   Future<Map<String, Object?>> fetchAlerts() {
     return _client.get(ApiEndpoints.alerts);
   }
+
+  Future<Map<String, Object?>> createAlert(Map<String, Object?> body) {
+    return _client.post(ApiEndpoints.alerts, body: body);
+  }
 }

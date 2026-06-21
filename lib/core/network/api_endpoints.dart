@@ -17,6 +17,7 @@ class ApiEndpoints {
   static String familyMemberById(String id) {
     return '/family/members/$id';
   }
+
   static const dashboard = '/dashboard';
   static const weatherSubscriptions = '/weather/subscriptions';
   static const typhoonStatus = '/weather/typhoon-status';
@@ -30,6 +31,10 @@ class ApiEndpoints {
 
   static String rescueRequestShelter(String id) {
     return '/rescue-requests/$id/shelter';
+  }
+
+  static String rescueRequestResponder(String id) {
+    return '/rescue-requests/$id/responder';
   }
 
   static String rescueRequestById(String id) {

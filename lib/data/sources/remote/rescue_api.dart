@@ -32,10 +32,11 @@ class RescueApi {
   Future<Map<String, Object?>> updateRequestStatus({
     required String id,
     required RescueStatus status,
+    String? responderId,
   }) {
     return _client.patch(
       ApiEndpoints.rescueRequestStatus(id),
-      body: {'status': status.name},
+      body: {'status': status.name, ?'responder_id': responderId},
     );
   }
 
@@ -104,6 +105,17 @@ class RescueApi {
         'shelter_name': shelterName,
         'shelter_address': shelterAddress,
       },
+    );
+  }
+
+  Future<Map<String, Object?>> assignResponder({
+    required String id,
+    required String responderId,
+    required String responderName,
+  }) {
+    return _client.patch(
+      ApiEndpoints.rescueRequestResponder(id),
+      body: {'responder_id': responderId, 'responder_name': responderName},
     );
   }
 }

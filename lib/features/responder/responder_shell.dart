@@ -19,8 +19,10 @@ import '../../data/models/rescue_navigation_model.dart';
 import '../../data/models/rescue_request_model.dart';
 import '../../data/models/route_model.dart';
 import '../../data/repositories/prediction_repository.dart';
+import '../../shared/enums/alert_severity.dart';
 import '../../shared/enums/hazard_type.dart';
 import '../../shared/enums/rescue_status.dart';
+import '../messages/messages_screen.dart';
 
 Future<void> _logout(BuildContext context) async {
   await AppDependenciesScope.of(context).authRepository.logout();
@@ -67,6 +69,23 @@ bool _isActiveRescueRequest(RescueRequestModel request) {
   return request.status == RescueStatus.pending ||
       request.status == RescueStatus.acknowledged ||
       request.status == RescueStatus.inProgress;
+}
+
+bool _isVisibleToResponder(RescueRequestModel request, String? responderId) {
+  final assignedId = request.assignedResponderId;
+  return assignedId == null ||
+      assignedId.isEmpty ||
+      (responderId != null && assignedId == responderId);
+}
+
+List<RescueRequestModel> _requestsForResponder(
+  List<RescueRequestModel> requests,
+  String? responderId,
+) {
+  return requests
+      .where(_isActiveRescueRequest)
+      .where((request) => _isVisibleToResponder(request, responderId))
+      .toList();
 }
 
 Color _severityFromPeople(int people) {
@@ -218,21 +237,16 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
 
       final requests = results[0] as List<RescueRequestModel>;
       final alerts = results[1];
+      final responderId = deps.authRepository.currentUser?.id;
 
-      final active = requests
-          .where(
-            (r) =>
-                r.status == RescueStatus.pending ||
-                r.status == RescueStatus.acknowledged ||
-                r.status == RescueStatus.inProgress,
-          )
-          .toList();
+      final active = _requestsForResponder(requests, responderId);
 
       setState(() {
         _stats = _DashboardStats(
           activeIncidents: active.length,
           peopleNeedHelp: active.fold(0, (sum, r) => sum + r.peopleNeedingHelp),
           deployedTeams: active
+              .where((request) => request.assignedResponderId == responderId)
               .map((request) => request.assignedTeamId ?? request.id)
               .toSet()
               .length,
@@ -380,6 +394,7 @@ class _ActiveIncidentsScreenState extends State<ActiveIncidentsScreen> {
     try {
       final dependencies = AppDependenciesScope.of(context);
       final requests = await dependencies.rescueRepository.fetchRequests();
+      final responderId = dependencies.authRepository.currentUser?.id;
 
       if (!mounted) {
         return;
@@ -387,6 +402,7 @@ class _ActiveIncidentsScreenState extends State<ActiveIncidentsScreen> {
 
       setState(() {
         _incidents = requests
+            .where((request) => _isVisibleToResponder(request, responderId))
             .where(_isActiveRescueRequest)
             .map(_Incident.fromRescueRequest)
             .toList();
@@ -458,9 +474,16 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     Future<void> updateStatus(RescueStatus status, String confirmation) async {
       try {
+        final responderId = AppDependenciesScope.of(
+          context,
+        ).authRepository.currentUser?.id;
         await AppDependenciesScope.of(
           context,
-        ).rescueRepository.updateRequestStatus(id: incident.id, status: status);
+        ).rescueRepository.updateRequestStatus(
+          id: incident.id,
+          status: status,
+          responderId: responderId,
+        );
         if (!context.mounted) return;
         ScaffoldMessenger.of(
           context,
@@ -472,6 +495,43 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
         );
       }
     }
+
+    Future<void> acceptIncident() async {
+      final deps = AppDependenciesScope.of(context);
+      final user = deps.authRepository.currentUser;
+      if (user == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Responder session is not available.')),
+        );
+        return;
+      }
+
+      try {
+        await deps.rescueRepository.assignResponder(
+          requestId: incident.id,
+          responderId: user.id,
+          responderName: user.name,
+        );
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Assigned to ${user.name}.')));
+        Navigator.of(context).pop();
+      } catch (error) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not accept emergency: $error')),
+        );
+      }
+    }
+
+    final currentResponderId = AppDependenciesScope.of(
+      context,
+    ).authRepository.currentUser?.id;
+    final assignedToMe = incident.assignedResponderId == currentResponderId;
+    final unassigned =
+        incident.assignedResponderId == null ||
+        incident.assignedResponderId!.isEmpty;
 
     return Scaffold(
       backgroundColor: AppTheme.surface,
@@ -543,6 +603,13 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
                   label: 'Assigned Team',
                   value: incident.assignedTeamName ?? 'Auto assignment pending',
                 ),
+                _InfoRow(
+                  icon: Icons.badge,
+                  label: 'Assigned Responder',
+                  value:
+                      incident.assignedResponderName ??
+                      (unassigned ? 'Unassigned' : 'Another responder'),
+                ),
                 const _InfoRow(
                   icon: Icons.signal_cellular_alt,
                   label: 'Signal Quality',
@@ -556,46 +623,66 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
           const SizedBox(height: 16),
           Text('Actions', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 10),
-          SentryButton(
-            label: 'Navigate to Location',
-            icon: Icons.navigation,
-            backgroundColor: AppTheme.safeGreen,
-            onPressed: () async {
-              await updateStatus(
-                RescueStatus.inProgress,
-                'Incident marked as en route.',
-              );
-              if (!context.mounted) return;
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) =>
-                      _ResponderNavigationScreen(incident: incident),
-                ),
-              );
-            },
-          ),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
-            onPressed: () => updateStatus(
-              RescueStatus.inProgress,
-              'Incident marked as on-route.',
+          if (unassigned) ...[
+            SentryButton(
+              label: 'Accept Emergency',
+              icon: Icons.assignment_ind,
+              onPressed: acceptIncident,
             ),
-            icon: const Icon(Icons.flag),
-            label: const Text('Mark as On-Route'),
-          ),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
-            onPressed: () async {
-              await updateStatus(
-                RescueStatus.resolved,
-                'Incident marked resolved.',
-              );
-              if (!context.mounted) return;
-              Navigator.of(context).pop();
-            },
-            icon: const Icon(Icons.check_circle_outline),
-            label: const Text('Resolve Incident'),
-          ),
+            const SizedBox(height: 10),
+          ] else if (assignedToMe) ...[
+            SentryButton(
+              label: 'Assigned to You',
+              icon: Icons.verified_user,
+              onPressed: () => updateStatus(
+                RescueStatus.acknowledged,
+                'Assignment confirmed.',
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+          if (assignedToMe) ...[
+            SentryButton(
+              label: 'Navigate to Location',
+              icon: Icons.navigation,
+              backgroundColor: AppTheme.safeGreen,
+              onPressed: () async {
+                await updateStatus(
+                  RescueStatus.inProgress,
+                  'Incident marked as en route.',
+                );
+                if (!context.mounted) return;
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) =>
+                        _ResponderNavigationScreen(incident: incident),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: () => updateStatus(
+                RescueStatus.inProgress,
+                'Incident marked as on-route.',
+              ),
+              icon: const Icon(Icons.flag),
+              label: const Text('Mark as On-Route'),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: () async {
+                await updateStatus(
+                  RescueStatus.resolved,
+                  'Incident marked resolved.',
+                );
+                if (!context.mounted) return;
+                Navigator.of(context).pop();
+              },
+              icon: const Icon(Icons.check_circle_outline),
+              label: const Text('Resolve Incident'),
+            ),
+          ],
         ],
       ),
     );
@@ -831,7 +918,9 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
   }
 
   Future<void> _loadMapData() async {
-    final repo = AppDependenciesScope.of(context).rescueRepository;
+    final deps = AppDependenciesScope.of(context);
+    final repo = deps.rescueRepository;
+    final responderId = deps.authRepository.currentUser?.id;
     try {
       final results = await Future.wait([
         repo.fetchRequests(),
@@ -842,6 +931,7 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
         _sosRequests = (results[0] as List<RescueRequestModel>)
             .where(
               (r) =>
+                  _isVisibleToResponder(r, responderId) &&
                   _isActiveRescueRequest(r) &&
                   r.latitude != null &&
                   r.longitude != null,
@@ -1184,14 +1274,10 @@ class _ResponderTeamsScreenState extends State<ResponderTeamsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final active = _requests
-        .where(
-          (r) =>
-              r.status == RescueStatus.pending ||
-              r.status == RescueStatus.acknowledged ||
-              r.status == RescueStatus.inProgress,
-        )
-        .toList();
+    final responderId = AppDependenciesScope.of(
+      context,
+    ).authRepository.currentUser?.id;
+    final active = _requestsForResponder(_requests, responderId);
 
     return _ResponderPage(
       header: const _SimpleResponderHeader(title: 'Team Coordination'),
@@ -1267,24 +1353,30 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
 
       final requests = results[0] as List<RescueRequestModel>;
       final alerts = results[1] as List<AlertModel>;
+      final responderId = deps.authRepository.currentUser?.id;
+      final visibleRequests = requests
+          .where((request) => _isVisibleToResponder(request, responderId))
+          .toList();
       final today = DateTime.now();
 
       setState(() {
-        _requests = requests;
+        _requests = visibleRequests;
         _alerts = alerts;
-        _activeIncidents = requests.where(_isActiveRescueRequest).length;
+        _activeIncidents = visibleRequests.where(_isActiveRescueRequest).length;
         _resolvedToday = requests
             .where(
               (r) =>
+                  _isVisibleToResponder(r, responderId) &&
                   r.status == RescueStatus.resolved &&
                   r.createdAt.year == today.year &&
                   r.createdAt.month == today.month &&
                   r.createdAt.day == today.day,
             )
             .length;
-        _dispatched = requests
+        _dispatched = visibleRequests
             .where(
               (r) =>
+                  r.assignedResponderId == responderId ||
                   r.assignedTeamId != null ||
                   r.status == RescueStatus.acknowledged ||
                   r.status == RescueStatus.inProgress,
@@ -1379,6 +1471,7 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
   void _showReportSheet({required String title, required List<String> rows}) {
     showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       showDragHandle: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
@@ -2532,6 +2625,8 @@ class _Incident {
     required this.hazardType,
     this.assignedTeamName,
     this.assignedTeamStatus,
+    this.assignedResponderId,
+    this.assignedResponderName,
     this.latitude,
     this.longitude,
   });
@@ -2553,6 +2648,8 @@ class _Incident {
       hazardType: request.emergencyType,
       assignedTeamName: request.assignedTeamName,
       assignedTeamStatus: request.assignedTeamStatus,
+      assignedResponderId: request.assignedResponderId,
+      assignedResponderName: request.assignedResponderName,
       latitude: request.latitude,
       longitude: request.longitude,
     );
@@ -2570,6 +2667,8 @@ class _Incident {
   final HazardType hazardType;
   final String? assignedTeamName;
   final String? assignedTeamStatus;
+  final String? assignedResponderId;
+  final String? assignedResponderName;
   final double? latitude;
   final double? longitude;
 }
@@ -3191,28 +3290,63 @@ class _QuickActionGrid extends StatelessWidget {
       mainAxisSpacing: 10,
       crossAxisSpacing: 10,
       childAspectRatio: 1.9,
-      children: const [
+      children: [
         _QuickAction(
           icon: Icons.campaign,
           title: 'Broadcast',
           color: AppTheme.signalBlue,
+          onTap: () => _openBroadcast(context, emergency: false),
         ),
         _QuickAction(
           icon: Icons.chat,
           title: 'Team Chat',
           color: AppTheme.violet,
+          onTap: () => _openTeamChat(context),
         ),
         _QuickAction(
           icon: Icons.sos,
           title: 'Emergency',
           color: AppTheme.dangerRed,
+          onTap: () => _openBroadcast(context, emergency: true),
         ),
         _QuickAction(
           icon: Icons.inventory,
           title: 'Resources',
           color: AppTheme.safeGreen,
+          onTap: () => _openResources(context),
         ),
       ],
+    );
+  }
+
+  void _openBroadcast(BuildContext context, {required bool emergency}) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => _BroadcastComposeDialog(emergency: emergency),
+    );
+  }
+
+  void _openTeamChat(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          backgroundColor: AppTheme.surface,
+          appBar: AppBar(title: const Text('Team Chat')),
+          body: const MessagesScreen(),
+        ),
+      ),
+    );
+  }
+
+  void _openResources(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (_) => const _ResourcesSheet(),
     );
   }
 }
@@ -3222,30 +3356,313 @@ class _QuickAction extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.color,
+    required this.onTap,
   });
 
   final IconData icon;
   final String title;
   final Color color;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return Card(
       color: color.withValues(alpha: 0.07),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            _IconBubble(icon: icon, color: color),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                title,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleSmall?.copyWith(color: color),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              _IconBubble(icon: icon, color: color),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(color: color),
+                ),
               ),
+              Icon(Icons.chevron_right, color: color.withValues(alpha: 0.5)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BroadcastComposeDialog extends StatefulWidget {
+  const _BroadcastComposeDialog({required this.emergency});
+
+  /// Emergency broadcasts default to a critical distress alert.
+  final bool emergency;
+
+  @override
+  State<_BroadcastComposeDialog> createState() =>
+      _BroadcastComposeDialogState();
+}
+
+class _BroadcastComposeDialogState extends State<_BroadcastComposeDialog> {
+  final _titleController = TextEditingController();
+  final _locationController = TextEditingController(text: 'Naga City');
+  final _messageController = TextEditingController();
+  late AlertSeverity _severity = widget.emergency
+      ? AlertSeverity.critical
+      : AlertSeverity.high;
+  late HazardType _hazard = widget.emergency
+      ? HazardType.distress
+      : HazardType.flood;
+  bool _sending = false;
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _locationController.dispose();
+    _messageController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final title = _titleController.text.trim();
+    final message = _messageController.text.trim();
+    final location = _locationController.text.trim();
+    if (title.isEmpty || message.isEmpty || location.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Fill in title, location and message.')),
+      );
+      return;
+    }
+
+    setState(() => _sending = true);
+    try {
+      await AppDependenciesScope.of(context).alertRepository.createAlert(
+        title: title,
+        location: location,
+        message: message,
+        severity: _severity,
+        hazardType: _hazard,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.emergency
+                ? 'Emergency broadcast sent to residents.'
+                : 'Broadcast sent to residents.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _sending = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not send broadcast: $error')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = widget.emergency ? AppTheme.dangerRed : AppTheme.signalBlue;
+
+    return AlertDialog(
+      title: Row(
+        children: [
+          Icon(widget.emergency ? Icons.sos : Icons.campaign, color: accent),
+          const SizedBox(width: 8),
+          Text(widget.emergency ? 'Emergency Broadcast' : 'Broadcast'),
+        ],
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _titleController,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(labelText: 'Title'),
             ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _locationController,
+              decoration: const InputDecoration(labelText: 'Location'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _messageController,
+              minLines: 2,
+              maxLines: 4,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(labelText: 'Message'),
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<AlertSeverity>(
+              initialValue: _severity,
+              decoration: const InputDecoration(labelText: 'Severity'),
+              items: [
+                for (final s in AlertSeverity.values)
+                  DropdownMenuItem(value: s, child: Text(s.label)),
+              ],
+              onChanged: (value) {
+                if (value != null) setState(() => _severity = value);
+              },
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<HazardType>(
+              initialValue: _hazard,
+              decoration: const InputDecoration(labelText: 'Hazard type'),
+              items: [
+                for (final h in HazardType.values)
+                  DropdownMenuItem(value: h, child: Text(_hazardTitle(h))),
+              ],
+              onChanged: (value) {
+                if (value != null) setState(() => _hazard = value);
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _sending ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _sending ? null : _send,
+          style: ElevatedButton.styleFrom(backgroundColor: accent),
+          child: _sending
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Text('Send'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ResourcesSheet extends StatefulWidget {
+  const _ResourcesSheet();
+
+  @override
+  State<_ResourcesSheet> createState() => _ResourcesSheetState();
+}
+
+class _ResourcesSheetState extends State<_ResourcesSheet> {
+  List<EvacuationCenterModel> _centers = const [];
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _load();
+    });
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final centers = await AppDependenciesScope.of(
+        context,
+      ).rescueRepository.fetchEvacuationCenters();
+      if (!mounted) return;
+      setState(() {
+        _centers = centers;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Could not load resources: $error';
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 4, 18, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Evacuation Centers & Resources',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            if (_isLoading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 28),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_error != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Column(
+                  children: [
+                    Text(_error!, textAlign: TextAlign.center),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: _load,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              )
+            else if (_centers.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: Text('No evacuation centers listed yet.')),
+              )
+            else
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(context).height * 0.5,
+                ),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: _centers.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (_, index) {
+                    final c = _centers[index];
+                    final full = c.availableSlots <= 0;
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: _IconBubble(
+                        icon: Icons.home_work_rounded,
+                        color: full
+                            ? AppTheme.warningAmber
+                            : AppTheme.safeGreen,
+                      ),
+                      title: Text(c.name),
+                      subtitle: Text(
+                        '${c.address}\n'
+                        '${c.availableSlots} of ${c.capacity} slots available · '
+                        '${c.status.toUpperCase()}',
+                      ),
+                      isThreeLine: true,
+                    );
+                  },
+                ),
+              ),
           ],
         ),
       ),
@@ -3689,8 +4106,9 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
   bool _isAssigning = false;
 
   bool get _canNavigate {
-    final role =
-        AppDependenciesScope.of(context).authRepository.currentUser?.role;
+    final role = AppDependenciesScope.of(
+      context,
+    ).authRepository.currentUser?.role;
     return role != 'super_admin';
   }
 
@@ -4029,8 +4447,9 @@ class _ShelterInfoSheetState extends State<_ShelterInfoSheet> {
   bool _isDeleting = false;
 
   bool get _canRemove {
-    final role =
-        AppDependenciesScope.of(context).authRepository.currentUser?.role;
+    final role = AppDependenciesScope.of(
+      context,
+    ).authRepository.currentUser?.role;
     return role == 'super_admin';
   }
 
