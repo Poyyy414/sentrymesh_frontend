@@ -14,11 +14,11 @@ import '../state/asean_country.dart';
 
 class MapLayerVisibility {
   const MapLayerVisibility({
-    this.incidents = true,
+    this.incidents = false,
     this.hazards = true,
     this.safeRoute = true,
     this.evacuationCenters = true,
-    this.loraNodes = true,
+    this.loraNodes = false,
     this.location = true,
   });
 

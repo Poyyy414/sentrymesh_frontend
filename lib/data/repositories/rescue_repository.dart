@@ -123,6 +123,23 @@ class RescueRepository {
         .toList();
   }
 
+  Future<EvacuationCenterModel> createEvacuationCenter({
+    required String name,
+    required String address,
+    required int capacity,
+    required double latitude,
+    required double longitude,
+  }) async {
+    final payload = await _remote.createEvacuationCenter(
+      name: name,
+      address: address,
+      capacity: capacity,
+      latitude: latitude,
+      longitude: longitude,
+    );
+    return EvacuationCenterModel.fromJson(payload);
+  }
+
   Future<RescueRequestModel?> assignShelter({
     required String requestId,
     required String shelterId,

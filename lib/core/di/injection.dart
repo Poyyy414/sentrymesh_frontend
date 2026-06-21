@@ -65,7 +65,10 @@ class AppDependencies {
       loraService: loraService,
       mapRepository: mapRepository,
     );
-    familyRepository = FamilyRepository(remote: familyApi);
+    familyRepository = FamilyRepository(
+      remote: familyApi,
+      loraService: loraService,
+    );
     predictionRepository = PredictionRepository(remote: predictionApi);
     dashboardRepository = DashboardRepository(alertRepository: alertRepository);
   }

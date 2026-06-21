@@ -12,6 +12,11 @@ class ApiEndpoints {
   static const predictions = '/predictions';
   static const familyMembers = '/family/members';
   static const familyMyStatus = '/family/my-status';
+  static const familyMessages = '/family/messages';
+
+  static String familyMemberById(String id) {
+    return '/family/members/$id';
+  }
   static const dashboard = '/dashboard';
   static const weatherSubscriptions = '/weather/subscriptions';
   static const typhoonStatus = '/weather/typhoon-status';

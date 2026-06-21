@@ -5,6 +5,7 @@ class FamilyMemberModel {
     required this.relationship,
     required this.status,
     required this.updatedAt,
+    this.phoneNumber,
     this.avatarUrl,
   });
 
@@ -13,6 +14,7 @@ class FamilyMemberModel {
   final String relationship;
   final String status;
   final DateTime updatedAt;
+  final String? phoneNumber;
   final String? avatarUrl;
 
   factory FamilyMemberModel.fromJson(Map<String, Object?> json) {
@@ -24,6 +26,7 @@ class FamilyMemberModel {
       updatedAt:
           DateTime.tryParse(json['updated_at']?.toString() ?? '') ??
           DateTime.now(),
+      phoneNumber: json['phone_number']?.toString(),
       avatarUrl: json['avatar_url']?.toString(),
     );
   }
@@ -35,6 +38,7 @@ class FamilyMemberModel {
       'relationship': relationship,
       'status': status,
       'updated_at': updatedAt.toIso8601String(),
+      'phone_number': phoneNumber,
       'avatar_url': avatarUrl,
     };
   }

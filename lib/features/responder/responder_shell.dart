@@ -11,6 +11,7 @@ import '../../core/config/map_tile_config.dart';
 import '../../core/di/injection.dart';
 import '../../core/services/location_service.dart';
 import '../../core/widgets/custom_button.dart';
+import '../../data/models/alert_model.dart';
 import '../../data/models/evacuation_center_model.dart';
 import '../../data/models/prediction_model.dart';
 import '../../data/models/rescue_location_model.dart';
@@ -59,6 +60,12 @@ String _rescueStatusLabel(RescueStatus status) {
     RescueStatus.resolved => 'Resolved',
     RescueStatus.cancelled => 'Cancelled',
   };
+}
+
+bool _isActiveRescueRequest(RescueRequestModel request) {
+  return request.status == RescueStatus.pending ||
+      request.status == RescueStatus.acknowledged ||
+      request.status == RescueStatus.inProgress;
 }
 
 Color _severityFromPeople(int people) {
@@ -378,7 +385,10 @@ class _ActiveIncidentsScreenState extends State<ActiveIncidentsScreen> {
       }
 
       setState(() {
-        _incidents = requests.map(_Incident.fromRescueRequest).toList();
+        _incidents = requests
+            .where(_isActiveRescueRequest)
+            .map(_Incident.fromRescueRequest)
+            .toList();
         _isLoading = false;
       });
     } catch (error) {
@@ -838,7 +848,12 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
       if (!mounted) return;
       setState(() {
         _sosRequests = (results[0] as List<RescueRequestModel>)
-            .where((r) => r.latitude != null && r.longitude != null)
+            .where(
+              (r) =>
+                  _isActiveRescueRequest(r) &&
+                  r.latitude != null &&
+                  r.longitude != null,
+            )
             .toList();
         _shelters = results[1] as List<EvacuationCenterModel>;
       });
@@ -895,6 +910,40 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
       ),
       builder: (_) => _ShelterInfoSheet(shelter: shelter),
     );
+  }
+
+  Future<void> _showCreateShelterDialog(LatLng point) async {
+    final result = await showDialog<({String name, int capacity})>(
+      context: context,
+      builder: (context) => _CreateShelterDialog(point: point),
+    );
+    if (result == null || !mounted) return;
+
+    try {
+      await AppDependenciesScope.of(
+        context,
+      ).rescueRepository.createEvacuationCenter(
+        name: result.name,
+        address:
+            'Pinned at ${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)}',
+        capacity: result.capacity,
+        latitude: point.latitude,
+        longitude: point.longitude,
+      );
+      if (!mounted) return;
+      await _loadMapData();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${result.name} added as an evacuation center.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not add shelter: $error')));
+    }
   }
 
   Future<void> _locateResponder() async {
@@ -1065,6 +1114,7 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
                       _showSosBottomSheet(context, request),
                   onShelterTap: (shelter) =>
                       _showShelterInfoSheet(context, shelter),
+                  onMapTap: _showCreateShelterDialog,
                 ),
                 const Positioned(top: 12, left: 12, child: _MapLayerMenu()),
                 Positioned(
@@ -1199,6 +1249,8 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
   int _resolvedToday = 0;
   int _dispatched = 0;
   int _activeAlerts = 0;
+  List<RescueRequestModel> _requests = const [];
+  List<AlertModel> _alerts = const [];
   bool _isLoading = true;
 
   @override
@@ -1221,18 +1273,13 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
       if (!mounted) return;
 
       final requests = results[0] as List<RescueRequestModel>;
-      final alerts = results[1];
+      final alerts = results[1] as List<AlertModel>;
       final today = DateTime.now();
 
       setState(() {
-        _activeIncidents = requests
-            .where(
-              (r) =>
-                  r.status == RescueStatus.pending ||
-                  r.status == RescueStatus.acknowledged ||
-                  r.status == RescueStatus.inProgress,
-            )
-            .length;
+        _requests = requests;
+        _alerts = alerts;
+        _activeIncidents = requests.where(_isActiveRescueRequest).length;
         _resolvedToday = requests
             .where(
               (r) =>
@@ -1245,6 +1292,7 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
         _dispatched = requests
             .where(
               (r) =>
+                  r.assignedTeamId != null ||
                   r.status == RescueStatus.acknowledged ||
                   r.status == RescueStatus.inProgress,
             )
@@ -1261,6 +1309,13 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
   @override
   Widget build(BuildContext context) {
     final timeStr = _formatTime(DateTime.now());
+    final activeRequests = _requests.where(_isActiveRescueRequest).toList();
+    final resolvedRows = _requests
+        .where((request) => request.status == RescueStatus.resolved)
+        .toList();
+    final teamRows = activeRequests
+        .where((request) => request.assignedTeamName != null)
+        .toList();
 
     return _ResponderPage(
       header: const _SimpleResponderHeader(title: 'Reports'),
@@ -1276,6 +1331,18 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
               ? 'Loading…'
               : '$_activeIncidents active · $_resolvedToday resolved today',
           icon: Icons.summarize,
+          onTap: _isLoading
+              ? null
+              : () => _showReportSheet(
+                  title: 'Situation Report',
+                  rows: [
+                    'Active incidents: $_activeIncidents',
+                    'Resolved records: ${resolvedRows.length}',
+                    'People needing help: ${activeRequests.fold<int>(0, (sum, request) => sum + request.peopleNeedingHelp)}',
+                    for (final request in activeRequests.take(8))
+                      '${_hazardTitle(request.emergencyType)} - ${request.locationLabel ?? request.description}',
+                  ],
+                ),
         ),
         _ReportTile(
           title: 'Team Status',
@@ -1283,6 +1350,17 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
               ? 'Loading…'
               : '$_dispatched dispatched · network healthy',
           icon: Icons.inventory_2,
+          onTap: _isLoading
+              ? null
+              : () => _showReportSheet(
+                  title: 'Team Status',
+                  rows: [
+                    'Assigned teams: ${teamRows.map((request) => request.assignedTeamId).toSet().length}',
+                    'Network status: healthy',
+                    for (final request in teamRows.take(10))
+                      '${request.assignedTeamName}: ${request.assignedTeamStatus ?? 'assigned'} - ${request.locationLabel ?? request.description}',
+                  ],
+                ),
         ),
         _ReportTile(
           title: 'Alert Summary',
@@ -1290,8 +1368,29 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
               ? 'Loading…'
               : '$_activeAlerts active alert${_activeAlerts == 1 ? '' : 's'} in the system',
           icon: Icons.forum,
+          onTap: _isLoading
+              ? null
+              : () => _showReportSheet(
+                  title: 'Alert Summary',
+                  rows: [
+                    'Active alerts: $_activeAlerts',
+                    for (final alert in _alerts.take(10))
+                      '${alert.title} - ${alert.location}',
+                  ],
+                ),
         ),
       ],
+    );
+  }
+
+  void _showReportSheet({required String title, required List<String> rows}) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) => _ReportDetailSheet(title: title, rows: rows),
     );
   }
 }
@@ -1852,6 +1951,7 @@ class _ResponderMapPreview extends StatelessWidget {
     this.shelters = const [],
     this.onSosRequestTap,
     this.onShelterTap,
+    this.onMapTap,
   });
 
   final double height;
@@ -1863,6 +1963,7 @@ class _ResponderMapPreview extends StatelessWidget {
   final List<EvacuationCenterModel> shelters;
   final void Function(RescueRequestModel)? onSosRequestTap;
   final void Function(EvacuationCenterModel)? onShelterTap;
+  final void Function(LatLng)? onMapTap;
 
   static const _center = LatLng(13.6218, 123.1948);
 
@@ -1892,6 +1993,7 @@ class _ResponderMapPreview extends StatelessWidget {
           minZoom: 4,
           maxZoom: 18,
           interactionOptions: const InteractionOptions(),
+          onTap: (_, point) => onMapTap?.call(point),
         ),
         children: [
           TileLayer(
@@ -2969,11 +3071,13 @@ class _ReportTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.icon,
+    this.onTap,
   });
 
   final String title;
   final String subtitle;
   final IconData icon;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -2985,6 +3089,62 @@ class _ReportTile extends StatelessWidget {
           title: Text(title),
           subtitle: Text(subtitle),
           trailing: const Icon(Icons.chevron_right),
+          onTap: onTap,
+        ),
+      ),
+    );
+  }
+}
+
+class _ReportDetailSheet extends StatelessWidget {
+  const _ReportDetailSheet({required this.title, required this.rows});
+
+  final String title;
+  final List<String> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final visibleRows = rows.isEmpty
+        ? const ['No report data available.']
+        : rows;
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 4, 18, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 12),
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(context).height * 0.48,
+              ),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: visibleRows.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (context, index) => ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(
+                    radius: 13,
+                    backgroundColor: AppTheme.signalBlue.withValues(alpha: 0.1),
+                    child: Text(
+                      '${index + 1}',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.signalBlue,
+                      ),
+                    ),
+                  ),
+                  title: Text(visibleRows[index]),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -3569,6 +3729,91 @@ class _ShelterPickerView extends StatelessWidget {
 }
 
 // ── Shelter info bottom sheet ─────────────────────────────────────────────────
+
+class _CreateShelterDialog extends StatefulWidget {
+  const _CreateShelterDialog({required this.point});
+
+  final LatLng point;
+
+  @override
+  State<_CreateShelterDialog> createState() => _CreateShelterDialogState();
+}
+
+class _CreateShelterDialogState extends State<_CreateShelterDialog> {
+  final _nameCtrl = TextEditingController();
+  final _capacityCtrl = TextEditingController(text: '50');
+  final _formKey = GlobalKey<FormState>();
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _capacityCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Add Evacuation Center'),
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${widget.point.latitude.toStringAsFixed(5)}, ${widget.point.longitude.toStringAsFixed(5)}',
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _nameCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Shelter name',
+                border: OutlineInputBorder(),
+              ),
+              textCapitalization: TextCapitalization.words,
+              validator: (value) =>
+                  value == null || value.trim().isEmpty ? 'Required' : null,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _capacityCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Capacity',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+              validator: (value) {
+                final capacity = int.tryParse(value?.trim() ?? '');
+                if (capacity == null || capacity <= 0) {
+                  return 'Enter a valid capacity';
+                }
+                return null;
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: () {
+            if (!_formKey.currentState!.validate()) return;
+            Navigator.pop(context, (
+              name: _nameCtrl.text.trim(),
+              capacity: int.parse(_capacityCtrl.text.trim()),
+            ));
+          },
+          icon: const Icon(Icons.add_location_alt_rounded),
+          label: const Text('Add Shelter'),
+        ),
+      ],
+    );
+  }
+}
 
 class _ShelterInfoSheet extends StatelessWidget {
   const _ShelterInfoSheet({required this.shelter});

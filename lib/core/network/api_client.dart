@@ -34,6 +34,10 @@ class ApiClient {
     return _send('PATCH', path, body: body);
   }
 
+  Future<Map<String, Object?>> delete(String path, {Object? body}) async {
+    return _send('DELETE', path, body: body);
+  }
+
   Future<Map<String, Object?>> _send(
     String method,
     String path, {

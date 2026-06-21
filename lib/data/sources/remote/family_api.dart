@@ -14,6 +14,14 @@ class FamilyApi {
     return _client.post(ApiEndpoints.familyMembers, body: data);
   }
 
+  Future<void> removeMember(String id) async {
+    await _client.delete(ApiEndpoints.familyMemberById(id));
+  }
+
+  Future<Map<String, Object?>> sendMessage(Map<String, Object?> data) async {
+    return _client.post(ApiEndpoints.familyMessages, body: data);
+  }
+
   Future<Map<String, Object?>> updateMyStatus({
     required String name,
     required String status,

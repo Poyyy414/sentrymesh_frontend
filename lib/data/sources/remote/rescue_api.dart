@@ -66,6 +66,27 @@ class RescueApi {
     return _client.get(ApiEndpoints.evacuationCenters);
   }
 
+  Future<Map<String, Object?>> createEvacuationCenter({
+    required String name,
+    required String address,
+    required int capacity,
+    required double latitude,
+    required double longitude,
+  }) {
+    return _client.post(
+      ApiEndpoints.evacuationCenters,
+      body: {
+        'name': name,
+        'address': address,
+        'capacity': capacity,
+        'current_occupancy': 0,
+        'latitude': latitude,
+        'longitude': longitude,
+        'status': 'open',
+      },
+    );
+  }
+
   Future<Map<String, Object?>> assignShelter({
     required String id,
     required String shelterId,

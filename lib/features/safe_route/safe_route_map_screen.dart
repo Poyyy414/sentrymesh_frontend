@@ -464,14 +464,6 @@ class _LayerPanel extends StatelessWidget {
           runSpacing: 6,
           children: [
             _Chip(
-              label: 'Incidents',
-              icon: Icons.priority_high,
-              selected: layers.incidents,
-              color: AppTheme.dangerRed,
-              onTap: () =>
-                  onChanged(layers.copyWith(incidents: !layers.incidents)),
-            ),
-            _Chip(
               label: 'Flood Risk',
               icon: Icons.flood,
               selected: layers.hazards,
@@ -494,14 +486,6 @@ class _LayerPanel extends StatelessWidget {
               onTap: () => onChanged(
                 layers.copyWith(evacuationCenters: !layers.evacuationCenters),
               ),
-            ),
-            _Chip(
-              label: 'Teams',
-              icon: Icons.groups_rounded,
-              selected: layers.loraNodes,
-              color: AppTheme.deepNavy,
-              onTap: () =>
-                  onChanged(layers.copyWith(loraNodes: !layers.loraNodes)),
             ),
           ],
         ),
