@@ -428,7 +428,7 @@ class _PanelBackButton extends StatelessWidget {
         ),
       ),
       icon: Icon(Icons.arrow_back_rounded, size: compact ? 18 : 20),
-      label: const Text('Back to Sign In'),
+      label: const Text('Back'),
     );
   }
 }
@@ -680,7 +680,7 @@ class _RegisterContent extends StatelessWidget {
                     ),
                   ),
                   icon: const Icon(Icons.arrow_back_rounded, size: 20),
-                  label: const Text('Back to Sign In'),
+                  label: const Text('Back'),
                 ),
               ),
             ],
