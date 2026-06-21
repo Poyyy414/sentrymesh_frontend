@@ -3688,6 +3688,12 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
   bool _showPicker = false;
   bool _isAssigning = false;
 
+  bool get _canNavigate {
+    final role =
+        AppDependenciesScope.of(context).authRepository.currentUser?.role;
+    return role != 'super_admin';
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_showPicker) {
@@ -3799,15 +3805,19 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
           const SizedBox(height: 16),
           Row(
             children: [
-              Expanded(
-                child: SentryButton(
-                  label: 'Navigate',
-                  icon: Icons.navigation,
-                  backgroundColor: AppTheme.safeGreen,
-                  onPressed: widget.onNavigate,
+              // Route guidance is a field-responder task; the super admin
+              // oversees and dispatches but does not navigate to the scene.
+              if (_canNavigate) ...[
+                Expanded(
+                  child: SentryButton(
+                    label: 'Navigate',
+                    icon: Icons.navigation,
+                    backgroundColor: AppTheme.safeGreen,
+                    onPressed: widget.onNavigate,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 10),
+                const SizedBox(width: 10),
+              ],
               Expanded(
                 child: SentryButton(
                   label: 'Assign Shelter',
