@@ -51,23 +51,50 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _addFamilyMember() async {
     final nameController = TextEditingController();
     final relationshipController = TextEditingController();
+    final phoneController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Add Family Member'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Full Name'),
-            ),
-            TextField(
-              controller: relationshipController,
-              decoration: const InputDecoration(labelText: 'Relationship'),
-            ),
-          ],
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: 'Full Name'),
+                textCapitalization: TextCapitalization.words,
+                validator: (v) =>
+                    (v == null || v.trim().isEmpty) ? 'Required' : null,
+              ),
+              TextFormField(
+                controller: relationshipController,
+                decoration: const InputDecoration(labelText: 'Relationship'),
+                textCapitalization: TextCapitalization.words,
+                validator: (v) =>
+                    (v == null || v.trim().isEmpty) ? 'Required' : null,
+              ),
+              TextFormField(
+                controller: phoneController,
+                decoration: const InputDecoration(
+                  labelText: 'Phone Number',
+                  hintText: 'e.g. 0917 123 4567',
+                ),
+                keyboardType: TextInputType.phone,
+                validator: (v) {
+                  final value = v?.trim() ?? '';
+                  if (value.isEmpty) return 'Required';
+                  if (!RegExp(r'^[0-9+\-\s()]{7,}$').hasMatch(value)) {
+                    return 'Enter a valid phone number';
+                  }
+                  return null;
+                },
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -75,7 +102,11 @@ class _HomeScreenState extends State<HomeScreen> {
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () {
+              if (formKey.currentState!.validate()) {
+                Navigator.pop(context, true);
+              }
+            },
             child: const Text('Add'),
           ),
         ],
@@ -85,9 +116,10 @@ class _HomeScreenState extends State<HomeScreen> {
     if (confirmed == true && mounted) {
       try {
         await AppDependenciesScope.of(context).familyRepository.addMember(
-          name: nameController.text,
-          relationship: relationshipController.text,
+          name: nameController.text.trim(),
+          relationship: relationshipController.text.trim(),
           status: 'Safe',
+          phoneNumber: phoneController.text.trim(),
         );
         _loadAllData();
       } catch (e) {
