@@ -24,6 +24,10 @@ class ApiEndpoints {
   static const weatherCurrent = '/weather/current';
   static const evacuationCenters = '/evacuation-centers';
 
+  static String evacuationCenterById(String id) {
+    return '/evacuation-centers/$id';
+  }
+
   static String rescueRequestShelter(String id) {
     return '/rescue-requests/$id/shelter';
   }

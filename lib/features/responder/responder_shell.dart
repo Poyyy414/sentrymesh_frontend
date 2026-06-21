@@ -900,7 +900,8 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => _ShelterInfoSheet(shelter: shelter),
+      builder: (_) =>
+          _ShelterInfoSheet(shelter: shelter, onDeleted: _loadMapData),
     );
   }
 
@@ -4001,13 +4002,74 @@ class _CreateShelterDialogState extends State<_CreateShelterDialog> {
   }
 }
 
-class _ShelterInfoSheet extends StatelessWidget {
-  const _ShelterInfoSheet({required this.shelter});
+class _ShelterInfoSheet extends StatefulWidget {
+  const _ShelterInfoSheet({required this.shelter, this.onDeleted});
 
   final EvacuationCenterModel shelter;
 
+  /// Called after the shelter is removed so the map can refresh. Only the
+  /// super admin can trigger removal.
+  final Future<void> Function()? onDeleted;
+
+  @override
+  State<_ShelterInfoSheet> createState() => _ShelterInfoSheetState();
+}
+
+class _ShelterInfoSheetState extends State<_ShelterInfoSheet> {
+  bool _isDeleting = false;
+
+  bool get _canRemove {
+    final role =
+        AppDependenciesScope.of(context).authRepository.currentUser?.role;
+    return role == 'super_admin';
+  }
+
+  Future<void> _confirmAndDelete() async {
+    final shelter = widget.shelter;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remove shelter?'),
+        content: Text(
+          '"${shelter.name}" will be permanently removed and can no longer '
+          'be assigned to residents.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: AppTheme.dangerRed),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isDeleting = true);
+    try {
+      await AppDependenciesScope.of(
+        context,
+      ).rescueRepository.deleteEvacuationCenter(shelter.id);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      await widget.onDeleted?.call();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _isDeleting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not remove shelter: $error')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final shelter = widget.shelter;
     final isFull = shelter.availableSlots <= 0;
     final color = isFull ? const Color(0xFFE65100) : const Color(0xFF2E7D32);
 
@@ -4089,6 +4151,27 @@ class _ShelterInfoSheet extends StatelessWidget {
               ),
             ),
           ),
+          if (_canRemove) ...[
+            const SizedBox(height: 18),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _isDeleting ? null : _confirmAndDelete,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTheme.dangerRed,
+                  side: const BorderSide(color: AppTheme.dangerRed),
+                ),
+                icon: _isDeleting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2.2),
+                      )
+                    : const Icon(Icons.delete_outline),
+                label: Text(_isDeleting ? 'Removing…' : 'Remove Shelter'),
+              ),
+            ),
+          ],
         ],
       ),
     );

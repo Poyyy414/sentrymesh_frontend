@@ -127,6 +127,10 @@ class RescueRepository {
     return EvacuationCenterModel.fromJson(payload);
   }
 
+  Future<void> deleteEvacuationCenter(String id) async {
+    await _remote.deleteEvacuationCenter(id);
+  }
+
   Future<RescueRequestModel?> assignShelter({
     required String requestId,
     required String shelterId,

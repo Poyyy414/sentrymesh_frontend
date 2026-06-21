@@ -87,6 +87,10 @@ class RescueApi {
     );
   }
 
+  Future<Map<String, Object?>> deleteEvacuationCenter(String id) {
+    return _client.delete(ApiEndpoints.evacuationCenterById(id));
+  }
+
   Future<Map<String, Object?>> assignShelter({
     required String id,
     required String shelterId,
