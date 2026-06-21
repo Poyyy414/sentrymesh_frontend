@@ -34,10 +34,12 @@ class RescueApi {
     required RescueStatus status,
     String? responderId,
   }) {
-    return _client.patch(
-      ApiEndpoints.rescueRequestStatus(id),
-      body: {'status': status.name, ?'responder_id': responderId},
-    );
+    final body = <String, Object?>{'status': status.name};
+    if (responderId != null) {
+      body['responder_id'] = responderId;
+    }
+
+    return _client.patch(ApiEndpoints.rescueRequestStatus(id), body: body);
   }
 
   Future<Map<String, Object?>> fetchRequestNavigation({
