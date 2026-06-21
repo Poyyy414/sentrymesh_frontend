@@ -105,6 +105,26 @@ class RescueRepository {
     );
   }
 
+  /// Builds a safe route from the responder to an arbitrary destination (e.g. a
+  /// shelter), without going through a rescue request's backend GPS lookup.
+  Future<RescueNavigationModel?> fetchNavigationToPoint({
+    required GeoPoint responderLocation,
+    required GeoPoint destination,
+  }) async {
+    final route = await _mapRepository.fetchSafeRoute(
+      origin: responderLocation,
+      destination: destination,
+    );
+
+    return RescueNavigationModel(
+      directDistanceKm: route?.distanceKm ?? 0,
+      bearingDegrees: _bearing(responderLocation, destination),
+      route: route,
+      navigationUrl:
+          'https://www.google.com/maps/dir/?api=1&destination=${destination.latitude},${destination.longitude}&travelmode=driving',
+    );
+  }
+
   Future<List<EvacuationCenterModel>> fetchEvacuationCenters() async {
     final payload = await _remote.fetchEvacuationCenters();
     final items = payload['items'];
@@ -113,23 +133,6 @@ class RescueRepository {
         .whereType<Map<String, Object?>>()
         .map(EvacuationCenterModel.fromJson)
         .toList();
-  }
-
-  Future<EvacuationCenterModel> createEvacuationCenter({
-    required String name,
-    required String address,
-    required int capacity,
-    required double latitude,
-    required double longitude,
-  }) async {
-    final payload = await _remote.createEvacuationCenter(
-      name: name,
-      address: address,
-      capacity: capacity,
-      latitude: latitude,
-      longitude: longitude,
-    );
-    return EvacuationCenterModel.fromJson(payload);
   }
 
   Future<void> deleteEvacuationCenter(String id) async {

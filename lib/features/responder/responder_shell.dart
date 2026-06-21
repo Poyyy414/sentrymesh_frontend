@@ -690,9 +690,20 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
 }
 
 class _ResponderNavigationScreen extends StatefulWidget {
-  const _ResponderNavigationScreen({required this.incident});
+  const _ResponderNavigationScreen({
+    required this.incident,
+    this.destinationOverride,
+    this.title,
+  });
 
   final _Incident incident;
+
+  /// When set, route to this fixed point (e.g. a shelter) instead of looking up
+  /// the resident's GPS from the backend by request id.
+  final RescueLocationModel? destinationOverride;
+
+  /// App bar title; defaults to the resident-navigation wording.
+  final String? title;
 
   @override
   State<_ResponderNavigationScreen> createState() =>
@@ -742,6 +753,10 @@ class _ResponderNavigationScreenState
     String? message;
 
     Future<RescueLocationModel?> loadResidentLocation() async {
+      final override = widget.destinationOverride;
+      if (override != null) {
+        return override;
+      }
       try {
         return await dependencies.rescueRepository.fetchRequestLocation(
           widget.incident.id,
@@ -772,15 +787,23 @@ class _ResponderNavigationScreenState
     responderLocation = locationResults[1] as GeoPoint?;
 
     if (residentLocation != null && responderLocation != null) {
+      final isShelterRoute = widget.destinationOverride != null;
       try {
-        navigation = await dependencies.rescueRepository.fetchNavigation(
-          id: widget.incident.id,
-          responderLocation: responderLocation,
-        );
+        navigation = isShelterRoute
+            ? await dependencies.rescueRepository.fetchNavigationToPoint(
+                responderLocation: responderLocation,
+                destination: residentLocation.point,
+              )
+            : await dependencies.rescueRepository.fetchNavigation(
+                id: widget.incident.id,
+                responderLocation: responderLocation,
+              );
         route = navigation?.route;
 
         message = route == null
-            ? 'Resident GPS loaded. Backend did not return navigation waypoints yet.'
+            ? 'Location loaded. Backend did not return navigation waypoints yet.'
+            : isShelterRoute
+            ? 'Backend route loaded to shelter.'
             : 'Backend route loaded to resident location.';
       } catch (error) {
         message = [
@@ -847,7 +870,7 @@ class _ResponderNavigationScreenState
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        title: const Text('Navigate to Resident'),
+        title: Text(widget.title ?? 'Navigate to Resident'),
         actions: [
           IconButton(
             tooltip: 'Refresh route',
@@ -1007,43 +1030,27 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) =>
-          _ShelterInfoSheet(shelter: shelter, onDeleted: _loadMapData),
+      builder: (_) => _ShelterInfoSheet(
+        shelter: shelter,
+        onDeleted: _loadMapData,
+        onNavigate: () {
+          Navigator.of(context).pop();
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => _ResponderNavigationScreen(
+                incident: _Incident.fromShelter(shelter),
+                destinationOverride: RescueLocationModel(
+                  latitude: shelter.latitude,
+                  longitude: shelter.longitude,
+                  locationLabel: shelter.name,
+                ),
+                title: 'Navigate to Shelter',
+              ),
+            ),
+          );
+        },
+      ),
     );
-  }
-
-  Future<void> _showCreateShelterDialog(LatLng point) async {
-    final result = await showDialog<({String name, int capacity})>(
-      context: context,
-      builder: (context) => _CreateShelterDialog(point: point),
-    );
-    if (result == null || !mounted) return;
-
-    try {
-      await AppDependenciesScope.of(
-        context,
-      ).rescueRepository.createEvacuationCenter(
-        name: result.name,
-        address:
-            'Pinned at ${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)}',
-        capacity: result.capacity,
-        latitude: point.latitude,
-        longitude: point.longitude,
-      );
-      if (!mounted) return;
-      await _loadMapData();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${result.name} added as an evacuation center.'),
-        ),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Could not add shelter: $error')));
-    }
   }
 
   Future<void> _locateResponder() async {
@@ -1214,7 +1221,6 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
                       _showSosBottomSheet(context, request),
                   onShelterTap: (shelter) =>
                       _showShelterInfoSheet(context, shelter),
-                  onMapTap: _showCreateShelterDialog,
                 ),
                 const Positioned(top: 12, left: 12, child: _MapLayerMenu()),
                 Positioned(
@@ -2248,7 +2254,6 @@ class _ResponderMapPreview extends StatelessWidget {
     this.shelters = const [],
     this.onSosRequestTap,
     this.onShelterTap,
-    this.onMapTap,
   });
 
   final double height;
@@ -2260,7 +2265,6 @@ class _ResponderMapPreview extends StatelessWidget {
   final List<EvacuationCenterModel> shelters;
   final void Function(RescueRequestModel)? onSosRequestTap;
   final void Function(EvacuationCenterModel)? onShelterTap;
-  final void Function(LatLng)? onMapTap;
 
   static const _center = LatLng(13.6218, 123.1948);
 
@@ -2290,7 +2294,6 @@ class _ResponderMapPreview extends StatelessWidget {
           minZoom: 4,
           maxZoom: 18,
           interactionOptions: const InteractionOptions(),
-          onTap: (_, point) => onMapTap?.call(point),
         ),
         children: [
           TileLayer(
@@ -2669,6 +2672,25 @@ class _Incident {
       assignedResponderName: request.assignedResponderName,
       latitude: request.latitude,
       longitude: request.longitude,
+    );
+  }
+
+  /// A shelter dressed up as an incident so it can drive the responder
+  /// navigation screen (which keys off icon/title/colour and a destination).
+  factory _Incident.fromShelter(EvacuationCenterModel shelter) {
+    return _Incident(
+      id: shelter.id,
+      icon: Icons.home_rounded,
+      title: shelter.name,
+      location: shelter.address,
+      meta: '',
+      severity: 'Shelter',
+      color: AppTheme.safeGreen,
+      people: 0,
+      status: '',
+      hazardType: HazardType.flood,
+      latitude: shelter.latitude,
+      longitude: shelter.longitude,
     );
   }
 
@@ -4129,6 +4151,15 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
     return role != 'super_admin';
   }
 
+  // Assigning a resident to an existing shelter is a dispatch decision owned by
+  // the super admin. Field responders only navigate; they don't assign shelters.
+  bool get _canAssignShelter {
+    final role = AppDependenciesScope.of(
+      context,
+    ).authRepository.currentUser?.role;
+    return role == 'super_admin';
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_showPicker) {
@@ -4242,7 +4273,7 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
             children: [
               // Route guidance is a field-responder task; the super admin
               // oversees and dispatches but does not navigate to the scene.
-              if (_canNavigate) ...[
+              if (_canNavigate)
                 Expanded(
                   child: SentryButton(
                     label: 'Navigate',
@@ -4251,17 +4282,17 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
                     onPressed: widget.onNavigate,
                   ),
                 ),
-                const SizedBox(width: 10),
-              ],
-              Expanded(
-                child: SentryButton(
-                  label: 'Assign Shelter',
-                  icon: Icons.home_rounded,
-                  onPressed: widget.shelters.isEmpty
-                      ? null
-                      : () => setState(() => _showPicker = true),
+              // Only the super admin assigns residents to an existing shelter.
+              if (_canAssignShelter)
+                Expanded(
+                  child: SentryButton(
+                    label: 'Assign Shelter',
+                    icon: Icons.home_rounded,
+                    onPressed: widget.shelters.isEmpty
+                        ? null
+                        : () => setState(() => _showPicker = true),
+                  ),
                 ),
-              ),
             ],
           ),
         ],
@@ -4362,99 +4393,22 @@ class _ShelterPickerView extends StatelessWidget {
 
 // ── Shelter info bottom sheet ─────────────────────────────────────────────────
 
-class _CreateShelterDialog extends StatefulWidget {
-  const _CreateShelterDialog({required this.point});
-
-  final LatLng point;
-
-  @override
-  State<_CreateShelterDialog> createState() => _CreateShelterDialogState();
-}
-
-class _CreateShelterDialogState extends State<_CreateShelterDialog> {
-  final _nameCtrl = TextEditingController();
-  final _capacityCtrl = TextEditingController(text: '50');
-  final _formKey = GlobalKey<FormState>();
-
-  @override
-  void dispose() {
-    _nameCtrl.dispose();
-    _capacityCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Add Evacuation Center'),
-      content: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '${widget.point.latitude.toStringAsFixed(5)}, ${widget.point.longitude.toStringAsFixed(5)}',
-              style: Theme.of(context).textTheme.labelSmall,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _nameCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Shelter name',
-                border: OutlineInputBorder(),
-              ),
-              textCapitalization: TextCapitalization.words,
-              validator: (value) =>
-                  value == null || value.trim().isEmpty ? 'Required' : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _capacityCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Capacity',
-                border: OutlineInputBorder(),
-              ),
-              keyboardType: TextInputType.number,
-              validator: (value) {
-                final capacity = int.tryParse(value?.trim() ?? '');
-                if (capacity == null || capacity <= 0) {
-                  return 'Enter a valid capacity';
-                }
-                return null;
-              },
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton.icon(
-          onPressed: () {
-            if (!_formKey.currentState!.validate()) return;
-            Navigator.pop(context, (
-              name: _nameCtrl.text.trim(),
-              capacity: int.parse(_capacityCtrl.text.trim()),
-            ));
-          },
-          icon: const Icon(Icons.add_location_alt_rounded),
-          label: const Text('Add Shelter'),
-        ),
-      ],
-    );
-  }
-}
-
 class _ShelterInfoSheet extends StatefulWidget {
-  const _ShelterInfoSheet({required this.shelter, this.onDeleted});
+  const _ShelterInfoSheet({
+    required this.shelter,
+    this.onDeleted,
+    this.onNavigate,
+  });
 
   final EvacuationCenterModel shelter;
 
   /// Called after the shelter is removed so the map can refresh. Only the
   /// super admin can trigger removal.
   final Future<void> Function()? onDeleted;
+
+  /// Opens turn-by-turn routing to this shelter. Field responders use this to
+  /// drive residents to the shelter; the super admin does not navigate.
+  final VoidCallback? onNavigate;
 
   @override
   State<_ShelterInfoSheet> createState() => _ShelterInfoSheetState();
@@ -4468,6 +4422,13 @@ class _ShelterInfoSheetState extends State<_ShelterInfoSheet> {
       context,
     ).authRepository.currentUser?.role;
     return role == 'super_admin';
+  }
+
+  bool get _canNavigate {
+    final role = AppDependenciesScope.of(
+      context,
+    ).authRepository.currentUser?.role;
+    return role != 'super_admin';
   }
 
   Future<void> _confirmAndDelete() async {
@@ -4597,6 +4558,18 @@ class _ShelterInfoSheetState extends State<_ShelterInfoSheet> {
               ),
             ),
           ),
+          if (_canNavigate && widget.onNavigate != null) ...[
+            const SizedBox(height: 18),
+            SizedBox(
+              width: double.infinity,
+              child: SentryButton(
+                label: 'Take Route to Shelter',
+                icon: Icons.navigation,
+                backgroundColor: AppTheme.safeGreen,
+                onPressed: widget.onNavigate,
+              ),
+            ),
+          ],
           if (_canRemove) ...[
             const SizedBox(height: 18),
             SizedBox(
