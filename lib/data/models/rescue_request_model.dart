@@ -16,6 +16,9 @@ class RescueRequestModel {
     this.assignedShelterId,
     this.assignedShelterName,
     this.assignedShelterAddress,
+    this.assignedTeamId,
+    this.assignedTeamName,
+    this.assignedTeamStatus,
   });
 
   final String id;
@@ -31,6 +34,9 @@ class RescueRequestModel {
   final String? assignedShelterId;
   final String? assignedShelterName;
   final String? assignedShelterAddress;
+  final String? assignedTeamId;
+  final String? assignedTeamName;
+  final String? assignedTeamStatus;
 
   factory RescueRequestModel.fromJson(Map<String, Object?> json) {
     return RescueRequestModel(
@@ -58,6 +64,9 @@ class RescueRequestModel {
       assignedShelterId: json['assigned_shelter_id']?.toString(),
       assignedShelterName: json['assigned_shelter_name']?.toString(),
       assignedShelterAddress: json['assigned_shelter_address']?.toString(),
+      assignedTeamId: json['assigned_team_id']?.toString(),
+      assignedTeamName: json['assigned_team_name']?.toString(),
+      assignedTeamStatus: json['assigned_team_status']?.toString(),
     );
   }
 

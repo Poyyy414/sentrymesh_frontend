@@ -7,6 +7,8 @@ import 'package:latlong2/latlong.dart';
 import '../../../app/theme.dart';
 import '../../../core/config/map_tile_config.dart';
 import '../../../core/services/location_service.dart';
+import '../../../data/models/evacuation_center_model.dart';
+import '../../../data/models/rescue_request_model.dart';
 import '../../../data/models/route_model.dart';
 import '../state/asean_country.dart';
 
@@ -52,6 +54,9 @@ class MapView extends StatefulWidget {
     required this.layers,
     this.route,
     this.userLocation,
+    this.evacuationCenters = const [],
+    this.incidents = const [],
+    this.heatPoints = const [],
     this.isDaytime = true,
     this.rainfallMmPh = 0.0,
     super.key,
@@ -61,6 +66,9 @@ class MapView extends StatefulWidget {
   final GeoPoint? userLocation;
   final MapLayerVisibility layers;
   final RouteModel? route;
+  final List<EvacuationCenterModel> evacuationCenters;
+  final List<RescueRequestModel> incidents;
+  final List<SeverityHeatPoint> heatPoints;
   final bool isDaytime;
   final double rainfallMmPh;
 
@@ -156,6 +164,23 @@ class _MapViewState extends State<MapView> {
               userAgentPackageName: 'com.example.sentrymesh_frontend',
               maxZoom: 18,
             ),
+            if (widget.layers.hazards && widget.heatPoints.isNotEmpty)
+              CircleLayer(
+                circles: [
+                  for (final point in widget.heatPoints)
+                    CircleMarker(
+                      point: LatLng(
+                        point.location.latitude,
+                        point.location.longitude,
+                      ),
+                      radius: 260 + (point.severity * 760),
+                      useRadiusInMeter: true,
+                      color: point.color.withValues(alpha: 0.2),
+                      borderColor: point.color.withValues(alpha: 0.42),
+                      borderStrokeWidth: 1.2,
+                    ),
+                ],
+              ),
             if (widget.layers.safeRoute && routePoints.length > 1)
               PolylineLayer(
                 polylines: [
@@ -186,6 +211,34 @@ class _MapViewState extends State<MapView> {
               ),
             MarkerLayer(
               markers: [
+                if (widget.layers.evacuationCenters)
+                  for (final center in widget.evacuationCenters)
+                    Marker(
+                      point: LatLng(center.latitude, center.longitude),
+                      width: 78,
+                      height: 76,
+                      child: _EvacuationCenterMarker(center: center),
+                    ),
+                if (widget.layers.incidents)
+                  for (final request in widget.incidents)
+                    if (request.latitude != null && request.longitude != null)
+                      Marker(
+                        point: LatLng(request.latitude!, request.longitude!),
+                        width: 72,
+                        height: 76,
+                        child: _IncidentMarker(request: request),
+                      ),
+                if (widget.layers.loraNodes)
+                  for (final request in widget.incidents)
+                    if (request.latitude != null &&
+                        request.longitude != null &&
+                        request.assignedTeamName != null)
+                      Marker(
+                        point: _teamPointForRequest(request),
+                        width: 90,
+                        height: 72,
+                        child: _AssignedTeamMarker(request: request),
+                      ),
                 if (widget.layers.location)
                   if (userPoint != null)
                     Marker(
@@ -223,6 +276,32 @@ class _MapViewState extends State<MapView> {
   }
 }
 
+class SeverityHeatPoint {
+  const SeverityHeatPoint({
+    required this.location,
+    required this.label,
+    required this.severity,
+  });
+
+  final GeoPoint location;
+  final String label;
+  final double severity;
+
+  Color get color {
+    if (severity >= 0.7) return AppTheme.dangerRed;
+    if (severity >= 0.35) return AppTheme.warningAmber;
+    return AppTheme.safeGreen;
+  }
+}
+
+LatLng _teamPointForRequest(RescueRequestModel request) {
+  final seed = request.id.codeUnits.fold<int>(0, (sum, code) => sum + code);
+  final latOffset = 0.0012 + (seed % 5) * 0.00022;
+  final lonOffset = 0.0012 + (seed % 7) * 0.00018;
+
+  return LatLng(request.latitude! + latOffset, request.longitude! + lonOffset);
+}
+
 // ── Night overlay ──────────────────────────────────────────────────────────
 
 class _NightOverlay extends StatelessWidget {
@@ -231,10 +310,7 @@ class _NightOverlay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return IgnorePointer(
-      child: const ColoredBox(
-        color: Color(0x88000B20),
-        child: _StarField(),
-      ),
+      child: const ColoredBox(color: Color(0x88000B20), child: _StarField()),
     );
   }
 }
@@ -270,7 +346,11 @@ class _StarPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..color = Colors.white.withValues(alpha: 0.55);
     for (final s in stars) {
-      canvas.drawCircle(Offset(s.x * size.width, s.y * size.height), s.r, paint);
+      canvas.drawCircle(
+        Offset(s.x * size.width, s.y * size.height),
+        s.r,
+        paint,
+      );
     }
   }
 
@@ -326,10 +406,7 @@ class _RainOverlayState extends State<_RainOverlay>
 }
 
 class _RainPainter extends CustomPainter {
-  const _RainPainter({
-    required this.progress,
-    required this.intensityMmPh,
-  });
+  const _RainPainter({required this.progress, required this.intensityMmPh});
 
   final double progress;
   final double intensityMmPh;
@@ -371,11 +448,7 @@ class _RainPainter extends CustomPainter {
       final y = t * (size.height + 30) - 15;
       final len = _lengths[i];
 
-      canvas.drawLine(
-        Offset(x, y),
-        Offset(x + len * 0.18, y + len),
-        dropPaint,
-      );
+      canvas.drawLine(Offset(x, y), Offset(x + len * 0.18, y + len), dropPaint);
 
       // tiny splash when drop hits bottom
       if (t > 0.92) {
@@ -448,4 +521,138 @@ class _CountryCenterMarker extends StatelessWidget {
       ),
     );
   }
+}
+
+class _EvacuationCenterMarker extends StatelessWidget {
+  const _EvacuationCenterMarker({required this.center});
+
+  final EvacuationCenterModel center;
+
+  @override
+  Widget build(BuildContext context) {
+    final isFull = center.availableSlots <= 0;
+    final color = isFull ? AppTheme.warningAmber : AppTheme.safeGreen;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _MapMarkerLabel(
+          label: isFull ? 'FULL' : '${center.availableSlots} slots',
+          color: color,
+        ),
+        const SizedBox(height: 3),
+        _MapMarkerBubble(icon: Icons.home_rounded, color: color),
+      ],
+    );
+  }
+}
+
+class _IncidentMarker extends StatelessWidget {
+  const _IncidentMarker({required this.request});
+
+  final RescueRequestModel request;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _severityColorForPeople(request.peopleNeedingHelp);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _MapMarkerLabel(
+          label: 'SOS ${request.peopleNeedingHelp}',
+          color: color,
+        ),
+        const SizedBox(height: 3),
+        _MapMarkerBubble(icon: Icons.person_pin_rounded, color: color),
+      ],
+    );
+  }
+}
+
+class _AssignedTeamMarker extends StatelessWidget {
+  const _AssignedTeamMarker({required this.request});
+
+  final RescueRequestModel request;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = request.assignedTeamName ?? 'Team';
+    final shortName = name
+        .replaceAll(' Response', '')
+        .replaceAll(' Rescue', '')
+        .replaceAll(' Evacuation', '');
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _MapMarkerLabel(label: shortName, color: AppTheme.signalBlue),
+        const SizedBox(height: 3),
+        _MapMarkerBubble(
+          icon: Icons.groups_rounded,
+          color: AppTheme.signalBlue,
+        ),
+      ],
+    );
+  }
+}
+
+class _MapMarkerLabel extends StatelessWidget {
+  const _MapMarkerLabel({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: color,
+      borderRadius: BorderRadius.circular(8),
+      elevation: 3,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+        child: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 9,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MapMarkerBubble extends StatelessWidget {
+  const _MapMarkerBubble({required this.icon, required this.color});
+
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: color,
+      shape: const CircleBorder(),
+      elevation: 3,
+      child: Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+        ),
+        child: Icon(icon, color: Colors.white, size: 18),
+      ),
+    );
+  }
+}
+
+Color _severityColorForPeople(int people) {
+  if (people >= 5) return AppTheme.dangerRed;
+  if (people >= 2) return AppTheme.warningAmber;
+  return AppTheme.safeGreen;
 }

@@ -40,7 +40,6 @@ IconData _incidentIcon(HazardType type) {
   };
 }
 
-
 String _hazardTitle(HazardType type) {
   return switch (type) {
     HazardType.flood => 'Flood',
@@ -95,7 +94,6 @@ String _timeAgoLabel(DateTime createdAt) {
   }
   return '${diff.inDays} d ago';
 }
-
 
 class ResponderShell extends StatefulWidget {
   const ResponderShell({super.key});
@@ -227,11 +225,8 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
           activeIncidents: active.length,
           peopleNeedHelp: active.fold(0, (sum, r) => sum + r.peopleNeedingHelp),
           deployedTeams: active
-              .where(
-                (r) =>
-                    r.status == RescueStatus.acknowledged ||
-                    r.status == RescueStatus.inProgress,
-              )
+              .map((request) => request.assignedTeamId ?? request.id)
+              .toSet()
               .length,
           activeAlerts: alerts.length,
           recentRequests: requests.take(3).toList(),
@@ -507,11 +502,11 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
             height: 170,
             residentLocation:
                 incident.latitude != null && incident.longitude != null
-                    ? GeoPoint(
-                        latitude: incident.latitude!,
-                        longitude: incident.longitude!,
-                      )
-                    : null,
+                ? GeoPoint(
+                    latitude: incident.latitude!,
+                    longitude: incident.longitude!,
+                  )
+                : null,
           ),
           const SizedBox(height: 14),
           Card(
@@ -531,6 +526,11 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
                   icon: Icons.schedule,
                   label: 'Status',
                   value: incident.status,
+                ),
+                _InfoRow(
+                  icon: Icons.groups,
+                  label: 'Assigned Team',
+                  value: incident.assignedTeamName ?? 'Auto assignment pending',
                 ),
                 const _InfoRow(
                   icon: Icons.signal_cellular_alt,
@@ -717,10 +717,14 @@ class _ResponderNavigationScreenState
       points.addAll(waypoints.map((p) => LatLng(p.latitude, p.longitude)));
     }
     if (_responderLocation != null) {
-      points.add(LatLng(_responderLocation!.latitude, _responderLocation!.longitude));
+      points.add(
+        LatLng(_responderLocation!.latitude, _responderLocation!.longitude),
+      );
     }
     if (_residentLocation != null) {
-      points.add(LatLng(_residentLocation!.latitude, _residentLocation!.longitude));
+      points.add(
+        LatLng(_residentLocation!.latitude, _residentLocation!.longitude),
+      );
     }
     if (points.length < 2) return;
 
@@ -812,10 +816,9 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _loadMapData();
     });
-    _refreshTimer = Timer.periodic(
-      const Duration(seconds: 30),
-      (_) { if (mounted) _loadMapData(); },
-    );
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) _loadMapData();
+    });
   }
 
   @override
@@ -882,7 +885,9 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
   }
 
   void _showShelterInfoSheet(
-      BuildContext context, EvacuationCenterModel shelter) {
+    BuildContext context,
+    EvacuationCenterModel shelter,
+  ) {
     showModalBottomSheet<void>(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -1172,8 +1177,7 @@ class _ResponderTeamsScreenState extends State<ResponderTeamsScreen> {
             ),
           )
         else
-          for (final req in active)
-            _DeploymentTile(request: req),
+          for (final req in active) _DeploymentTile(request: req),
         const SizedBox(height: 18),
         const _SectionTitle(title: 'Quick Actions'),
         const SizedBox(height: 10),
@@ -1479,9 +1483,9 @@ class _LiveStatusBanner extends StatelessWidget {
                   const SizedBox(height: 3),
                   Text(
                     subtitle,
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: Colors.white70,
-                    ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelMedium?.copyWith(color: Colors.white70),
                   ),
                 ],
               ),
@@ -1523,14 +1527,18 @@ class _AiReasoningCardState extends State<_AiReasoningCard> {
       return;
     }
     try {
-      final node = await AppDependenciesScope.of(
-        context,
-      ).predictionRepository.fetchIncidentPrediction(
-        latitude: lat,
-        longitude: lon,
-        hazardType: widget.incident.hazardType,
-      );
-      if (mounted) setState(() { _node = node; _loading = false; });
+      final node = await AppDependenciesScope.of(context).predictionRepository
+          .fetchIncidentPrediction(
+            latitude: lat,
+            longitude: lon,
+            hazardType: widget.incident.hazardType,
+          );
+      if (mounted) {
+        setState(() {
+          _node = node;
+          _loading = false;
+        });
+      }
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -1561,7 +1569,10 @@ class _AiReasoningCardState extends State<_AiReasoningCard> {
                     color: AppTheme.signalBlue.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(Icons.psychology, color: AppTheme.signalBlue),
+                  child: const Icon(
+                    Icons.psychology,
+                    color: AppTheme.signalBlue,
+                  ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -1589,7 +1600,8 @@ class _AiReasoningCardState extends State<_AiReasoningCard> {
             else if (node == null)
               const _ReasonLine(
                 label: 'Status',
-                value: 'AI assessment unavailable — incident location not pinned yet.',
+                value:
+                    'AI assessment unavailable — incident location not pinned yet.',
               )
             else ...[
               _ReasonLine(label: 'Risk', value: node.probabilityLabel),
@@ -1730,10 +1742,7 @@ class _StatTile extends StatelessWidget {
 }
 
 class _LiveRecentIncidents extends StatelessWidget {
-  const _LiveRecentIncidents({
-    required this.requests,
-    required this.isLoading,
-  });
+  const _LiveRecentIncidents({required this.requests, required this.isLoading});
 
   final List<RescueRequestModel> requests;
   final bool isLoading;
@@ -1904,6 +1913,25 @@ class _ResponderMapPreview extends StatelessWidget {
                 ),
               ],
             ),
+          if (sosRequests.isNotEmpty)
+            CircleLayer(
+              circles: [
+                for (final request in sosRequests)
+                  if (request.latitude != null && request.longitude != null)
+                    CircleMarker(
+                      point: LatLng(request.latitude!, request.longitude!),
+                      radius: 220 + request.peopleNeedingHelp.clamp(1, 8) * 120,
+                      useRadiusInMeter: true,
+                      color: _severityFromPeople(
+                        request.peopleNeedingHelp,
+                      ).withValues(alpha: 0.18),
+                      borderColor: _severityFromPeople(
+                        request.peopleNeedingHelp,
+                      ).withValues(alpha: 0.4),
+                      borderStrokeWidth: 1.2,
+                    ),
+              ],
+            ),
           MarkerLayer(
             markers: [
               // Evacuation center markers
@@ -1928,6 +1956,17 @@ class _ResponderMapPreview extends StatelessWidget {
                       onTap: () => onSosRequestTap?.call(request),
                       child: _SosRequestMarker(request: request),
                     ),
+                  ),
+              // Assigned team markers
+              for (final request in sosRequests)
+                if (request.latitude != null &&
+                    request.longitude != null &&
+                    request.assignedTeamName != null)
+                  Marker(
+                    point: _responderTeamPointForRequest(request),
+                    width: 92,
+                    height: 72,
+                    child: _ResponderTeamMarker(request: request),
                   ),
               // Responder / base marker
               if (responderPoint == null)
@@ -2202,6 +2241,8 @@ class _Incident {
     required this.people,
     required this.status,
     required this.hazardType,
+    this.assignedTeamName,
+    this.assignedTeamStatus,
     this.latitude,
     this.longitude,
   });
@@ -2221,6 +2262,8 @@ class _Incident {
       people: request.peopleNeedingHelp,
       status: _rescueStatusLabel(request.status),
       hazardType: request.emergencyType,
+      assignedTeamName: request.assignedTeamName,
+      assignedTeamStatus: request.assignedTeamStatus,
       latitude: request.latitude,
       longitude: request.longitude,
     );
@@ -2236,6 +2279,8 @@ class _Incident {
   final int people;
   final String status;
   final HazardType hazardType;
+  final String? assignedTeamName;
+  final String? assignedTeamStatus;
   final double? latitude;
   final double? longitude;
 }
@@ -2743,7 +2788,9 @@ class _NavigationPanel extends StatelessWidget {
                 const Icon(Icons.chevron_right, color: AppTheme.textMuted),
                 Expanded(
                   child: Text(
-                    hasLiveLocation ? 'Responder position active' : 'No route selected',
+                    hasLiveLocation
+                        ? 'Responder position active'
+                        : 'No route selected',
                   ),
                 ),
                 Text('—', style: Theme.of(context).textTheme.titleSmall),
@@ -2752,8 +2799,12 @@ class _NavigationPanel extends StatelessWidget {
             const Divider(height: 20),
             Row(
               children: [
-                const Expanded(child: _MiniMetric(value: '—', label: 'Est. time')),
-                const Expanded(child: _MiniMetric(value: '—', label: 'Distance')),
+                const Expanded(
+                  child: _MiniMetric(value: '—', label: 'Est. time'),
+                ),
+                const Expanded(
+                  child: _MiniMetric(value: '—', label: 'Distance'),
+                ),
                 SizedBox(
                   width: 126,
                   child: SentryButton(
@@ -2797,6 +2848,10 @@ class _DeploymentTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final status = _rescueStatusLabel(request.status);
+    final teamName = request.assignedTeamName ?? 'Auto team pending';
+    final teamStatus =
+        request.assignedTeamStatus?.replaceAll('_', ' ').toUpperCase() ??
+        'ASSIGNED';
     final color = switch (request.status) {
       RescueStatus.inProgress => AppTheme.safeGreen,
       RescueStatus.acknowledged => AppTheme.warningAmber,
@@ -2816,7 +2871,7 @@ class _DeploymentTile extends StatelessWidget {
             ),
             child: Icon(_incidentIcon(request.emergencyType), color: color),
           ),
-          title: Text(_hazardTitle(request.emergencyType)),
+          title: Text('${_hazardTitle(request.emergencyType)} - $teamName'),
           subtitle: Text(
             '${request.locationLabel ?? 'Unknown location'} · ${_timeAgoLabel(request.createdAt)}',
           ),
@@ -2826,10 +2881,7 @@ class _DeploymentTile extends StatelessWidget {
             children: [
               _SeverityPill(label: status, color: color),
               const SizedBox(height: 5),
-              Text(
-                '${request.peopleNeedingHelp} people',
-                style: Theme.of(context).textTheme.labelSmall,
-              ),
+              Text(teamStatus, style: Theme.of(context).textTheme.labelSmall),
             ],
           ),
         ),
@@ -2987,6 +3039,72 @@ class _CommandCenterMarker extends StatelessWidget {
   }
 }
 
+LatLng _responderTeamPointForRequest(RescueRequestModel request) {
+  final seed = request.id.codeUnits.fold<int>(0, (sum, code) => sum + code);
+  return LatLng(
+    request.latitude! + 0.0012 + (seed % 4) * 0.0002,
+    request.longitude! + 0.0011 + (seed % 6) * 0.00018,
+  );
+}
+
+class _ResponderTeamMarker extends StatelessWidget {
+  const _ResponderTeamMarker({required this.request});
+
+  final RescueRequestModel request;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = request.assignedTeamName ?? 'Team';
+    final shortName = name
+        .replaceAll(' Response', '')
+        .replaceAll(' Rescue', '')
+        .replaceAll(' Evacuation', '');
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Material(
+          color: AppTheme.signalBlue,
+          borderRadius: BorderRadius.circular(8),
+          elevation: 3,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            child: Text(
+              shortName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 9,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 3),
+        Material(
+          color: AppTheme.signalBlue,
+          shape: const CircleBorder(),
+          elevation: 3,
+          child: Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+            ),
+            child: const Icon(
+              Icons.groups_rounded,
+              color: Colors.white,
+              size: 18,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _ResponderLocationMarker extends StatelessWidget {
   const _ResponderLocationMarker();
 
@@ -3087,8 +3205,11 @@ class _SosRequestMarker extends StatelessWidget {
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2.5),
             ),
-            child: const Icon(Icons.person_pin_rounded,
-                color: Colors.white, size: 20),
+            child: const Icon(
+              Icons.person_pin_rounded,
+              color: Colors.white,
+              size: 20,
+            ),
           ),
         ),
       ],
@@ -3136,7 +3257,11 @@ class _ShelterMarker extends StatelessWidget {
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2),
             ),
-            child: const Icon(Icons.home_rounded, color: Colors.white, size: 18),
+            child: const Icon(
+              Icons.home_rounded,
+              color: Colors.white,
+              size: 18,
+            ),
           ),
         ),
       ],
@@ -3205,7 +3330,7 @@ class _SosRequestSheet extends StatefulWidget {
   final RescueRequestModel request;
   final List<EvacuationCenterModel> shelters;
   final Future<void> Function(String id, String name, String? address)
-      onShelterAssigned;
+  onShelterAssigned;
   final VoidCallback onNavigate;
 
   @override
@@ -3226,7 +3351,10 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
         onSelect: (shelter) async {
           setState(() => _isAssigning = true);
           await widget.onShelterAssigned(
-              shelter.id, shelter.name, shelter.address);
+            shelter.id,
+            shelter.name,
+            shelter.address,
+          );
           if (mounted) setState(() => _isAssigning = false);
         },
       );
@@ -3237,7 +3365,11 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
-          20, 12, 20, 20 + MediaQuery.of(context).viewInsets.bottom),
+        20,
+        12,
+        20,
+        20 + MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3261,8 +3393,10 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(incident.title,
-                        style: Theme.of(context).textTheme.titleMedium),
+                    Text(
+                      incident.title,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                     Text(
                       '${request.peopleNeedingHelp} people · ${request.status.name}',
                       style: Theme.of(context).textTheme.bodySmall,
@@ -3275,10 +3409,12 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
           ),
           if (request.description.isNotEmpty) ...[
             const SizedBox(height: 10),
-            Text(request.description,
-                style: Theme.of(context).textTheme.bodySmall,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis),
+            Text(
+              request.description,
+              style: Theme.of(context).textTheme.bodySmall,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
           ],
           if (request.assignedShelterName != null) ...[
             const SizedBox(height: 10),
@@ -3288,12 +3424,16 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
                 color: AppTheme.safeGreen.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                    color: AppTheme.safeGreen.withValues(alpha: 0.3)),
+                  color: AppTheme.safeGreen.withValues(alpha: 0.3),
+                ),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.home_rounded,
-                      color: AppTheme.safeGreen, size: 16),
+                  const Icon(
+                    Icons.home_rounded,
+                    color: AppTheme.safeGreen,
+                    size: 16,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -3368,8 +3508,10 @@ class _ShelterPickerView extends StatelessWidget {
                 constraints: const BoxConstraints(),
               ),
               const SizedBox(width: 8),
-              Text('Assign Shelter',
-                  style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                'Assign Shelter',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -3394,19 +3536,26 @@ class _ShelterPickerView extends StatelessWidget {
                       ? const Color(0xFFE65100)
                       : const Color(0xFF2E7D32);
                   return ListTile(
-                    leading:
-                        Icon(Icons.home_rounded, color: color),
-                    title: Text(shelter.name,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w700, fontSize: 14)),
+                    leading: Icon(Icons.home_rounded, color: color),
+                    title: Text(
+                      shelter.name,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                      ),
+                    ),
                     subtitle: Text(
-                        '${shelter.address} · ${shelter.availableSlots} slots available'),
+                      '${shelter.address} · ${shelter.availableSlots} slots available',
+                    ),
                     trailing: isFull
-                        ? const Text('FULL',
+                        ? const Text(
+                            'FULL',
                             style: TextStyle(
-                                color: Color(0xFFE65100),
-                                fontSize: 11,
-                                fontWeight: FontWeight.w800))
+                              color: Color(0xFFE65100),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          )
                         : const Icon(Icons.chevron_right),
                     onTap: isFull ? null : () => onSelect(shelter),
                   );
@@ -3429,8 +3578,7 @@ class _ShelterInfoSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isFull = shelter.availableSlots <= 0;
-    final color =
-        isFull ? const Color(0xFFE65100) : const Color(0xFF2E7D32);
+    final color = isFull ? const Color(0xFFE65100) : const Color(0xFF2E7D32);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
@@ -3457,10 +3605,14 @@ class _ShelterInfoSheet extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(shelter.name,
-                        style: Theme.of(context).textTheme.titleMedium),
-                    Text(shelter.address,
-                        style: Theme.of(context).textTheme.bodySmall),
+                    Text(
+                      shelter.name,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    Text(
+                      shelter.address,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                   ],
                 ),
               ),
@@ -3470,33 +3622,40 @@ class _ShelterInfoSheet extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                  child: _ShelterStat(
-                      label: 'Capacity',
-                      value: '${shelter.capacity}')),
+                child: _ShelterStat(
+                  label: 'Capacity',
+                  value: '${shelter.capacity}',
+                ),
+              ),
               Expanded(
-                  child: _ShelterStat(
-                      label: 'Occupied',
-                      value: '${shelter.currentOccupancy}')),
+                child: _ShelterStat(
+                  label: 'Occupied',
+                  value: '${shelter.currentOccupancy}',
+                ),
+              ),
               Expanded(
-                  child: _ShelterStat(
-                      label: 'Available',
-                      value: '${shelter.availableSlots}',
-                      color: color)),
+                child: _ShelterStat(
+                  label: 'Available',
+                  value: '${shelter.availableSlots}',
+                  color: color,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 14),
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(8)),
+              color: color,
+              borderRadius: BorderRadius.circular(8),
+            ),
             child: Text(
               shelter.status.toUpperCase(),
               style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800),
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
         ],
@@ -3506,8 +3665,7 @@ class _ShelterInfoSheet extends StatelessWidget {
 }
 
 class _ShelterStat extends StatelessWidget {
-  const _ShelterStat(
-      {required this.label, required this.value, this.color});
+  const _ShelterStat({required this.label, required this.value, this.color});
 
   final String label;
   final String value;
@@ -3527,8 +3685,7 @@ class _ShelterStat extends StatelessWidget {
         ),
         Text(
           label,
-          style: const TextStyle(
-              fontSize: 11, color: Color(0xFF607895)),
+          style: const TextStyle(fontSize: 11, color: Color(0xFF607895)),
         ),
       ],
     );

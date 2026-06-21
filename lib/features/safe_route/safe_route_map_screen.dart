@@ -4,6 +4,10 @@ import '../../app/theme.dart';
 import '../../core/di/injection.dart';
 import '../../core/network/api_endpoints.dart';
 import '../../core/services/location_service.dart';
+import '../../data/models/evacuation_center_model.dart';
+import '../../data/models/rescue_request_model.dart';
+import '../../data/models/route_model.dart';
+import '../../shared/enums/rescue_status.dart';
 import 'state/asean_country.dart';
 import 'widgets/map_view.dart';
 
@@ -20,13 +24,28 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
   AseanCountry _selectedCountry = AseanCountry.defaultCountry;
   GeoPoint? _userLocation;
   bool _isLocating = false;
+  bool _isLoadingMapData = false;
   MapLayerVisibility _layers = const MapLayerVisibility();
   double _rainfallMmPh = 0.0;
   bool _showLayerPanel = false;
+  List<EvacuationCenterModel> _evacuationCenters = const [];
+  List<RescueRequestModel> _incidents = const [];
+  List<SeverityHeatPoint> _heatPoints = const [];
+  EvacuationCenterModel? _selectedEvacuationCenter;
+  RouteModel? _evacuationRoute;
+  String? _mapStatus;
 
   bool get _isDaytime {
     final h = DateTime.now().hour;
     return h >= 6 && h < 20;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadMapData();
+    });
   }
 
   @override
@@ -72,6 +91,8 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
       if (!mounted) return;
       setState(() => _userLocation = location);
       _fetchWeather();
+      await _loadMapData();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('GPS locked. Evacuation route ready.')),
       );
@@ -106,7 +127,9 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Location unavailable. You can still view the map.'),
+          content: const Text(
+            'Location unavailable. You can still view the map.',
+          ),
           action: SnackBarAction(
             label: 'Settings',
             onPressed: _locationService.openLocationSettings,
@@ -116,6 +139,132 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
     } finally {
       if (mounted) setState(() => _isLocating = false);
     }
+  }
+
+  Future<void> _loadMapData() async {
+    if (_isLoadingMapData) return;
+
+    setState(() {
+      _isLoadingMapData = true;
+      _mapStatus = null;
+    });
+
+    try {
+      final deps = AppDependenciesScope.of(context);
+      final results = await Future.wait<dynamic>([
+        deps.rescueRepository.fetchEvacuationCenters(),
+        deps.rescueRepository.fetchRequests(),
+      ]);
+      if (!mounted) return;
+
+      final centers = results[0] as List<EvacuationCenterModel>;
+      final requests = (results[1] as List<RescueRequestModel>)
+          .where(
+            (request) =>
+                request.latitude != null &&
+                request.longitude != null &&
+                request.status != RescueStatus.resolved &&
+                request.status != RescueStatus.cancelled,
+          )
+          .toList();
+      final origin = GeoPoint(
+        latitude: _userLocation?.latitude ?? _selectedCountry.latitude,
+        longitude: _userLocation?.longitude ?? _selectedCountry.longitude,
+      );
+      final selectedCenter = _nearestOpenCenter(origin, centers);
+      final route = selectedCenter == null
+          ? null
+          : await deps.mapRepository.fetchSafeRoute(
+              origin: origin,
+              destination: GeoPoint(
+                latitude: selectedCenter.latitude,
+                longitude: selectedCenter.longitude,
+              ),
+            );
+
+      if (!mounted) return;
+      setState(() {
+        _evacuationCenters = centers;
+        _incidents = requests;
+        _heatPoints = _heatPointsFor(requests);
+        _selectedEvacuationCenter = selectedCenter;
+        _evacuationRoute = route;
+        _mapStatus = selectedCenter == null
+            ? 'No open evacuation center found.'
+            : route == null
+            ? 'Shelters loaded. Route service unavailable.'
+            : 'Safest route to ${selectedCenter.name} ready.';
+        _isLoadingMapData = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _mapStatus = 'Map layers unavailable. Pull data again later.';
+        _isLoadingMapData = false;
+      });
+    }
+  }
+
+  EvacuationCenterModel? _nearestOpenCenter(
+    GeoPoint origin,
+    List<EvacuationCenterModel> centers,
+  ) {
+    final openCenters = centers
+        .where((center) => center.isOpen && center.availableSlots > 0)
+        .toList();
+    final candidates = openCenters.isEmpty ? centers : openCenters;
+    if (candidates.isEmpty) return null;
+
+    candidates.sort(
+      (a, b) => _distanceScore(origin, a).compareTo(_distanceScore(origin, b)),
+    );
+    return candidates.first;
+  }
+
+  double _distanceScore(GeoPoint origin, EvacuationCenterModel center) {
+    final dLat = origin.latitude - center.latitude;
+    final dLon = origin.longitude - center.longitude;
+    return dLat * dLat + dLon * dLon;
+  }
+
+  List<SeverityHeatPoint> _heatPointsFor(List<RescueRequestModel> requests) {
+    if (requests.isEmpty) {
+      return [
+        SeverityHeatPoint(
+          location: GeoPoint(
+            latitude: _selectedCountry.latitude + 0.012,
+            longitude: _selectedCountry.longitude - 0.009,
+          ),
+          label: 'Lowest observed severity',
+          severity: 0.18,
+        ),
+        SeverityHeatPoint(
+          location: GeoPoint(
+            latitude: _selectedCountry.latitude - 0.01,
+            longitude: _selectedCountry.longitude + 0.011,
+          ),
+          label: 'Highest projected severity',
+          severity: 0.82,
+        ),
+      ];
+    }
+
+    return requests
+        .map(
+          (request) => SeverityHeatPoint(
+            location: GeoPoint(
+              latitude: request.latitude!,
+              longitude: request.longitude!,
+            ),
+            label: request.locationLabel ?? request.description,
+            severity: request.peopleNeedingHelp >= 5
+                ? 0.9
+                : request.peopleNeedingHelp >= 2
+                ? 0.55
+                : 0.24,
+          ),
+        )
+        .toList();
   }
 
   @override
@@ -130,6 +279,10 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
               country: _selectedCountry,
               userLocation: _userLocation,
               layers: _layers,
+              route: _evacuationRoute,
+              evacuationCenters: _evacuationCenters,
+              incidents: _incidents,
+              heatPoints: _heatPoints,
               isDaytime: _isDaytime,
               rainfallMmPh: _rainfallMmPh,
             ),
@@ -147,11 +300,16 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
               showLayers: _showLayerPanel,
               onToggleLayers: () =>
                   setState(() => _showLayerPanel = !_showLayerPanel),
-              onCountryChanged: (c) => setState(() {
-                _selectedCountry = c;
-                _userLocation = null;
+              onCountryChanged: (c) {
+                setState(() {
+                  _selectedCountry = c;
+                  _userLocation = null;
+                  _evacuationRoute = null;
+                  _selectedEvacuationCenter = null;
+                });
                 _fetchWeather();
-              }),
+                _loadMapData();
+              },
             ),
           ),
 
@@ -185,6 +343,19 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
             child: _WeatherBadge(
               isDaytime: _isDaytime,
               rainfallMmPh: _rainfallMmPh,
+            ),
+          ),
+
+          Positioned(
+            left: 14,
+            right: 84,
+            bottom: MediaQuery.paddingOf(context).bottom + 70,
+            child: _EvacuationRouteBadge(
+              isLoading: _isLoadingMapData,
+              center: _selectedEvacuationCenter,
+              route: _evacuationRoute,
+              status: _mapStatus,
+              onRefresh: _loadMapData,
             ),
           ),
         ],
@@ -243,9 +414,7 @@ class _TopBar extends StatelessWidget {
                 fillColor: Colors.white,
               ),
               items: AseanCountry.countries
-                  .map(
-                    (c) => DropdownMenuItem(value: c, child: Text(c.name)),
-                  )
+                  .map((c) => DropdownMenuItem(value: c, child: Text(c.name)))
                   .toList(),
               onChanged: (c) {
                 if (c != null) onCountryChanged(c);
@@ -307,8 +476,7 @@ class _LayerPanel extends StatelessWidget {
               icon: Icons.flood,
               selected: layers.hazards,
               color: AppTheme.dangerRed,
-              onTap: () =>
-                  onChanged(layers.copyWith(hazards: !layers.hazards)),
+              onTap: () => onChanged(layers.copyWith(hazards: !layers.hazards)),
             ),
             _Chip(
               label: 'Safe Paths',
@@ -328,8 +496,8 @@ class _LayerPanel extends StatelessWidget {
               ),
             ),
             _Chip(
-              label: 'Relay Points',
-              icon: Icons.hub_rounded,
+              label: 'Teams',
+              icon: Icons.groups_rounded,
               selected: layers.loraNodes,
               color: AppTheme.deepNavy,
               onTap: () =>
@@ -370,11 +538,7 @@ class _Chip extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                icon,
-                size: 15,
-                color: selected ? Colors.white : color,
-              ),
+              Icon(icon, size: 15, color: selected ? Colors.white : color),
               const SizedBox(width: 5),
               Text(
                 label,
@@ -413,8 +577,7 @@ class _LocateFab extends StatelessWidget {
         FloatingActionButton.small(
           heroTag: 'locate_fab',
           onPressed: isLoading ? null : onPressed,
-          backgroundColor:
-              hasLocation ? AppTheme.safeGreen : Colors.white,
+          backgroundColor: hasLocation ? AppTheme.safeGreen : Colors.white,
           elevation: 3,
           tooltip: hasLocation ? 'Re-center' : 'Locate me',
           child: isLoading
@@ -431,8 +594,7 @@ class _LocateFab extends StatelessWidget {
                       ? Icons.my_location_rounded
                       : Icons.location_searching_rounded,
                   size: 20,
-                  color:
-                      hasLocation ? Colors.white : AppTheme.textPrimary,
+                  color: hasLocation ? Colors.white : AppTheme.textPrimary,
                 ),
         ),
         if (hasLocation) ...[
@@ -465,11 +627,103 @@ class _LocateFab extends StatelessWidget {
 
 // ── Weather badge ──────────────────────────────────────────────────────────
 
-class _WeatherBadge extends StatelessWidget {
-  const _WeatherBadge({
-    required this.isDaytime,
-    required this.rainfallMmPh,
+class _EvacuationRouteBadge extends StatelessWidget {
+  const _EvacuationRouteBadge({
+    required this.isLoading,
+    required this.center,
+    required this.route,
+    required this.status,
+    required this.onRefresh,
   });
+
+  final bool isLoading;
+  final EvacuationCenterModel? center;
+  final RouteModel? route;
+  final String? status;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final center = this.center;
+    final route = this.route;
+    final title = center == null ? 'Evacuation route' : 'To ${center.name}';
+    final subtitle = isLoading
+        ? 'Loading shelters and safest path...'
+        : route != null
+        ? '${route.distanceKm.toStringAsFixed(1)} km - ${route.estimatedMinutes} min - ${route.riskLevel} risk'
+        : status ?? 'Tap refresh to load route.';
+    final color = route != null ? AppTheme.safeGreen : AppTheme.signalBlue;
+
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(10),
+      elevation: 3,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+        child: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                route != null ? Icons.route_rounded : Icons.home_rounded,
+                color: color,
+                size: 19,
+              ),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w900,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelSmall?.copyWith(color: AppTheme.textMuted),
+                  ),
+                ],
+              ),
+            ),
+            if (isLoading)
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              IconButton(
+                tooltip: 'Refresh map data',
+                visualDensity: VisualDensity.compact,
+                onPressed: onRefresh,
+                icon: const Icon(Icons.refresh_rounded, size: 19),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _WeatherBadge extends StatelessWidget {
+  const _WeatherBadge({required this.isDaytime, required this.rainfallMmPh});
 
   final bool isDaytime;
   final double rainfallMmPh;
