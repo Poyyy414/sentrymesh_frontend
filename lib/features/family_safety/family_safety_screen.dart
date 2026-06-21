@@ -3,7 +3,7 @@ import '../../app/theme.dart';
 import '../../core/di/injection.dart';
 import '../../core/services/location_service.dart';
 import '../../data/models/family_member_model.dart';
-import '../../data/repositories/family_repository.dart';
+import 'widgets/add_member_dialog.dart';
 import 'widgets/family_member_tile.dart';
 import 'widgets/family_status_card.dart';
 
@@ -93,11 +93,10 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
   }
 
   Future<void> _showAddMemberDialog() async {
-    final result =
-        await showDialog<({String name, String relationship, String phone})>(
-          context: context,
-          builder: (ctx) => const _AddMemberDialog(),
-        );
+    final result = await showDialog<AddMemberResult>(
+      context: context,
+      builder: (ctx) => const AddMemberDialog(),
+    );
     if (result == null || !mounted) return;
 
     try {
@@ -204,7 +203,7 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
     }
   }
 
-  /// Members that can actually be reached over LoRaWAN/SMS (have a number).
+  /// Members that can actually be reached (have a phone number).
   List<FamilyMemberModel> get _reachableMembers => _members
       .where((m) => (m.phoneNumber ?? '').trim().isNotEmpty)
       .toList();
@@ -225,21 +224,16 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
     }
 
     var online = 0;
-    var mesh = 0;
     var failed = 0;
     for (final member in recipients) {
       try {
-        final delivery = await deps.familyRepository.sendMessage(
+        await deps.familyRepository.sendMessage(
           toNumber: member.phoneNumber!.trim(),
           body: body,
           toName: member.name,
           fromName: fromName,
         );
-        if (delivery == MessageDelivery.online) {
-          online++;
-        } else {
-          mesh++;
-        }
+        online++;
       } catch (_) {
         failed++;
       }
@@ -248,8 +242,7 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
 
     final parts = <String>[
       if (online > 0) '$online sent',
-      if (mesh > 0) '$mesh queued on LoRa mesh',
-      if (failed > 0) '$failed failed',
+      if (failed > 0) '$failed failed (no connection)',
     ];
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -342,7 +335,7 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
     final deps = AppDependenciesScope.of(context);
     final fromName = deps.authRepository.currentUser?.name ?? 'Resident';
     try {
-      final delivery = await deps.familyRepository.sendMessage(
+      await deps.familyRepository.sendMessage(
         toNumber: number,
         body: body.trim(),
         toName: member.name,
@@ -350,19 +343,15 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            delivery == MessageDelivery.online
-                ? 'Message sent to ${member.name}'
-                : 'No internet — message queued on LoRa mesh for ${member.name}',
-          ),
-        ),
+        SnackBar(content: Text('Message sent to ${member.name}')),
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Could not send message: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not send message to ${member.name} — no connection'),
+        ),
+      );
     }
   }
 
@@ -799,100 +788,6 @@ class _StatusPickerSheet extends StatelessWidget {
   }
 }
 
-class _AddMemberDialog extends StatefulWidget {
-  const _AddMemberDialog();
-
-  @override
-  State<_AddMemberDialog> createState() => _AddMemberDialogState();
-}
-
-class _AddMemberDialogState extends State<_AddMemberDialog> {
-  final _nameCtrl = TextEditingController();
-  final _relationshipCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
-  final _formKey = GlobalKey<FormState>();
-
-  @override
-  void dispose() {
-    _nameCtrl.dispose();
-    _relationshipCtrl.dispose();
-    _phoneCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Add Family Member'),
-      content: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextFormField(
-              controller: _nameCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Full Name',
-                border: OutlineInputBorder(),
-              ),
-              textCapitalization: TextCapitalization.words,
-              validator: (v) =>
-                  (v == null || v.trim().isEmpty) ? 'Required' : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _relationshipCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Relationship (e.g. Parent, Sibling)',
-                border: OutlineInputBorder(),
-              ),
-              textCapitalization: TextCapitalization.words,
-              validator: (v) =>
-                  (v == null || v.trim().isEmpty) ? 'Required' : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _phoneCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Phone Number',
-                hintText: 'e.g. 0917 123 4567',
-                border: OutlineInputBorder(),
-              ),
-              keyboardType: TextInputType.phone,
-              validator: (v) {
-                final value = v?.trim() ?? '';
-                if (value.isEmpty) return 'Required';
-                if (!RegExp(r'^[0-9+\-\s()]{7,}$').hasMatch(value)) {
-                  return 'Enter a valid phone number';
-                }
-                return null;
-              },
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () {
-            if (_formKey.currentState!.validate()) {
-              Navigator.pop(context, (
-                name: _nameCtrl.text.trim(),
-                relationship: _relationshipCtrl.text.trim(),
-                phone: _phoneCtrl.text.trim(),
-              ));
-            }
-          },
-          child: const Text('Add'),
-        ),
-      ],
-    );
-  }
-}
-
 class _ComposeMessageDialog extends StatefulWidget {
   const _ComposeMessageDialog({required this.member});
 
@@ -957,7 +852,7 @@ class _ComposeMessageDialogState extends State<_ComposeMessageDialog> {
                   (v == null || v.trim().isEmpty) ? 'Enter a message' : null,
             ),
             const Text(
-              'Sent over the internet, or relayed via the LoRaWAN mesh when offline.',
+              'Sent over the internet. Requires a connection.',
               style: TextStyle(fontSize: 11, color: Color(0xFF687B92)),
             ),
           ],

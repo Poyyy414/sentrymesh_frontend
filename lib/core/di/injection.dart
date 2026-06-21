@@ -46,6 +46,9 @@ class AppDependencies {
     connectivityService = ConnectivityService();
     locationService = LocationService();
     notificationService = NotificationService();
+    // LoRa is on standby until mesh hardware is available. The stub stays
+    // registered so it can be wired back into the repositories later, but no
+    // feature currently falls back to it.
     loraService = OfflineLoRaService();
     offlineMapCache = OfflineMapCache(storage: localStorage);
     mapService = MapService(offlineMapCache: offlineMapCache);
@@ -62,13 +65,9 @@ class AppDependencies {
     mapRepository = MapRepository(remote: mapApi);
     rescueRepository = RescueRepository(
       remote: rescueApi,
-      loraService: loraService,
       mapRepository: mapRepository,
     );
-    familyRepository = FamilyRepository(
-      remote: familyApi,
-      loraService: loraService,
-    );
+    familyRepository = FamilyRepository(remote: familyApi);
     predictionRepository = PredictionRepository(remote: predictionApi);
     dashboardRepository = DashboardRepository(alertRepository: alertRepository);
   }

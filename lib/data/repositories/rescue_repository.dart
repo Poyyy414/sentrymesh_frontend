@@ -1,6 +1,5 @@
 import 'dart:math';
 
-import '../../core/services/lora/lora_service.dart';
 import '../../core/services/location_service.dart';
 import '../models/evacuation_center_model.dart';
 import '../models/rescue_location_model.dart';
@@ -13,14 +12,11 @@ import 'map_repository.dart';
 class RescueRepository {
   const RescueRepository({
     required RescueApi remote,
-    required LoRaService loraService,
     required MapRepository mapRepository,
   }) : _remote = remote,
-       _loraService = loraService,
        _mapRepository = mapRepository;
 
   final RescueApi _remote;
-  final LoRaService _loraService;
   final MapRepository _mapRepository;
 
   Future<List<RescueRequestModel>> fetchRequests() async {
@@ -37,23 +33,14 @@ class RescueRepository {
   }
 
   Future<RescueRequestModel> submitRequest(RescueRequestModel request) async {
-    try {
-      final payload = await _remote.createRequest(request);
-      if (payload.isEmpty) {
-        return request;
-      }
-
-      return RescueRequestModel.fromJson(payload);
-    } catch (_) {
-      await _loraService.sendDistressPing(
-        LoRaDistressPing(
-          nodeId: request.id,
-          sentAt: request.createdAt,
-          payload: request.toJson(),
-        ),
-      );
-      rethrow;
+    // No offline relay yet (LoRa is on standby) — failures propagate to the
+    // caller so the user sees an honest "couldn't send" error.
+    final payload = await _remote.createRequest(request);
+    if (payload.isEmpty) {
+      return request;
     }
+
+    return RescueRequestModel.fromJson(payload);
   }
 
   Future<RescueLocationModel?> updateRequestLocation({

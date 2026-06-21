@@ -18,6 +18,7 @@ import '../../data/models/rescue_location_model.dart';
 import '../../data/models/rescue_navigation_model.dart';
 import '../../data/models/rescue_request_model.dart';
 import '../../data/models/route_model.dart';
+import '../../data/repositories/prediction_repository.dart';
 import '../../shared/enums/hazard_type.dart';
 import '../../shared/enums/rescue_status.dart';
 
@@ -1888,54 +1889,248 @@ class _LiveRecentIncidents extends StatelessWidget {
   }
 }
 
-class _HeatmapPreview extends StatelessWidget {
+/// Live hazard risk heatmap, built from the predictions the backend has saved
+/// (driven by the typhoon simulator). Each location becomes a weighted hot spot
+/// coloured by risk.
+class _HeatmapPreview extends StatefulWidget {
   const _HeatmapPreview();
 
   @override
+  State<_HeatmapPreview> createState() => _HeatmapPreviewState();
+}
+
+class _HeatmapPreviewState extends State<_HeatmapPreview> {
+  static const _center = LatLng(13.6218, 123.1948);
+
+  final _controller = MapController();
+  List<HazardHeatPoint>? _points;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _load();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final points = await AppDependenciesScope.of(
+        context,
+      ).predictionRepository.fetchHazardHeatPoints();
+      if (!mounted) return;
+      setState(() {
+        _points = points;
+        _loading = false;
+      });
+      _fitTo(points);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _points = const [];
+        _loading = false;
+      });
+    }
+  }
+
+  void _fitTo(List<HazardHeatPoint> points) {
+    if (points.isEmpty) return;
+    final bounds = LatLngBounds.fromPoints(
+      points.map((p) => LatLng(p.latitude, p.longitude)).toList(),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        _controller.fitCamera(
+          CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(40)),
+        );
+      } catch (_) {
+        // Camera not ready yet — the initial center is a sensible fallback.
+      }
+    });
+  }
+
+  static Color _heatColor(double severity) {
+    if (severity >= 0.7) return AppTheme.dangerRed;
+    if (severity >= 0.45) return AppTheme.warningAmber;
+    return AppTheme.safeGreen;
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final points = _points;
+    final hasPoints = points != null && points.isNotEmpty;
+
     return Card(
+      clipBehavior: Clip.antiAlias,
       child: SizedBox(
-        height: 150,
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Row(
-              children: [
-                Container(
-                  width: 46,
-                  height: 46,
-                  decoration: BoxDecoration(
-                    color: AppTheme.signalBlue.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(
-                    Icons.cloud_sync_outlined,
-                    color: AppTheme.signalBlue,
-                  ),
+        height: 220,
+        child: Stack(
+          children: [
+            FlutterMap(
+              mapController: _controller,
+              options: const MapOptions(
+                initialCenter: _center,
+                initialZoom: 11.5,
+                minZoom: 4,
+                maxZoom: 18,
+                interactionOptions: InteractionOptions(
+                  flags: InteractiveFlag.pinchZoom | InteractiveFlag.drag,
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Waiting for backend risk layer',
-                        style: Theme.of(context).textTheme.titleSmall,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'No hardcoded heatmap is displayed. Deploy hazard geometry or prediction layer data to fill this panel.',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate: MapTileConfig.mapboxStreetsUrl,
+                  userAgentPackageName: 'com.example.sentrymesh_frontend',
+                  maxZoom: 18,
+                ),
+                if (hasPoints)
+                  CircleLayer(
+                    circles: [
+                      for (final point in points)
+                        CircleMarker(
+                          point: LatLng(point.latitude, point.longitude),
+                          radius: 320 + point.severity * 900,
+                          useRadiusInMeter: true,
+                          color: _heatColor(
+                            point.severity,
+                          ).withValues(alpha: 0.28),
+                          borderColor: _heatColor(
+                            point.severity,
+                          ).withValues(alpha: 0.65),
+                          borderStrokeWidth: 1.2,
+                        ),
                     ],
                   ),
-                ),
               ],
             ),
-          ),
+            if (hasPoints)
+              const Positioned(left: 8, bottom: 8, child: _HeatmapLegend()),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Material(
+                color: Colors.white,
+                shape: const CircleBorder(),
+                elevation: 2,
+                child: IconButton(
+                  tooltip: 'Refresh risk layer',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _loading ? null : _load,
+                  icon: const Icon(Icons.refresh_rounded, size: 20),
+                ),
+              ),
+            ),
+            if (_loading)
+              const Positioned.fill(
+                child: ColoredBox(
+                  color: Color(0x66FFFFFF),
+                  child: Center(
+                    child: SizedBox(
+                      width: 26,
+                      height: 26,
+                      child: CircularProgressIndicator(strokeWidth: 3),
+                    ),
+                  ),
+                ),
+              ),
+            if (!_loading && !hasPoints)
+              Positioned.fill(
+                child: ColoredBox(
+                  color: const Color(0xF2FFFFFF),
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(18),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.layers_clear_rounded,
+                            color: AppTheme.signalBlue,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'No risk data yet',
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Run the typhoon simulator or wait for predictions to populate the risk layer.',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
+    );
+  }
+}
+
+class _HeatmapLegend extends StatelessWidget {
+  const _HeatmapLegend();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _LegendDot(color: AppTheme.safeGreen, label: 'Low'),
+          SizedBox(width: 10),
+          _LegendDot(color: AppTheme.warningAmber, label: 'Medium'),
+          SizedBox(width: 10),
+          _LegendDot(color: AppTheme.dangerRed, label: 'High'),
+        ],
+      ),
+    );
+  }
+}
+
+class _LegendDot extends StatelessWidget {
+  const _LegendDot({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            color: AppTheme.textPrimary,
+          ),
+        ),
+      ],
     );
   }
 }

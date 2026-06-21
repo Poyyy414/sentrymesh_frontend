@@ -1,9 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart' hide Path;
 
 import '../../app/router.dart';
 import '../../app/theme.dart';
+import '../../core/config/map_tile_config.dart';
 import '../../core/di/injection.dart';
 import '../../core/services/location_service.dart';
 import '../../data/models/alert_model.dart';
@@ -11,6 +14,7 @@ import '../../data/models/family_member_model.dart';
 import '../../data/models/prediction_model.dart';
 import '../../data/models/rescue_request_model.dart';
 import '../../data/repositories/prediction_repository.dart';
+import '../family_safety/widgets/add_member_dialog.dart';
 import '../../shared/demo/demo_scenario.dart';
 import '../../shared/enums/alert_severity.dart';
 import '../../shared/enums/hazard_type.dart';
@@ -49,85 +53,29 @@ class _HomeScreenState extends State<HomeScreen> {
   void _refreshData() => _loadAllData();
 
   Future<void> _addFamilyMember() async {
-    final nameController = TextEditingController();
-    final relationshipController = TextEditingController();
-    final phoneController = TextEditingController();
-    final formKey = GlobalKey<FormState>();
-
-    final confirmed = await showDialog<bool>(
+    final result = await showDialog<AddMemberResult>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add Family Member'),
-        content: Form(
-          key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: nameController,
-                decoration: const InputDecoration(labelText: 'Full Name'),
-                textCapitalization: TextCapitalization.words,
-                validator: (v) =>
-                    (v == null || v.trim().isEmpty) ? 'Required' : null,
-              ),
-              TextFormField(
-                controller: relationshipController,
-                decoration: const InputDecoration(labelText: 'Relationship'),
-                textCapitalization: TextCapitalization.words,
-                validator: (v) =>
-                    (v == null || v.trim().isEmpty) ? 'Required' : null,
-              ),
-              TextFormField(
-                controller: phoneController,
-                decoration: const InputDecoration(
-                  labelText: 'Phone Number',
-                  hintText: 'e.g. 0917 123 4567',
-                ),
-                keyboardType: TextInputType.phone,
-                validator: (v) {
-                  final value = v?.trim() ?? '';
-                  if (value.isEmpty) return 'Required';
-                  if (!RegExp(r'^[0-9+\-\s()]{7,}$').hasMatch(value)) {
-                    return 'Enter a valid phone number';
-                  }
-                  return null;
-                },
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (formKey.currentState!.validate()) {
-                Navigator.pop(context, true);
-              }
-            },
-            child: const Text('Add'),
-          ),
-        ],
-      ),
+      builder: (_) => const AddMemberDialog(),
     );
+    if (result == null || !mounted) return;
 
-    if (confirmed == true && mounted) {
-      try {
-        await AppDependenciesScope.of(context).familyRepository.addMember(
-          name: nameController.text.trim(),
-          relationship: relationshipController.text.trim(),
-          status: 'Safe',
-          phoneNumber: phoneController.text.trim(),
+    try {
+      await AppDependenciesScope.of(context).familyRepository.addMember(
+        name: result.name,
+        relationship: result.relationship,
+        status: 'waiting',
+        phoneNumber: result.phone,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${result.name} added to your family')),
+      );
+      _loadAllData();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to add member: $e')),
         );
-        _loadAllData();
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to add member: $e')),
-          );
-        }
       }
     }
   }
@@ -1092,57 +1040,40 @@ class _LocationMapCard extends StatelessWidget {
 class _MapPreview extends StatelessWidget {
   const _MapPreview();
 
+  /// Naga City, Camarines Sur — matches the label shown on the card.
+  static const _center = LatLng(13.6218, 123.1948);
+
   @override
   Widget build(BuildContext context) {
-    return CustomPaint(
-      painter: _MapPreviewPainter(),
-      child: const Center(child: _CurrentLocationMarker()),
+    return FlutterMap(
+      options: const MapOptions(
+        initialCenter: _center,
+        initialZoom: 13.5,
+        minZoom: 3,
+        maxZoom: 18,
+        backgroundColor: Color(0xFFE9F0F7),
+        // Non-interactive: it's a preview inside a scrolling list.
+        interactionOptions: InteractionOptions(flags: InteractiveFlag.none),
+      ),
+      children: [
+        TileLayer(
+          urlTemplate: MapTileConfig.mapboxStreetsUrl,
+          userAgentPackageName: 'com.example.sentrymesh_frontend',
+          maxZoom: 18,
+        ),
+        const MarkerLayer(
+          markers: [
+            Marker(
+              point: _center,
+              width: 29,
+              height: 29,
+              child: _CurrentLocationMarker(),
+            ),
+          ],
+        ),
+      ],
     );
   }
-}
-
-class _MapPreviewPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()..color = const Color(0xFFE9F0F7),
-    );
-
-    final blockPaint = Paint()..color = Colors.white.withValues(alpha: 0.9);
-    for (var row = 0; row < 4; row++) {
-      for (var column = 0; column < 8; column++) {
-        final left = column * (size.width / 7.2) - (row.isOdd ? 18 : 0);
-        final top = row * 24.0 + 6;
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(
-            Rect.fromLTWH(left, top, 28 + (column % 3) * 7, 14),
-            const Radius.circular(3),
-          ),
-          blockPaint,
-        );
-      }
-    }
-
-    final roadPaint = Paint()
-      ..color = const Color(0xFFC8D5E4)
-      ..strokeWidth = 4
-      ..style = PaintingStyle.stroke;
-    for (var index = 0; index < 5; index++) {
-      final path = Path()
-        ..moveTo(-20, 16 + index * 22)
-        ..quadraticBezierTo(
-          size.width * 0.45,
-          index.isEven ? 5 + index * 22 : 36 + index * 18,
-          size.width + 20,
-          12 + index * 20,
-        );
-      canvas.drawPath(path, roadPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _CurrentLocationMarker extends StatelessWidget {
@@ -1966,8 +1897,8 @@ class _WeatherMetric extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 130,
-      padding: const EdgeInsets.fromLTRB(11, 10, 11, 0),
+      height: 154,
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(9),
@@ -1976,49 +1907,38 @@ class _WeatherMetric extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(9),
-                ),
-                child: Icon(icon, color: color, size: 22),
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF60738A),
-                        fontSize: 9,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      value,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: color,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(icon, color: color, size: 22),
           ),
-          const SizedBox(height: 7),
+          const SizedBox(height: 9),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF60738A),
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: color,
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 3),
           Text(
             detail,
             maxLines: 1,
@@ -2031,10 +1951,10 @@ class _WeatherMetric extends StatelessWidget {
           ),
           const Spacer(),
           SizedBox(
-            height: 30,
+            height: 28,
             child: CustomPaint(
               painter: _SparklinePainter(color: color),
-              size: const Size(double.infinity, 30),
+              size: const Size(double.infinity, 28),
             ),
           ),
         ],

@@ -1,25 +1,10 @@
-import '../../core/services/lora/lora_service.dart';
 import '../models/family_member_model.dart';
 import '../sources/remote/family_api.dart';
 
-/// How a family message reached (or will reach) the recipient.
-enum MessageDelivery {
-  /// Delivered to the backend over the internet.
-  online,
-
-  /// No internet — queued on the LoRaWAN mesh for relay.
-  loraMesh,
-}
-
 class FamilyRepository {
-  const FamilyRepository({
-    required FamilyApi remote,
-    required LoRaService loraService,
-  }) : _remote = remote,
-       _lora = loraService;
+  const FamilyRepository({required FamilyApi remote}) : _remote = remote;
 
   final FamilyApi _remote;
-  final LoRaService _lora;
 
   Future<List<FamilyMemberModel>> fetchMembers() async {
     final payload = await _remote.fetchMembers();
@@ -55,34 +40,20 @@ class FamilyRepository {
     await _remote.removeMember(id);
   }
 
-  /// Sends a text message to [toNumber]. Tries the backend first (which relays
-  /// over the LoRaWAN gateway); if the network is unavailable, the message is
-  /// queued on the local LoRa mesh for relay. Returns how it was delivered.
-  Future<MessageDelivery> sendMessage({
+  /// Sends a text message to [toNumber] via the backend. Throws if the network
+  /// is unavailable — there is no offline relay yet (LoRa is on standby).
+  Future<void> sendMessage({
     required String toNumber,
     required String body,
     String? toName,
     String? fromName,
   }) async {
-    try {
-      await _remote.sendMessage({
-        'to_number': toNumber,
-        'body': body,
-        'to_name': ?toName,
-        'from_name': ?fromName,
-      });
-      return MessageDelivery.online;
-    } catch (_) {
-      await _lora.sendTextMessage(
-        LoRaTextMessage(
-          toNumber: toNumber,
-          body: body,
-          sentAt: DateTime.now(),
-          fromName: fromName,
-        ),
-      );
-      return MessageDelivery.loraMesh;
-    }
+    await _remote.sendMessage({
+      'to_number': toNumber,
+      'body': body,
+      'to_name': ?toName,
+      'from_name': ?fromName,
+    });
   }
 
   Future<void> updateMyStatus({

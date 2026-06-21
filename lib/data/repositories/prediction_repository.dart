@@ -75,28 +75,169 @@ class PredictionRepository {
     return response.firstNode;
   }
 
+  /// Reads the latest hazard predictions the backend has saved.
+  ///
+  /// The typhoon simulator POSTs escalating rainfall per barangay to the
+  /// backend (`/predictions/flood`), which stores them in Postgres. The app
+  /// surfaces those by reading `GET /predictions` and showing the highest-risk
+  /// barangay from the most recent batch — so whatever the simulator injects
+  /// shows up here. If nothing has been saved yet (no simulator run), a live
+  /// baseline prediction is computed so the card isn't blank.
   Future<PredictionBundle> fetchHomePredictions() async {
-    final responses = await Future.wait([
-      _remote.predictFlood(payload: _predictionPayload(_nagaFloodSignals)),
-      _remote.predictLandslide(
-        payload: _predictionPayload(_nagaLandslideSignals),
-      ),
-    ]);
+    final floodNodes = await _recentNodes('flood');
+    final landslideNodes = await _recentNodes('landslide');
+
+    var flood = _worstRecent(floodNodes);
+    final landslide = _worstRecent(landslideNodes);
+
+    // No saved flood prediction yet — compute a live baseline (the backend
+    // enriches it from current weather + sensors). Throws if the backend is
+    // unreachable, which surfaces the error state on the home card.
+    flood ??= (await _remote.predictFlood(payload: _baselineFloodPayload))
+        .firstNode;
 
     return PredictionBundle(
       modelInfo: const AiModelInfo(featureColumns: _fallbackFeatureColumns),
-      flood: responses[0].firstNode,
-      landslide: responses[1].firstNode,
+      flood: flood,
+      landslide: landslide,
       fetchedAt: DateTime.now(),
     );
   }
 
-  Map<String, Object?> _predictionPayload(Map<String, num> signals) {
-    return {
-      for (final entry in signals.entries) entry.key: entry.value,
-      'location_label': 'Naga City, Camarines Sur',
-    };
+  /// Builds the responder risk heatmap from the backend's saved predictions.
+  ///
+  /// Each saved flood/landslide prediction carries a location and a risk level,
+  /// so the typhoon simulator's per-barangay rows become weighted hot spots.
+  /// Only the newest reading per location is kept so escalating ticks replace,
+  /// rather than stack on, earlier ones.
+  Future<List<HazardHeatPoint>> fetchHazardHeatPoints() async {
+    final flood = await _recentNodes('flood');
+    final landslide = await _recentNodes('landslide');
+
+    final points = <HazardHeatPoint>[];
+    final seen = <String>{};
+    for (final node in [...flood, ...landslide]) {
+      final point = _heatPointFrom(node);
+      if (point == null) {
+        continue;
+      }
+      final key =
+          '${point.latitude.toStringAsFixed(4)},${point.longitude.toStringAsFixed(4)}';
+      if (!seen.add(key)) {
+        continue;
+      }
+      points.add(point);
+    }
+    return points;
   }
+
+  /// Fetches saved predictions for [hazardType], returning an empty list rather
+  /// than throwing so a missing hazard (e.g. no landslide rows) is non-fatal.
+  Future<List<NodePredictionModel>> _recentNodes(String hazardType) async {
+    try {
+      final response = await _remote.fetchPredictions(hazardType: hazardType);
+      return response.nodes;
+    } catch (_) {
+      return const [];
+    }
+  }
+}
+
+/// A weighted hot spot for the responder risk heatmap.
+class HazardHeatPoint {
+  const HazardHeatPoint({
+    required this.latitude,
+    required this.longitude,
+    required this.severity,
+    required this.label,
+    required this.hazardType,
+  });
+
+  final double latitude;
+  final double longitude;
+
+  /// Normalised risk in the range 0..1.
+  final double severity;
+  final String label;
+  final String hazardType;
+}
+
+HazardHeatPoint? _heatPointFrom(NodePredictionModel node) {
+  final latitude = _coord(node.raw['latitude'] ?? node.raw['lat']);
+  final longitude = _coord(
+    node.raw['longitude'] ?? node.raw['lng'] ?? node.raw['lon'],
+  );
+  if (latitude == null || longitude == null) {
+    return null;
+  }
+
+  return HazardHeatPoint(
+    latitude: latitude,
+    longitude: longitude,
+    severity: _severity01(node),
+    label: node.raw['location_label']?.toString() ?? node.nodeId,
+    hazardType: node.raw['hazard_type']?.toString() ?? 'flood',
+  );
+}
+
+/// Risk on a 0..1 scale, taking the stronger of the model probability and a
+/// floor implied by the alert level.
+double _severity01(NodePredictionModel node) {
+  final level = node.alertLevel.toLowerCase();
+  final base = level.contains('critical')
+      ? 0.92
+      : level.contains('high')
+      ? 0.72
+      : (level.contains('medium') ||
+            level.contains('moderate') ||
+            level.contains('watch'))
+      ? 0.5
+      : (level.contains('low') || level.contains('safe'))
+      ? 0.25
+      : 0.15;
+  final probability = (node.eventProbability ?? 0).clamp(0, 1).toDouble();
+  return probability > base ? probability : base;
+}
+
+double? _coord(Object? value) {
+  if (value is num) {
+    return value.toDouble();
+  }
+  if (value is String) {
+    return double.tryParse(value);
+  }
+  return null;
+}
+
+/// Picks the highest-risk prediction from the most recent batch.
+///
+/// The backend returns rows newest-first; one simulator tick is ~7 barangays,
+/// so we look at the latest few and surface the worst one for the summary card.
+NodePredictionModel? _worstRecent(List<NodePredictionModel> nodes) {
+  if (nodes.isEmpty) {
+    return null;
+  }
+
+  final recent = nodes.take(7).toList()
+    ..sort((a, b) => _severityRank(b).compareTo(_severityRank(a)));
+  return recent.first;
+}
+
+double _severityRank(NodePredictionModel node) {
+  final level = node.alertLevel.toLowerCase();
+  final base = level.contains('critical')
+      ? 4.0
+      : level.contains('high')
+      ? 3.0
+      : (level.contains('medium') ||
+            level.contains('moderate') ||
+            level.contains('watch'))
+      ? 2.0
+      : (level.contains('low') || level.contains('safe'))
+      ? 1.0
+      : 0.0;
+  final probability = (node.eventProbability ?? 0).clamp(0, 1).toDouble();
+  return base + probability;
 }
 
 const _fallbackFeatureColumns = [
@@ -121,46 +262,15 @@ const _fallbackFeatureColumns = [
   'recent_reports',
 ];
 
-const _nagaFloodSignals = {
+/// Minimal location-only payload for the baseline flood prediction (Naga City
+/// centro), used when the backend has no saved predictions yet. Mirrors the
+/// field style the typhoon simulator uses; the backend fills in live weather
+/// and sensor values, so no storm conditions are faked here.
+const _baselineFloodPayload = {
+  'location_label': 'Naga City, Camarines Sur',
   'latitude': 13.6218,
   'longitude': 123.1948,
-  'hour': 9,
-  'rainfall_mm': 162,
-  'wind_speed_kph': 42,
-  'hazard_type': 1,
-  'water_level_m': 1.42,
-  'river_level_m': 1.68,
-  'slope': 0.18,
-  'soil_moisture': 0.74,
-  'surface_runoff': 0.58,
-  'upstream_water_level': 1.91,
-  'ground_movement': 0.03,
-  'humidity': 88,
-  'pressure': 988,
-  'temperature': 27,
-  'elevation': 21,
-  'distance_to_river': 0.7,
-  'recent_reports': 6,
-};
-
-const _nagaLandslideSignals = {
-  'latitude': 13.6502,
-  'longitude': 123.2477,
-  'hour': 9,
-  'rainfall_mm': 118,
-  'wind_speed_kph': 38,
-  'hazard_type': 2,
-  'water_level_m': 0.34,
-  'river_level_m': 0.52,
-  'slope': 31,
-  'soil_moisture': 0.86,
-  'surface_runoff': 0.44,
-  'upstream_water_level': 0.61,
-  'ground_movement': 0.21,
-  'humidity': 91,
-  'pressure': 986,
-  'temperature': 26,
-  'elevation': 126,
-  'distance_to_river': 2.4,
-  'recent_reports': 4,
+  'elev': 5,
+  'slope_deg': 0.5,
+  'relief': 12,
 };

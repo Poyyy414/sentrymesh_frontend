@@ -25,6 +25,7 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
   GeoPoint? _userLocation;
   bool _isLocating = false;
   bool _isLoadingMapData = false;
+  bool _pendingReload = false;
   MapLayerVisibility _layers = const MapLayerVisibility();
   double _rainfallMmPh = 0.0;
   bool _showLayerPanel = false;
@@ -44,7 +45,9 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _loadMapData();
+      // Locate the user on open so the evacuation route starts from their real
+      // GPS position instead of the country's default center.
+      if (mounted) _locateUser();
     });
   }
 
@@ -142,7 +145,13 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
   }
 
   Future<void> _loadMapData() async {
-    if (_isLoadingMapData) return;
+    // If a load is already running, don't drop this request — mark the data as
+    // stale (e.g. GPS just locked) so the in-flight load repeats with the
+    // latest origin before it finishes.
+    if (_isLoadingMapData) {
+      _pendingReload = true;
+      return;
+    }
 
     setState(() {
       _isLoadingMapData = true;
@@ -150,52 +159,62 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
     });
 
     try {
-      final deps = AppDependenciesScope.of(context);
-      final results = await Future.wait<dynamic>([
-        deps.rescueRepository.fetchEvacuationCenters(),
-        deps.rescueRepository.fetchRequests(),
-      ]);
-      if (!mounted) return;
+      while (true) {
+        _pendingReload = false;
+        final deps = AppDependenciesScope.of(context);
+        final results = await Future.wait<dynamic>([
+          deps.rescueRepository.fetchEvacuationCenters(),
+          deps.rescueRepository.fetchRequests(),
+        ]);
+        if (!mounted) return;
 
-      final centers = results[0] as List<EvacuationCenterModel>;
-      final requests = (results[1] as List<RescueRequestModel>)
-          .where(
-            (request) =>
-                request.latitude != null &&
-                request.longitude != null &&
-                request.status != RescueStatus.resolved &&
-                request.status != RescueStatus.cancelled,
-          )
-          .toList();
-      final origin = GeoPoint(
-        latitude: _userLocation?.latitude ?? _selectedCountry.latitude,
-        longitude: _userLocation?.longitude ?? _selectedCountry.longitude,
-      );
-      final selectedCenter = _nearestOpenCenter(origin, centers);
-      final route = selectedCenter == null
-          ? null
-          : await deps.mapRepository.fetchSafeRoute(
-              origin: origin,
-              destination: GeoPoint(
-                latitude: selectedCenter.latitude,
-                longitude: selectedCenter.longitude,
-              ),
-            );
+        final centers = results[0] as List<EvacuationCenterModel>;
+        final requests = (results[1] as List<RescueRequestModel>)
+            .where(
+              (request) =>
+                  request.latitude != null &&
+                  request.longitude != null &&
+                  request.status != RescueStatus.resolved &&
+                  request.status != RescueStatus.cancelled,
+            )
+            .toList();
+        final origin = GeoPoint(
+          latitude: _userLocation?.latitude ?? _selectedCountry.latitude,
+          longitude: _userLocation?.longitude ?? _selectedCountry.longitude,
+        );
+        final selectedCenter = _nearestOpenCenter(origin, centers);
+        final route = selectedCenter == null
+            ? null
+            : await deps.mapRepository.fetchSafeRoute(
+                origin: origin,
+                destination: GeoPoint(
+                  latitude: selectedCenter.latitude,
+                  longitude: selectedCenter.longitude,
+                ),
+              );
+        if (!mounted) return;
 
-      if (!mounted) return;
-      setState(() {
-        _evacuationCenters = centers;
-        _incidents = requests;
-        _heatPoints = _heatPointsFor(requests);
-        _selectedEvacuationCenter = selectedCenter;
-        _evacuationRoute = route;
-        _mapStatus = selectedCenter == null
-            ? 'No open evacuation center found.'
-            : route == null
-            ? 'Shelters loaded. Route service unavailable.'
-            : 'Safest route to ${selectedCenter.name} ready.';
-        _isLoadingMapData = false;
-      });
+        // The origin changed while we were fetching (e.g. the user located
+        // themselves) — recompute from the newest position before committing.
+        if (_pendingReload) {
+          continue;
+        }
+
+        setState(() {
+          _evacuationCenters = centers;
+          _incidents = requests;
+          _heatPoints = _heatPointsFor(requests);
+          _selectedEvacuationCenter = selectedCenter;
+          _evacuationRoute = route;
+          _mapStatus = selectedCenter == null
+              ? 'No open evacuation center found.'
+              : route == null
+              ? 'Shelters loaded. Route service unavailable.'
+              : 'Safest route to ${selectedCenter.name} ready.';
+          _isLoadingMapData = false;
+        });
+        return;
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {
