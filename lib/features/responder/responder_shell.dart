@@ -741,18 +741,35 @@ class _ResponderNavigationScreenState
     RouteModel? route;
     String? message;
 
-    try {
-      residentLocation = await dependencies.rescueRepository
-          .fetchRequestLocation(widget.incident.id);
-    } catch (error) {
-      message = 'Resident GPS is not available from backend yet: $error';
+    Future<RescueLocationModel?> loadResidentLocation() async {
+      try {
+        return await dependencies.rescueRepository.fetchRequestLocation(
+          widget.incident.id,
+        );
+      } catch (error) {
+        message = 'Resident GPS is not available from backend yet: $error';
+        return null;
+      }
     }
 
-    try {
-      responderLocation = await dependencies.locationService.currentLocation();
-    } catch (error) {
-      message = [?message, 'Responder GPS is not available: $error'].join('\n');
+    Future<GeoPoint?> loadResponderLocation() async {
+      try {
+        return await dependencies.locationService.currentLocation();
+      } catch (error) {
+        message = [
+          ?message,
+          'Responder GPS is not available: $error',
+        ].join('\n');
+        return null;
+      }
     }
+
+    final locationResults = await Future.wait<Object?>([
+      loadResidentLocation(),
+      loadResponderLocation(),
+    ]);
+    residentLocation = locationResults[0] as RescueLocationModel?;
+    responderLocation = locationResults[1] as GeoPoint?;
 
     if (residentLocation != null && responderLocation != null) {
       try {
