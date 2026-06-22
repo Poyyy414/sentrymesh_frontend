@@ -1,5 +1,6 @@
 import '../../shared/enums/hazard_type.dart';
 import '../models/prediction_model.dart';
+import '../models/weather_snapshot_model.dart';
 import '../sources/remote/prediction_api.dart';
 
 class PredictionBundle {
@@ -8,23 +9,40 @@ class PredictionBundle {
     required this.flood,
     required this.landslide,
     required this.fetchedAt,
+    this.liveWeather,
   });
 
   final AiModelInfo modelInfo;
   final NodePredictionModel? flood;
   final NodePredictionModel? landslide;
   final DateTime fetchedAt;
+  final WeatherSnapshotModel? liveWeather;
 
   Map<String, Object?> get _weatherSource {
     final input = flood?.raw['input'];
     if (input is Map<String, Object?>) return input;
-    if (input is Map) return input.map((k, v) => MapEntry(k.toString(), v as Object?));
+    if (input is Map) {
+      return input.map((k, v) => MapEntry(k.toString(), v as Object?));
+    }
     return const {};
   }
 
-  double get rainfallMm => _asDouble(_weatherSource['rainfall_mm']) ?? 0;
-  double get pressureHpa => _asDouble(_weatherSource['pressure']) ?? 1013;
-  double get temperatureC => _asDouble(_weatherSource['temperature']) ?? 27;
+  double get rainfallMm =>
+      liveWeather?.rainfallMmPerHour ??
+      _asDouble(
+        _weatherSource['rainfall_mm_per_hour'] ??
+            _weatherSource['rainfall_mm'] ??
+            _weatherSource['precipitation'],
+      ) ??
+      0;
+  double get pressureHpa =>
+      liveWeather?.pressureHpa ?? _asDouble(_weatherSource['pressure']) ?? 1013;
+  double get temperatureC =>
+      liveWeather?.temperatureC ??
+      _asDouble(_weatherSource['temperature']) ??
+      27;
+  String get weatherProviderLabel =>
+      liveWeather?.providerLabel ?? 'Prediction weather input';
 
   double? _asDouble(Object? value) {
     if (value is num) return value.toDouble();
@@ -86,6 +104,7 @@ class PredictionRepository {
   Future<PredictionBundle> fetchHomePredictions() async {
     final floodNodes = await _recentNodes('flood');
     final landslideNodes = await _recentNodes('landslide');
+    final liveWeather = await _currentWeather();
 
     var flood = _worstRecent(floodNodes);
     final landslide = _worstRecent(landslideNodes);
@@ -93,14 +112,16 @@ class PredictionRepository {
     // No saved flood prediction yet — compute a live baseline (the backend
     // enriches it from current weather + sensors). Throws if the backend is
     // unreachable, which surfaces the error state on the home card.
-    flood ??= (await _remote.predictFlood(payload: _baselineFloodPayload))
-        .firstNode;
+    flood ??= (await _remote.predictFlood(
+      payload: _baselineFloodPayload,
+    )).firstNode;
 
     return PredictionBundle(
       modelInfo: const AiModelInfo(featureColumns: _fallbackFeatureColumns),
       flood: flood,
       landslide: landslide,
       fetchedAt: DateTime.now(),
+      liveWeather: liveWeather,
     );
   }
 
@@ -139,6 +160,17 @@ class PredictionRepository {
       return response.nodes;
     } catch (_) {
       return const [];
+    }
+  }
+
+  Future<WeatherSnapshotModel?> _currentWeather() async {
+    try {
+      return await _remote.fetchCurrentWeather(
+        latitude: (_baselineFloodPayload['latitude'] as num).toDouble(),
+        longitude: (_baselineFloodPayload['longitude'] as num).toDouble(),
+      );
+    } catch (_) {
+      return null;
     }
   }
 }

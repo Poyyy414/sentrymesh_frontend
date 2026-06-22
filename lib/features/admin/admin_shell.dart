@@ -4,6 +4,7 @@ import '../../app/router.dart';
 import '../../app/theme.dart';
 import '../../core/di/injection.dart';
 import '../../core/widgets/custom_button.dart';
+import '../../data/models/evacuation_center_model.dart';
 import '../../data/models/rescue_request_model.dart';
 import '../../shared/enums/hazard_type.dart';
 import '../../shared/enums/rescue_status.dart';
@@ -80,6 +81,7 @@ class _AdminStats {
     required this.active,
     required this.resolved,
     required this.peopleNeedingHelp,
+    required this.barangays,
     required this.recent,
   });
 
@@ -87,7 +89,56 @@ class _AdminStats {
   final int active;
   final int resolved;
   final int peopleNeedingHelp;
+  final List<_BarangayOpsSummary> barangays;
   final List<RescueRequestModel> recent;
+}
+
+class _BarangayOpsSummary {
+  const _BarangayOpsSummary({
+    required this.name,
+    required this.activeReports,
+    required this.peopleNeedingRescue,
+    required this.peopleRescued,
+    required this.shelterCount,
+    required this.shelterCapacity,
+    required this.shelterOccupancy,
+    required this.shelterAvailable,
+  });
+
+  final String name;
+  final int activeReports;
+  final int peopleNeedingRescue;
+  final int peopleRescued;
+  final int shelterCount;
+  final int shelterCapacity;
+  final int shelterOccupancy;
+  final int shelterAvailable;
+}
+
+class _MutableBarangayOpsSummary {
+  _MutableBarangayOpsSummary(this.name);
+
+  final String name;
+  int activeReports = 0;
+  int peopleNeedingRescue = 0;
+  int peopleRescued = 0;
+  int shelterCount = 0;
+  int shelterCapacity = 0;
+  int shelterOccupancy = 0;
+  int shelterAvailable = 0;
+
+  _BarangayOpsSummary freeze() {
+    return _BarangayOpsSummary(
+      name: name,
+      activeReports: activeReports,
+      peopleNeedingRescue: peopleNeedingRescue,
+      peopleRescued: peopleRescued,
+      shelterCount: shelterCount,
+      shelterCapacity: shelterCapacity,
+      shelterOccupancy: shelterOccupancy,
+      shelterAvailable: shelterAvailable,
+    );
+  }
 }
 
 class _AdminOverviewScreen extends StatefulWidget {
@@ -117,8 +168,15 @@ class _AdminOverviewScreenState extends State<_AdminOverviewScreen> {
     });
 
     try {
-      final requests =
-          await AppDependenciesScope.of(context).rescueRepository.fetchRequests();
+      final rescueRepository = AppDependenciesScope.of(
+        context,
+      ).rescueRepository;
+      final results = await Future.wait([
+        rescueRepository.fetchRequests(),
+        rescueRepository.fetchEvacuationCenters(),
+      ]);
+      final requests = results[0] as List<RescueRequestModel>;
+      final shelters = results[1] as List<EvacuationCenterModel>;
       if (!mounted) return;
 
       final active = requests.where(_isActive).toList();
@@ -131,8 +189,11 @@ class _AdminOverviewScreenState extends State<_AdminOverviewScreen> {
           total: requests.length,
           active: active.length,
           resolved: resolved,
-          peopleNeedingHelp:
-              active.fold(0, (sum, r) => sum + r.peopleNeedingHelp),
+          peopleNeedingHelp: active.fold(
+            0,
+            (sum, r) => sum + r.peopleNeedingHelp,
+          ),
+          barangays: _buildBarangayOpsSummaries(requests, shelters),
           recent: requests.take(5).toList(),
         );
         _isLoading = false;
@@ -214,6 +275,11 @@ class _AdminOverviewScreenState extends State<_AdminOverviewScreen> {
                 ],
               ),
               const SizedBox(height: 22),
+              _BarangayOpsSection(
+                summaries: stats?.barangays ?? const [],
+                isLoading: _isLoading,
+              ),
+              const SizedBox(height: 22),
               Text(
                 'Recent Reports',
                 style: Theme.of(context).textTheme.titleMedium,
@@ -274,14 +340,16 @@ class _AdminReportsScreenState extends State<_AdminReportsScreen> {
     });
 
     try {
-      final requests =
-          await AppDependenciesScope.of(context).rescueRepository.fetchRequests();
+      final requests = await AppDependenciesScope.of(
+        context,
+      ).rescueRepository.fetchRequests();
       if (!mounted) return;
 
-      final filtered = requests
-          .where((r) => widget.historyMode ? !_isActive(r) : _isActive(r))
-          .toList()
-        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      final filtered =
+          requests
+              .where((r) => widget.historyMode ? !_isActive(r) : _isActive(r))
+              .toList()
+            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
       setState(() {
         _reports = filtered;
@@ -336,10 +404,8 @@ class _AdminReportsScreenState extends State<_AdminReportsScreen> {
                 padding: const EdgeInsets.all(16),
                 itemCount: _reports.length,
                 separatorBuilder: (_, _) => const SizedBox(height: 10),
-                itemBuilder: (_, index) => _ReportCard(
-                  request: _reports[index],
-                  onChanged: _load,
-                ),
+                itemBuilder: (_, index) =>
+                    _ReportCard(request: _reports[index], onChanged: _load),
               ),
       ),
     );
@@ -370,9 +436,9 @@ class _AdminReportDetailScreenState extends State<_AdminReportDetailScreen> {
     setState(() => _isBusy = true);
 
     try {
-      final updated = await AppDependenciesScope.of(context)
-          .rescueRepository
-          .updateRequestStatus(id: _request.id, status: status);
+      final updated = await AppDependenciesScope.of(
+        context,
+      ).rescueRepository.updateRequestStatus(id: _request.id, status: status);
       if (!mounted) return;
       setState(() {
         _request = updated ?? _request;
@@ -525,14 +591,13 @@ class _AdminReportDetailScreenState extends State<_AdminReportDetailScreen> {
                 icon: Icons.check_circle_outline,
                 backgroundColor: AppTheme.safeGreen,
                 isLoading: _isBusy,
-                onPressed: () => _updateStatus(
-                  RescueStatus.resolved,
-                  'Incident resolved.',
-                ),
+                onPressed: () =>
+                    _updateStatus(RescueStatus.resolved, 'Incident resolved.'),
               ),
             if (!canResolve)
               _EmptyState(
-                message: 'This report is ${_statusLabel(request.status)}. '
+                message:
+                    'This report is ${_statusLabel(request.status)}. '
                     'No further actions available.',
               ),
           ],
@@ -545,6 +610,217 @@ class _AdminReportDetailScreenState extends State<_AdminReportDetailScreen> {
 // ---------------------------------------------------------------------------
 // Shared widgets
 // ---------------------------------------------------------------------------
+
+class _BarangayOpsSection extends StatelessWidget {
+  const _BarangayOpsSection({required this.summaries, required this.isLoading});
+
+  final List<_BarangayOpsSummary> summaries;
+  final bool isLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Barangay Operations',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            if (!isLoading && summaries.isNotEmpty)
+              Text(
+                '${summaries.length} areas',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        if (isLoading)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(18),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          )
+        else if (summaries.isEmpty)
+          const _EmptyState(
+            message: 'No barangay-level rescue or shelter data yet.',
+          )
+        else
+          for (final summary in summaries.take(6)) ...[
+            _BarangayOpsCard(summary: summary),
+            const SizedBox(height: 10),
+          ],
+      ],
+    );
+  }
+}
+
+class _BarangayOpsCard extends StatelessWidget {
+  const _BarangayOpsCard({required this.summary});
+
+  final _BarangayOpsSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasShelters = summary.shelterCount > 0;
+    final shelterColor = !hasShelters
+        ? AppTheme.textMuted
+        : summary.shelterAvailable <= 0
+        ? AppTheme.dangerRed
+        : summary.shelterAvailable < summary.peopleNeedingRescue
+        ? AppTheme.warningAmber
+        : AppTheme.safeGreen;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: AppTheme.signalBlue.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.location_city_outlined,
+                    color: AppTheme.signalBlue,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    summary.name,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                _MiniMetric(
+                  label: 'Active',
+                  value: '${summary.activeReports}',
+                  color: AppTheme.dangerRed,
+                ),
+              ],
+            ),
+            const Divider(height: 22),
+            Row(
+              children: [
+                Expanded(
+                  child: _OpsMetric(
+                    label: 'Need rescue',
+                    value: '${summary.peopleNeedingRescue}',
+                    icon: Icons.sos_outlined,
+                    color: AppTheme.dangerRed,
+                  ),
+                ),
+                Expanded(
+                  child: _OpsMetric(
+                    label: 'Rescued',
+                    value: '${summary.peopleRescued}',
+                    icon: Icons.verified_outlined,
+                    color: AppTheme.safeGreen,
+                  ),
+                ),
+                Expanded(
+                  child: _OpsMetric(
+                    label: hasShelters ? 'Slots free' : 'No shelters',
+                    value: hasShelters ? '${summary.shelterAvailable}' : '--',
+                    icon: Icons.home_work_outlined,
+                    color: shelterColor,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              hasShelters
+                  ? '${summary.shelterCount} shelter(s) - '
+                        '${summary.shelterOccupancy}/${summary.shelterCapacity} occupied'
+                  : 'No shelter availability reported for this barangay.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OpsMetric extends StatelessWidget {
+  const _OpsMetric({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                value,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(color: color),
+              ),
+              Text(label, style: Theme.of(context).textTheme.labelSmall),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MiniMetric extends StatelessWidget {
+  const _MiniMetric({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        '$label $value',
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
 
 class _StatCard extends StatelessWidget {
   const _StatCard({
@@ -763,6 +1039,157 @@ class _EmptyState extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+const _unknownBarangay = 'Unmapped Barangay';
+
+List<_BarangayOpsSummary> _buildBarangayOpsSummaries(
+  List<RescueRequestModel> requests,
+  List<EvacuationCenterModel> shelters,
+) {
+  final byBarangay = <String, _MutableBarangayOpsSummary>{};
+
+  _MutableBarangayOpsSummary bucket(String name) {
+    return byBarangay.putIfAbsent(name, () => _MutableBarangayOpsSummary(name));
+  }
+
+  for (final request in requests) {
+    final summary = bucket(_barangayFromRequest(request));
+    if (_isActive(request)) {
+      summary.activeReports += 1;
+      summary.peopleNeedingRescue += request.peopleNeedingHelp;
+    } else if (request.status == RescueStatus.resolved) {
+      summary.peopleRescued += request.peopleNeedingHelp;
+    }
+  }
+
+  for (final shelter in shelters) {
+    final summary = bucket(_barangayFromShelter(shelter));
+    summary.shelterCount += 1;
+    summary.shelterCapacity += shelter.capacity;
+    summary.shelterOccupancy += shelter.currentOccupancy;
+    if (shelter.isOpen) {
+      summary.shelterAvailable += shelter.availableSlots;
+    }
+  }
+
+  final summaries =
+      byBarangay.values
+          .where(
+            (summary) =>
+                summary.activeReports > 0 ||
+                summary.peopleRescued > 0 ||
+                summary.shelterCount > 0,
+          )
+          .map((summary) => summary.freeze())
+          .toList()
+        ..sort((a, b) {
+          final needCompare = b.peopleNeedingRescue.compareTo(
+            a.peopleNeedingRescue,
+          );
+          if (needCompare != 0) return needCompare;
+
+          final activeCompare = b.activeReports.compareTo(a.activeReports);
+          if (activeCompare != 0) return activeCompare;
+
+          if (a.name == _unknownBarangay) return 1;
+          if (b.name == _unknownBarangay) return -1;
+          return a.name.compareTo(b.name);
+        });
+
+  return summaries;
+}
+
+String _barangayFromRequest(RescueRequestModel request) {
+  final candidates = [
+    request.locationLabel,
+    request.assignedShelterAddress,
+    request.description,
+  ];
+  for (final candidate in candidates) {
+    final barangay = _barangayFromText(candidate);
+    if (barangay != null) return barangay;
+  }
+  return _unknownBarangay;
+}
+
+String _barangayFromShelter(EvacuationCenterModel shelter) {
+  return _barangayFromText(shelter.address, allowFallbackSegment: true) ??
+      _barangayFromText(shelter.name, allowFallbackSegment: true) ??
+      _unknownBarangay;
+}
+
+String? _barangayFromText(String? raw, {bool allowFallbackSegment = false}) {
+  final text = raw?.trim();
+  if (text == null || text.isEmpty || _isGenericLocationLabel(text)) {
+    return null;
+  }
+
+  final explicitMatch = RegExp(
+    r"\b(?:barangay|brgy\.?|bgy\.?)\s+([a-z0-9 .'-]+)",
+    caseSensitive: false,
+  ).firstMatch(text);
+  if (explicitMatch != null) {
+    return _formatBarangayName(explicitMatch.group(1)!);
+  }
+
+  final segments = text
+      .split(RegExp(r'[,;|]'))
+      .map((segment) => segment.trim())
+      .where((segment) => segment.isNotEmpty)
+      .toList();
+
+  for (final segment in segments) {
+    final lower = segment.toLowerCase();
+    if (lower.startsWith('barangay ') ||
+        lower.startsWith('brgy ') ||
+        lower.startsWith('brgy. ')) {
+      return _formatBarangayName(segment);
+    }
+  }
+
+  if (!allowFallbackSegment || segments.length < 2) {
+    return null;
+  }
+
+  final fallback = segments.firstWhere(
+    (segment) => !_isGenericLocationLabel(segment),
+    orElse: () => '',
+  );
+  if (fallback.isEmpty) return null;
+  return _formatBarangayName(fallback);
+}
+
+bool _isGenericLocationLabel(String text) {
+  final lower = text.toLowerCase().trim();
+  return lower == 'resident gps' ||
+      lower == 'incident location' ||
+      lower == 'unknown location' ||
+      lower == 'naga city' ||
+      lower == 'camarines sur' ||
+      lower == 'philippines' ||
+      lower.contains('gps coordinates');
+}
+
+String _formatBarangayName(String text) {
+  var cleaned = text
+      .replaceAll(RegExp(r'\bbarangay\b', caseSensitive: false), '')
+      .replaceAll(RegExp(r'\bbrgy\.?\b', caseSensitive: false), '')
+      .replaceAll(RegExp(r'\bbgy\.?\b', caseSensitive: false), '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+
+  if (cleaned.isEmpty) return _unknownBarangay;
+
+  cleaned = cleaned
+      .split(' ')
+      .map((word) {
+        if (word.isEmpty) return word;
+        if (word.length <= 2 && word == word.toUpperCase()) return word;
+        return word[0].toUpperCase() + word.substring(1).toLowerCase();
+      })
+      .join(' ');
+  return 'Barangay $cleaned';
+}
 
 Future<void> _logout(BuildContext context) async {
   await AppDependenciesScope.of(context).authRepository.logout();

@@ -1,6 +1,7 @@
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../models/prediction_model.dart';
+import '../../models/weather_snapshot_model.dart';
 
 class PredictionApi {
   const PredictionApi(this._client);
@@ -53,5 +54,19 @@ class PredictionApi {
       queryParameters: hazardType != null ? {'hazard_type': hazardType} : {},
     );
     return PredictionResponseModel.fromJson(response);
+  }
+
+  Future<WeatherSnapshotModel> fetchCurrentWeather({
+    required double latitude,
+    required double longitude,
+  }) async {
+    final response = await _client.get(
+      ApiEndpoints.weatherCurrent,
+      queryParameters: {
+        'latitude': latitude.toString(),
+        'longitude': longitude.toString(),
+      },
+    );
+    return WeatherSnapshotModel.fromJson(response);
   }
 }

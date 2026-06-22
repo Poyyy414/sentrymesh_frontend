@@ -1858,7 +1858,7 @@ class _WeatherHazardCard extends StatelessWidget {
                   icon: Icons.thermostat_rounded,
                   label: 'Temp',
                   value: '${temp.round()} C',
-                  detail: 'OpenWeather live',
+                  detail: bundle?.weatherProviderLabel ?? 'Live weather',
                   color: AppTheme.dangerRed,
                 ),
               ),

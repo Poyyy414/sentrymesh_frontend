@@ -7,6 +7,7 @@ import '../../core/services/location_service.dart';
 import '../../data/models/evacuation_center_model.dart';
 import '../../data/models/rescue_request_model.dart';
 import '../../data/models/route_model.dart';
+import '../../data/models/weather_snapshot_model.dart';
 import '../../shared/enums/rescue_status.dart';
 import 'state/asean_country.dart';
 import 'widgets/map_view.dart';
@@ -69,17 +70,9 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
           'longitude': lon.toString(),
         },
       );
-      final w = result['weather'];
-      if (w is Map) {
-        final rain = w['rain'];
-        double mm = 0.0;
-        if (rain is Map) {
-          final v = rain['1h'];
-          if (v is num) mm = v.toDouble();
-        } else if (rain is num) {
-          mm = rain.toDouble();
-        }
-        if (mounted) setState(() => _rainfallMmPh = mm);
+      final weather = WeatherSnapshotModel.fromJson(result);
+      if (mounted) {
+        setState(() => _rainfallMmPh = weather.rainfallMmPerHour);
       }
     } catch (_) {
       // Weather is decorative — fail silently

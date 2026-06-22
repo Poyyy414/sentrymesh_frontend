@@ -714,6 +714,11 @@ class _ResponderNavigationScreenState
     extends State<_ResponderNavigationScreen> {
   final _mapController = MapController();
 
+  /// Routing to a fixed shelter point rather than a resident's live GPS — used
+  /// to swap "Resident" wording for "Shelter" across the markers and panels.
+  bool get _isShelterRoute => widget.destinationOverride != null;
+  String get _destinationLabel => _isShelterRoute ? 'Shelter' : 'Resident';
+
   GeoPoint? _responderLocation;
   RescueLocationModel? _residentLocation;
   RescueNavigationModel? _navigation;
@@ -886,6 +891,7 @@ class _ResponderNavigationScreenState
             mapController: _mapController,
             responderLocation: _responderLocation,
             residentLocation: _residentLocation?.point,
+            destinationLabel: _destinationLabel,
             route: _route,
           ),
           Positioned(
@@ -896,6 +902,7 @@ class _ResponderNavigationScreenState
               isLoading: _isLoading,
               hasResidentLocation: _residentLocation != null,
               hasRoute: _route != null,
+              destinationLabel: _destinationLabel,
               message: _message,
             ),
           ),
@@ -912,6 +919,7 @@ class _ResponderNavigationScreenState
               onNavigate: _fitRoute,
               isLoading: _isLoading,
               responderLocation: _responderLocation,
+              destinationLabel: _destinationLabel,
             ),
           ),
         ],
@@ -2249,6 +2257,7 @@ class _ResponderMapPreview extends StatelessWidget {
     this.mapController,
     this.responderLocation,
     this.residentLocation,
+    this.destinationLabel = 'Resident',
     this.route,
     this.sosRequests = const [],
     this.shelters = const [],
@@ -2260,6 +2269,7 @@ class _ResponderMapPreview extends StatelessWidget {
   final MapController? mapController;
   final GeoPoint? responderLocation;
   final GeoPoint? residentLocation;
+  final String destinationLabel;
   final RouteModel? route;
   final List<RescueRequestModel> sosRequests;
   final List<EvacuationCenterModel> shelters;
@@ -2390,7 +2400,7 @@ class _ResponderMapPreview extends StatelessWidget {
                   point: residentPoint,
                   width: 64,
                   height: 72,
-                  child: const _ResidentLocationMarker(),
+                  child: _ResidentLocationMarker(label: destinationLabel),
                 ),
             ],
           ),
@@ -2412,12 +2422,14 @@ class _NavigationFetchStatus extends StatelessWidget {
     required this.hasResidentLocation,
     required this.hasRoute,
     required this.message,
+    this.destinationLabel = 'Resident',
   });
 
   final bool isLoading;
   final bool hasResidentLocation;
   final bool hasRoute;
   final String? message;
+  final String destinationLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -2453,7 +2465,7 @@ class _NavigationFetchStatus extends StatelessWidget {
             Expanded(
               child: Text(
                 isLoading
-                    ? 'Fetching resident GPS and safe route from backend...'
+                    ? 'Fetching ${destinationLabel.toLowerCase()} GPS and safe route from backend...'
                     : message ?? 'Waiting for backend response.',
                 style: Theme.of(
                   context,
@@ -2477,6 +2489,7 @@ class _ResidentRoutePanel extends StatelessWidget {
     required this.onNavigate,
     required this.isLoading,
     required this.responderLocation,
+    this.destinationLabel = 'Resident',
   });
 
   final _Incident incident;
@@ -2487,6 +2500,7 @@ class _ResidentRoutePanel extends StatelessWidget {
   final VoidCallback onNavigate;
   final bool isLoading;
   final GeoPoint? responderLocation;
+  final String destinationLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -2514,7 +2528,7 @@ class _ResidentRoutePanel extends StatelessWidget {
                       ),
                       Text(
                         location == null
-                            ? 'Waiting for resident GPS'
+                            ? 'Waiting for ${destinationLabel.toLowerCase()} GPS'
                             : '${location.latitude.toStringAsFixed(5)}, ${location.longitude.toStringAsFixed(5)}',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
@@ -4073,7 +4087,9 @@ class _ShelterMarker extends StatelessWidget {
 }
 
 class _ResidentLocationMarker extends StatelessWidget {
-  const _ResidentLocationMarker();
+  const _ResidentLocationMarker({this.label = 'Resident'});
+
+  final String label;
 
   @override
   Widget build(BuildContext context) {
@@ -4084,11 +4100,11 @@ class _ResidentLocationMarker extends StatelessWidget {
           color: AppTheme.dangerRed,
           borderRadius: BorderRadius.circular(8),
           elevation: 3,
-          child: const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
             child: Text(
-              'Resident',
-              style: TextStyle(
+              label,
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 10,
                 fontWeight: FontWeight.w800,
