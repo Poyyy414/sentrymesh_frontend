@@ -3527,7 +3527,12 @@ class _BroadcastComposeDialogState extends State<_BroadcastComposeDialog> {
         children: [
           Icon(widget.emergency ? Icons.sos : Icons.campaign, color: accent),
           const SizedBox(width: 8),
-          Text(widget.emergency ? 'Emergency Broadcast' : 'Broadcast'),
+          Expanded(
+            child: Text(
+              widget.emergency ? 'Emergency Broadcast' : 'Broadcast',
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
       content: SingleChildScrollView(
