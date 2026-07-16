@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/router.dart';
 import '../../app/theme.dart';
 import '../../core/di/injection.dart';
+import '../../core/services/connectivity_service.dart';
 import '../../core/widgets/custom_button.dart';
 import '../../data/models/evacuation_center_model.dart';
 import '../../data/models/rescue_request_model.dart';
@@ -22,6 +25,7 @@ class AdminShell extends StatefulWidget {
 
 class _AdminShellState extends State<AdminShell> {
   int _currentIndex = 0;
+  StreamSubscription<ConnectivityStatus>? _connectivitySub;
 
   static const _screens = [
     _AdminOverviewScreen(),
@@ -29,6 +33,59 @@ class _AdminShellState extends State<AdminShell> {
     _AdminReportsScreen(historyMode: true),
     ResponderLiveMapScreen(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _setupConnectivityMonitor();
+    });
+  }
+
+  @override
+  void dispose() {
+    _connectivitySub?.cancel();
+    super.dispose();
+  }
+
+  void _setupConnectivityMonitor() {
+    final deps = AppDependenciesScope.of(context);
+    deps.connectivityService.currentStatus().then((status) {
+      if (!mounted) return;
+      // The service may have already resolved tower-vs-cloud and fired its
+      // one status-change event before this listener subscribed (broadcast
+      // streams don't replay), so apply the resolved backend explicitly here
+      // instead of waiting for a future change that may never come.
+      _switchBackendIfNeeded();
+      _reconnectSocket();
+    });
+
+    _connectivitySub =
+        deps.connectivityService.onStatusChanged.listen((status) {
+      if (!mounted) return;
+      _switchBackendIfNeeded();
+      _reconnectSocket();
+    });
+  }
+
+  void _switchBackendIfNeeded() {
+    final deps = AppDependenciesScope.of(context);
+    final cs = deps.connectivityService;
+    deps.apiClient.updateBaseUrl(cs.activeApiUrl);
+    deps.aiClient.updateBaseUrl(cs.activeAiUrl);
+  }
+
+  void _reconnectSocket() {
+    final deps = AppDependenciesScope.of(context);
+    final user = deps.initialUser;
+    if (user != null) {
+      deps.towerSocket.reconnect(
+        role: user.role,
+        userId: user.id,
+        baseUrl: deps.connectivityService.activeApiUrl,
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -22,6 +22,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
   List<AlertModel> _alerts = const [];
   bool _isLoading = true;
   String? _error;
+  Set<AlertSeverity> _severityFilter = {...AlertSeverity.values};
 
   @override
   void didChangeDependencies() {
@@ -55,7 +56,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
   }
 
   List<AlertModel> get _visibleAlerts {
-    return switch (_selectedFilter) {
+    final tabFiltered = switch (_selectedFilter) {
       1 =>
         _alerts
             .where(
@@ -74,6 +75,14 @@ class _AlertsScreenState extends State<AlertsScreen> {
             .toList(),
       _ => _alerts,
     };
+
+    if (_severityFilter.length == AlertSeverity.values.length) {
+      return tabFiltered;
+    }
+
+    return tabFiltered
+        .where((alert) => _severityFilter.contains(alert.severity))
+        .toList();
   }
 
   @override
@@ -84,7 +93,9 @@ class _AlertsScreenState extends State<AlertsScreen> {
         bottom: false,
         child: Column(
           children: [
-            const _AlertsHeader(),
+            _AlertsHeader(
+              onFilterSelected: (severities) => setState(() => _severityFilter = severities),
+            ),
             AlertFilterTabs(
               selectedIndex: _selectedFilter,
               onChanged: (index) => setState(() => _selectedFilter = index),
@@ -150,7 +161,9 @@ class _AlertsScreenState extends State<AlertsScreen> {
 }
 
 class _AlertsHeader extends StatelessWidget {
-  const _AlertsHeader();
+  const _AlertsHeader({this.onFilterSelected});
+
+  final ValueChanged<Set<AlertSeverity>>? onFilterSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -180,7 +193,7 @@ class _AlertsHeader extends StatelessWidget {
           ),
           IconButton(
             key: const Key('alerts_filter_button'),
-            onPressed: () {},
+            onPressed: () => _showFilterDialog(context),
             tooltip: 'Filter alerts',
             icon: const Icon(
               Icons.filter_alt_outlined,
@@ -189,6 +202,50 @@ class _AlertsHeader extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showFilterDialog(BuildContext context) {
+    final selected = <AlertSeverity>{...AlertSeverity.values};
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Filter by Severity'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: AlertSeverity.values.map((severity) {
+              return CheckboxListTile(
+                title: Text(severity.label),
+                value: selected.contains(severity),
+                onChanged: (checked) {
+                  setDialogState(() {
+                    if (checked ?? false) {
+                      selected.add(severity);
+                    } else {
+                      selected.remove(severity);
+                    }
+                  });
+                },
+              );
+            }).toList(),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                onFilterSelected?.call(selected);
+              },
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
       ),
     );
   }

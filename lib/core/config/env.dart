@@ -13,6 +13,24 @@ class Env {
     defaultValue: 'https://sentrymesh-vigilantpath-api.onrender.com',
   );
 
+  static const towerApiUrl = String.fromEnvironment(
+    'SENTRYMESH_TOWER_API_URL',
+    defaultValue: 'http://10.42.0.1:3000',
+  );
+
+  static const towerAiUrl = String.fromEnvironment(
+    'SENTRYMESH_TOWER_AI_URL',
+    defaultValue: 'http://10.42.0.1:8000',
+  );
+
+  static const towerTileUrl = String.fromEnvironment(
+    'SENTRYMESH_TOWER_TILE_URL',
+    defaultValue: 'http://10.42.0.1:8085',
+  );
+
+  static const cloudApiUrl = apiBaseUrl;
+  static const cloudAiUrl = aiBaseUrl;
+
   static const apiConfig = ApiConfig(baseUrl: apiBaseUrl);
   static const aiConfig = ApiConfig(baseUrl: aiBaseUrl);
 }

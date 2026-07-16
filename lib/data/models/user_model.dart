@@ -23,6 +23,22 @@ class UserModel {
     );
   }
 
+  UserModel copyWith({
+    String? id,
+    String? name,
+    String? email,
+    String? phoneNumber,
+    String? role,
+  }) {
+    return UserModel(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      email: email ?? this.email,
+      phoneNumber: phoneNumber ?? this.phoneNumber,
+      role: role ?? this.role,
+    );
+  }
+
   Map<String, Object?> toJson() {
     return {
       'id': id,

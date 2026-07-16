@@ -136,6 +136,9 @@ class NodePredictionModel {
     );
   }
 
+  double? get latitude => _doubleFrom(raw['lat'] ?? raw['latitude']);
+  double? get longitude => _doubleFrom(raw['lon'] ?? raw['lng'] ?? raw['longitude']);
+
   String get probabilityLabel {
     if (eventProbability == null) {
       return 'Awaiting score';

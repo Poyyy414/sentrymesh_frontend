@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
@@ -9,20 +10,20 @@ import '../../app/router.dart';
 import '../../app/theme.dart';
 import '../../core/config/map_tile_config.dart';
 import '../../core/di/injection.dart';
+import '../../core/services/connectivity_service.dart';
 import '../../core/services/location_service.dart';
+import '../../core/services/tower_socket_service.dart';
 import '../../core/widgets/custom_button.dart';
-import '../../data/models/alert_model.dart';
 import '../../data/models/evacuation_center_model.dart';
 import '../../data/models/prediction_model.dart';
+import '../../data/repositories/prediction_repository.dart';
 import '../../data/models/rescue_location_model.dart';
 import '../../data/models/rescue_navigation_model.dart';
 import '../../data/models/rescue_request_model.dart';
 import '../../data/models/route_model.dart';
-import '../../data/repositories/prediction_repository.dart';
-import '../../shared/enums/alert_severity.dart';
+import '../../data/models/team_model.dart';
 import '../../shared/enums/hazard_type.dart';
 import '../../shared/enums/rescue_status.dart';
-import '../messages/messages_screen.dart';
 
 Future<void> _logout(BuildContext context) async {
   await AppDependenciesScope.of(context).authRepository.logout();
@@ -43,6 +44,7 @@ IconData _incidentIcon(HazardType type) {
     HazardType.infrastructure => Icons.car_crash,
   };
 }
+
 
 String _hazardTitle(HazardType type) {
   return switch (type) {
@@ -65,34 +67,24 @@ String _rescueStatusLabel(RescueStatus status) {
   };
 }
 
-bool _isActiveRescueRequest(RescueRequestModel request) {
-  return request.status == RescueStatus.pending ||
-      request.status == RescueStatus.acknowledged ||
-      request.status == RescueStatus.inProgress;
-}
-
-bool _isVisibleToResponder(RescueRequestModel request, String? responderId) {
-  final assignedId = request.assignedResponderId;
-  return assignedId == null ||
-      assignedId.isEmpty ||
-      (responderId != null && assignedId == responderId);
-}
-
-List<RescueRequestModel> _requestsForResponder(
-  List<RescueRequestModel> requests,
-  String? responderId,
-) {
-  return requests
-      .where(_isActiveRescueRequest)
-      .where((request) => _isVisibleToResponder(request, responderId))
-      .toList();
-}
-
 Color _severityFromPeople(int people) {
   if (people >= 5) {
     return AppTheme.dangerRed;
   }
   if (people >= 2) {
+    return AppTheme.warningAmber;
+  }
+  return AppTheme.safeGreen;
+}
+
+/// Maps an AI alert level (CRITICAL/HIGH/MODERATE/LOW/SAFE/WATCH) to the
+/// three-tier Low/Medium/High legend shown on risk map previews.
+Color _riskTierColor(Object? alertLevel) {
+  final level = alertLevel?.toString().toLowerCase() ?? '';
+  if (level.contains('critical') || level.contains('high')) {
+    return AppTheme.dangerRed;
+  }
+  if (level.contains('moderate') || level.contains('medium')) {
     return AppTheme.warningAmber;
   }
   return AppTheme.safeGreen;
@@ -122,6 +114,7 @@ String _timeAgoLabel(DateTime createdAt) {
   return '${diff.inDays} d ago';
 }
 
+
 class ResponderShell extends StatefulWidget {
   const ResponderShell({super.key});
 
@@ -131,6 +124,9 @@ class ResponderShell extends StatefulWidget {
 
 class _ResponderShellState extends State<ResponderShell> {
   int _currentIndex = 0;
+  ConnectivityStatus _connectivity = ConnectivityStatus.online;
+  int _pendingQueueCount = 0;
+  StreamSubscription<ConnectivityStatus>? _connectivitySub;
 
   static const _screens = [
     ResponderDashboardScreen(),
@@ -141,9 +137,124 @@ class _ResponderShellState extends State<ResponderShell> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _setupConnectivityMonitor();
+    });
+  }
+
+  @override
+  void dispose() {
+    _connectivitySub?.cancel();
+    super.dispose();
+  }
+
+  void _setupConnectivityMonitor() {
+    final deps = AppDependenciesScope.of(context);
+    deps.connectivityService.currentStatus().then((status) {
+      if (!mounted) return;
+      setState(() => _connectivity = status);
+      // The service may have already resolved tower-vs-cloud and fired its
+      // one status-change event before this listener subscribed (broadcast
+      // streams don't replay), so apply the resolved backend explicitly here
+      // instead of waiting for a future change that may never come.
+      _switchBackendIfNeeded();
+      _reconnectSocket();
+    });
+    _updatePendingCount();
+
+    _connectivitySub =
+        deps.connectivityService.onStatusChanged.listen((status) {
+      if (!mounted) return;
+      final wasOffline = _connectivity != ConnectivityStatus.online;
+      setState(() => _connectivity = status);
+
+      _switchBackendIfNeeded();
+      if (wasOffline && status == ConnectivityStatus.online) {
+        _syncQueuedOperations();
+        _reconnectSocket();
+      }
+      _updatePendingCount();
+    });
+  }
+
+  void _switchBackendIfNeeded() {
+    final deps = AppDependenciesScope.of(context);
+    final cs = deps.connectivityService;
+    deps.apiClient.updateBaseUrl(cs.activeApiUrl);
+    deps.aiClient.updateBaseUrl(cs.activeAiUrl);
+  }
+
+  Future<void> _syncQueuedOperations() async {
+    final deps = AppDependenciesScope.of(context);
+    final count = await deps.syncQueue.pendingCount;
+    if (count == 0) return;
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Syncing $count queued operations...'),
+          backgroundColor: AppTheme.signalBlue,
+        ),
+      );
+    }
+
+    await deps.syncQueue.processAll(deps.apiClient);
+    _updatePendingCount();
+
+    try {
+      await Future.wait([
+        deps.rescueRepository.fetchEvacuationCenters(),
+        deps.alertRepository.fetchAlerts(),
+        deps.teamRepository.fetchTeams(),
+      ]);
+    } catch (_) {}
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('All data synced'),
+          backgroundColor: AppTheme.safeGreen,
+        ),
+      );
+    }
+  }
+
+  void _reconnectSocket() {
+    final deps = AppDependenciesScope.of(context);
+    final user = deps.initialUser;
+    if (user != null) {
+      deps.towerSocket.reconnect(
+        role: user.role,
+        userId: user.id,
+        baseUrl: deps.connectivityService.activeApiUrl,
+      );
+    }
+  }
+
+  Future<void> _updatePendingCount() async {
+    final deps = AppDependenciesScope.of(context);
+    final count = await deps.syncQueue.pendingCount;
+    if (mounted) setState(() => _pendingQueueCount = count);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(index: _currentIndex, children: _screens),
+      body: Column(
+        children: [
+          if (_connectivity != ConnectivityStatus.online)
+            _ResponderConnectivityBanner(
+              status: _connectivity,
+              pendingCount: _pendingQueueCount,
+            ),
+          Expanded(
+            child:
+                IndexedStack(index: _currentIndex, children: _screens),
+          ),
+        ],
+      ),
       bottomNavigationBar: DecoratedBox(
         decoration: const BoxDecoration(
           color: Colors.white,
@@ -187,6 +298,52 @@ class _ResponderShellState extends State<ResponderShell> {
   }
 }
 
+class _ResponderConnectivityBanner extends StatelessWidget {
+  const _ResponderConnectivityBanner({
+    required this.status,
+    required this.pendingCount,
+  });
+
+  final ConnectivityStatus status;
+  final int pendingCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final isOffline = status == ConnectivityStatus.offline;
+    final color = isOffline ? AppTheme.dangerRed : const Color(0xFFE8A317);
+    final icon =
+        isOffline ? Icons.cloud_off_rounded : Icons.cloud_queue_rounded;
+    final label = isOffline ? 'Offline' : 'Limited connection';
+    final queueLabel = pendingCount > 0 ? ' - $pendingCount queued' : '';
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.only(
+        top: MediaQuery.paddingOf(context).top + 4,
+        bottom: 4,
+        left: 16,
+        right: 16,
+      ),
+      color: color,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 14, color: Colors.white),
+          const SizedBox(width: 6),
+          Text(
+            '$label$queueLabel',
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _DashboardStats {
   const _DashboardStats({
     required this.activeIncidents,
@@ -214,13 +371,179 @@ class ResponderDashboardScreen extends StatefulWidget {
 class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
   _DashboardStats? _stats;
   bool _isLoading = true;
+  StreamSubscription<JsonMap>? _sosNewSub;
+  StreamSubscription<JsonMap>? _teamAssignmentSub;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _load();
+      if (mounted) {
+        _load();
+        _subscribeToSosNew();
+        _subscribeToTeamAssignment();
+      }
     });
+  }
+
+  @override
+  void dispose() {
+    _sosNewSub?.cancel();
+    _teamAssignmentSub?.cancel();
+    super.dispose();
+  }
+
+  void _subscribeToSosNew() {
+    _sosNewSub?.cancel();
+    final socket = AppDependenciesScope.of(context).towerSocket;
+    _sosNewSub = socket.onSosNew.listen((data) {
+      if (mounted) {
+        _showNewSosDialog(data);
+        _load();
+      }
+    });
+  }
+
+  void _subscribeToTeamAssignment() {
+    _teamAssignmentSub?.cancel();
+    final socket = AppDependenciesScope.of(context).towerSocket;
+    _teamAssignmentSub = socket.onTeamAssignment.listen((data) {
+      if (mounted) {
+        final teamName = data['assigned_team_name']?.toString() ?? 'your team';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('New SOS assigned to Team $teamName'),
+            backgroundColor: const Color(0xFF7B1FA2),
+          ),
+        );
+        _load();
+      }
+    });
+  }
+
+  void _showNewSosDialog(JsonMap data) {
+    final emergencyType = data['emergency_type']?.toString() ?? 'Unknown';
+    final description =
+        data['description']?.toString() ?? 'No description provided.';
+    final peopleNeedingHelp =
+        int.tryParse(data['people_needing_help']?.toString() ?? '') ?? 1;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        titlePadding: EdgeInsets.zero,
+        title: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: const BoxDecoration(
+            color: AppTheme.dangerRed,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.sos_rounded, color: Colors.white, size: 28),
+              SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'INCOMING SOS',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'New Emergency Request',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppTheme.dangerRed.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    emergencyType.toUpperCase(),
+                    style: const TextStyle(
+                      color: AppTheme.dangerRed,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppTheme.warningAmber.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '$peopleNeedingHelp ${peopleNeedingHelp == 1 ? 'person' : 'people'} need help',
+                    style: const TextStyle(
+                      color: AppTheme.warningAmber,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Text(
+              description,
+              style: const TextStyle(fontSize: 13, height: 1.4),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Dismiss'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              // Navigate to Incidents tab if the parent ResponderShell is
+              // reachable via the NavigationBar. Since this widget lives
+              // inside an IndexedStack, post a rebuild that switches to
+              // index 1 (Incidents).
+              final shell = context.findAncestorStateOfType<_ResponderShellState>();
+              if (shell != null && shell.mounted) {
+                shell.setState(() => shell._currentIndex = 1);
+              }
+            },
+            icon: const Icon(Icons.notification_important, size: 18),
+            label: const Text('View Incidents'),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.dangerRed),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _load() async {
@@ -237,18 +560,26 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
 
       final requests = results[0] as List<RescueRequestModel>;
       final alerts = results[1];
-      final responderId = deps.authRepository.currentUser?.id;
 
-      final active = _requestsForResponder(requests, responderId);
+      final active = requests
+          .where(
+            (r) =>
+                r.status == RescueStatus.pending ||
+                r.status == RescueStatus.acknowledged ||
+                r.status == RescueStatus.inProgress,
+          )
+          .toList();
 
       setState(() {
         _stats = _DashboardStats(
           activeIncidents: active.length,
           peopleNeedHelp: active.fold(0, (sum, r) => sum + r.peopleNeedingHelp),
           deployedTeams: active
-              .where((request) => request.assignedResponderId == responderId)
-              .map((request) => request.assignedTeamId ?? request.id)
-              .toSet()
+              .where(
+                (r) =>
+                    r.status == RescueStatus.acknowledged ||
+                    r.status == RescueStatus.inProgress,
+              )
               .length,
           activeAlerts: alerts.length,
           recentRequests: requests.take(3).toList(),
@@ -278,6 +609,7 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
         '${now.hourOfPeriod}:${now.minute.toString().padLeft(2, '0')} ${now.period.name.toUpperCase()}';
 
     return _ResponderPage(
+      onRefresh: _load,
       header: _ResponderHeader(
         title: 'Responder Console',
         trailing: _BellBadge(count: stats?.activeAlerts ?? 0),
@@ -374,11 +706,33 @@ class _ActiveIncidentsScreenState extends State<ActiveIncidentsScreen> {
   List<_Incident> _incidents = [];
   bool _isLoading = true;
   String? _error;
+  String _selectedFilter = 'All';
+  StreamSubscription<JsonMap>? _sosNewSub;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _load();
+        _subscribeToSosNew();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _sosNewSub?.cancel();
+    super.dispose();
+  }
+
+  void _subscribeToSosNew() {
+    _sosNewSub?.cancel();
+    final socket = AppDependenciesScope.of(context).towerSocket;
+    // A new SOS changes both the queue contents and every active request's
+    // relative priority rank, so just reload rather than trying to splice
+    // one item into an already-ranked list.
+    _sosNewSub = socket.onSosNew.listen((_) {
       if (mounted) {
         _load();
       }
@@ -394,18 +748,13 @@ class _ActiveIncidentsScreenState extends State<ActiveIncidentsScreen> {
     try {
       final dependencies = AppDependenciesScope.of(context);
       final requests = await dependencies.rescueRepository.fetchRequests();
-      final responderId = dependencies.authRepository.currentUser?.id;
 
       if (!mounted) {
         return;
       }
 
       setState(() {
-        _incidents = requests
-            .where((request) => _isVisibleToResponder(request, responderId))
-            .where(_isActiveRescueRequest)
-            .map(_Incident.fromRescueRequest)
-            .toList();
+        _incidents = requests.map(_Incident.fromRescueRequest).toList();
         _isLoading = false;
       });
     } catch (error) {
@@ -419,16 +768,29 @@ class _ActiveIncidentsScreenState extends State<ActiveIncidentsScreen> {
     }
   }
 
+  List<_Incident> get _filteredIncidents {
+    final statuses = _incidentTabStatuses[_selectedFilter];
+    if (statuses == null) return _incidents;
+    return _incidents.where((i) => statuses.contains(i.rawStatus)).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final filtered = _filteredIncidents;
+
     return _ResponderPage(
+      onRefresh: _load,
       header: const _SimpleResponderHeader(
         title: 'Priority Incidents',
         leadingIcon: Icons.arrow_back,
         trailingIcon: Icons.filter_alt,
       ),
       children: [
-        const _IncidentFilters(),
+        _IncidentFilters(
+          incidents: _incidents,
+          selectedFilter: _selectedFilter,
+          onFilterChanged: (filter) => setState(() => _selectedFilter = filter),
+        ),
         const SizedBox(height: 12),
         if (_isLoading)
           const Padding(
@@ -450,13 +812,13 @@ class _ActiveIncidentsScreenState extends State<ActiveIncidentsScreen> {
               ],
             ),
           )
-        else if (_incidents.isEmpty)
+        else if (filtered.isEmpty)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 40),
             child: Center(child: Text('No active incidents.')),
           )
         else
-          for (final incident in _incidents) ...[
+          for (final incident in filtered) ...[
             _IncidentCard(incident: incident, onReturn: _load),
             const SizedBox(height: 12),
           ],
@@ -474,16 +836,9 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     Future<void> updateStatus(RescueStatus status, String confirmation) async {
       try {
-        final responderId = AppDependenciesScope.of(
-          context,
-        ).authRepository.currentUser?.id;
         await AppDependenciesScope.of(
           context,
-        ).rescueRepository.updateRequestStatus(
-          id: incident.id,
-          status: status,
-          responderId: responderId,
-        );
+        ).rescueRepository.updateRequestStatus(id: incident.id, status: status);
         if (!context.mounted) return;
         ScaffoldMessenger.of(
           context,
@@ -496,49 +851,57 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
       }
     }
 
-    Future<void> acceptIncident() async {
-      final deps = AppDependenciesScope.of(context);
-      final user = deps.authRepository.currentUser;
-      if (user == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Responder session is not available.')),
-        );
-        return;
-      }
-
-      try {
-        await deps.rescueRepository.assignResponder(
-          requestId: incident.id,
-          responderId: user.id,
-          responderName: user.name,
-        );
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Assigned to ${user.name}.')));
-        Navigator.of(context).pop();
-      } catch (error) {
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not accept emergency: $error')),
-        );
-      }
-    }
-
-    final currentResponderId = AppDependenciesScope.of(
-      context,
-    ).authRepository.currentUser?.id;
-    final assignedToMe = incident.assignedResponderId == currentResponderId;
-    final unassigned =
-        incident.assignedResponderId == null ||
-        incident.assignedResponderId!.isEmpty;
-
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
         title: const Text('Incident Details'),
         actions: [
-          IconButton(onPressed: () {}, icon: const Icon(Icons.more_vert)),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) {
+              switch (value) {
+                case 'copy_id':
+                  Clipboard.setData(ClipboardData(text: incident.id));
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Incident ID copied to clipboard')),
+                    );
+                  }
+                case 'share_location':
+                  final lat = incident.latitude;
+                  final lon = incident.longitude;
+                  final locationText = lat != null && lon != null
+                      ? '${incident.title} at $lat, $lon'
+                      : '${incident.title} at ${incident.location}';
+                  Clipboard.setData(ClipboardData(text: locationText));
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Location copied to clipboard')),
+                    );
+                  }
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'copy_id',
+                child: ListTile(
+                  leading: Icon(Icons.copy, size: 20),
+                  title: Text('Copy ID'),
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'share_location',
+                child: ListTile(
+                  leading: Icon(Icons.share_location, size: 20),
+                  title: Text('Share Location'),
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
       body: ListView(
@@ -553,7 +916,10 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${incident.title} - ${incident.severity} Priority',
+                      incident.priorityRank != null
+                          ? '${incident.title} - #${incident.priorityRank} Priority'
+                                '${incident.riskLevel != null ? ' (${incident.riskLevel} risk)' : ''}'
+                          : '${incident.title} - ${incident.severity} Priority',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     Text(
@@ -567,17 +933,17 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          const _DetailTabs(),
+          _DetailTabs(peopleNeedingHelp: incident.people),
           const SizedBox(height: 12),
           _ResponderMapPreview(
             height: 170,
             residentLocation:
                 incident.latitude != null && incident.longitude != null
-                ? GeoPoint(
-                    latitude: incident.latitude!,
-                    longitude: incident.longitude!,
-                  )
-                : null,
+                    ? GeoPoint(
+                        latitude: incident.latitude!,
+                        longitude: incident.longitude!,
+                      )
+                    : null,
           ),
           const SizedBox(height: 14),
           Card(
@@ -598,18 +964,6 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
                   label: 'Status',
                   value: incident.status,
                 ),
-                _InfoRow(
-                  icon: Icons.groups,
-                  label: 'Assigned Team',
-                  value: incident.assignedTeamName ?? 'Auto assignment pending',
-                ),
-                _InfoRow(
-                  icon: Icons.badge,
-                  label: 'Assigned Responder',
-                  value:
-                      incident.assignedResponderName ??
-                      (unassigned ? 'Unassigned' : 'Another responder'),
-                ),
                 const _InfoRow(
                   icon: Icons.signal_cellular_alt,
                   label: 'Signal Quality',
@@ -623,66 +977,55 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
           const SizedBox(height: 16),
           Text('Actions', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 10),
-          if (unassigned) ...[
-            SentryButton(
-              label: 'Accept Emergency',
-              icon: Icons.assignment_ind,
-              onPressed: acceptIncident,
+          SentryButton(
+            label: 'Dispatch Team',
+            icon: Icons.airport_shuttle,
+            onPressed: () => updateStatus(
+              RescueStatus.acknowledged,
+              'Team dispatched to ${incident.location}.',
             ),
-            const SizedBox(height: 10),
-          ] else if (assignedToMe) ...[
-            SentryButton(
-              label: 'Assigned to You',
-              icon: Icons.verified_user,
-              onPressed: () => updateStatus(
-                RescueStatus.acknowledged,
-                'Assignment confirmed.',
-              ),
-            ),
-            const SizedBox(height: 10),
-          ],
-          if (assignedToMe) ...[
-            SentryButton(
-              label: 'Navigate to Location',
-              icon: Icons.navigation,
-              backgroundColor: AppTheme.safeGreen,
-              onPressed: () async {
-                await updateStatus(
-                  RescueStatus.inProgress,
-                  'Incident marked as en route.',
-                );
-                if (!context.mounted) return;
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) =>
-                        _ResponderNavigationScreen(incident: incident),
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: () => updateStatus(
+          ),
+          const SizedBox(height: 10),
+          SentryButton(
+            label: 'Navigate to Location',
+            icon: Icons.navigation,
+            backgroundColor: AppTheme.safeGreen,
+            onPressed: () async {
+              await updateStatus(
                 RescueStatus.inProgress,
-                'Incident marked as on-route.',
-              ),
-              icon: const Icon(Icons.flag),
-              label: const Text('Mark as On-Route'),
+                'Incident marked as en route.',
+              );
+              if (!context.mounted) return;
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) =>
+                      _ResponderNavigationScreen(incident: incident),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: () => updateStatus(
+              RescueStatus.inProgress,
+              'Incident marked as on-route.',
             ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: () async {
-                await updateStatus(
-                  RescueStatus.resolved,
-                  'Incident marked resolved.',
-                );
-                if (!context.mounted) return;
-                Navigator.of(context).pop();
-              },
-              icon: const Icon(Icons.check_circle_outline),
-              label: const Text('Resolve Incident'),
-            ),
-          ],
+            icon: const Icon(Icons.flag),
+            label: const Text('Mark as On-Route'),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: () async {
+              await updateStatus(
+                RescueStatus.resolved,
+                'Incident marked resolved.',
+              );
+              if (!context.mounted) return;
+              Navigator.of(context).pop();
+            },
+            icon: const Icon(Icons.check_circle_outline),
+            label: const Text('Resolve Incident'),
+          ),
         ],
       ),
     );
@@ -690,20 +1033,9 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
 }
 
 class _ResponderNavigationScreen extends StatefulWidget {
-  const _ResponderNavigationScreen({
-    required this.incident,
-    this.destinationOverride,
-    this.title,
-  });
+  const _ResponderNavigationScreen({required this.incident});
 
   final _Incident incident;
-
-  /// When set, route to this fixed point (e.g. a shelter) instead of looking up
-  /// the resident's GPS from the backend by request id.
-  final RescueLocationModel? destinationOverride;
-
-  /// App bar title; defaults to the resident-navigation wording.
-  final String? title;
 
   @override
   State<_ResponderNavigationScreen> createState() =>
@@ -713,11 +1045,6 @@ class _ResponderNavigationScreen extends StatefulWidget {
 class _ResponderNavigationScreenState
     extends State<_ResponderNavigationScreen> {
   final _mapController = MapController();
-
-  /// Routing to a fixed shelter point rather than a resident's live GPS — used
-  /// to swap "Resident" wording for "Shelter" across the markers and panels.
-  bool get _isShelterRoute => widget.destinationOverride != null;
-  String get _destinationLabel => _isShelterRoute ? 'Shelter' : 'Resident';
 
   GeoPoint? _responderLocation;
   RescueLocationModel? _residentLocation;
@@ -757,58 +1084,29 @@ class _ResponderNavigationScreenState
     RouteModel? route;
     String? message;
 
-    Future<RescueLocationModel?> loadResidentLocation() async {
-      final override = widget.destinationOverride;
-      if (override != null) {
-        return override;
-      }
-      try {
-        return await dependencies.rescueRepository.fetchRequestLocation(
-          widget.incident.id,
-        );
-      } catch (error) {
-        message = 'Resident GPS is not available from backend yet: $error';
-        return null;
-      }
+    try {
+      residentLocation = await dependencies.rescueRepository
+          .fetchRequestLocation(widget.incident.id);
+    } catch (error) {
+      message = 'Resident GPS is not available from backend yet: $error';
     }
 
-    Future<GeoPoint?> loadResponderLocation() async {
-      try {
-        return await dependencies.locationService.currentLocation();
-      } catch (error) {
-        message = [
-          ?message,
-          'Responder GPS is not available: $error',
-        ].join('\n');
-        return null;
-      }
+    try {
+      responderLocation = await dependencies.locationService.currentLocation();
+    } catch (error) {
+      message = [?message, 'Responder GPS is not available: $error'].join('\n');
     }
-
-    final locationResults = await Future.wait<Object?>([
-      loadResidentLocation(),
-      loadResponderLocation(),
-    ]);
-    residentLocation = locationResults[0] as RescueLocationModel?;
-    responderLocation = locationResults[1] as GeoPoint?;
 
     if (residentLocation != null && responderLocation != null) {
-      final isShelterRoute = widget.destinationOverride != null;
       try {
-        navigation = isShelterRoute
-            ? await dependencies.rescueRepository.fetchNavigationToPoint(
-                responderLocation: responderLocation,
-                destination: residentLocation.point,
-              )
-            : await dependencies.rescueRepository.fetchNavigation(
-                id: widget.incident.id,
-                responderLocation: responderLocation,
-              );
+        navigation = await dependencies.rescueRepository.fetchNavigation(
+          id: widget.incident.id,
+          responderLocation: responderLocation,
+        );
         route = navigation?.route;
 
         message = route == null
-            ? 'Location loaded. Backend did not return navigation waypoints yet.'
-            : isShelterRoute
-            ? 'Backend route loaded to shelter.'
+            ? 'Resident GPS loaded. Backend did not return navigation waypoints yet.'
             : 'Backend route loaded to resident location.';
       } catch (error) {
         message = [
@@ -851,14 +1149,10 @@ class _ResponderNavigationScreenState
       points.addAll(waypoints.map((p) => LatLng(p.latitude, p.longitude)));
     }
     if (_responderLocation != null) {
-      points.add(
-        LatLng(_responderLocation!.latitude, _responderLocation!.longitude),
-      );
+      points.add(LatLng(_responderLocation!.latitude, _responderLocation!.longitude));
     }
     if (_residentLocation != null) {
-      points.add(
-        LatLng(_residentLocation!.latitude, _residentLocation!.longitude),
-      );
+      points.add(LatLng(_residentLocation!.latitude, _residentLocation!.longitude));
     }
     if (points.length < 2) return;
 
@@ -875,7 +1169,7 @@ class _ResponderNavigationScreenState
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        title: Text(widget.title ?? 'Navigate to Resident'),
+        title: const Text('Navigate to Resident'),
         actions: [
           IconButton(
             tooltip: 'Refresh route',
@@ -891,7 +1185,6 @@ class _ResponderNavigationScreenState
             mapController: _mapController,
             responderLocation: _responderLocation,
             residentLocation: _residentLocation?.point,
-            destinationLabel: _destinationLabel,
             route: _route,
           ),
           Positioned(
@@ -902,7 +1195,6 @@ class _ResponderNavigationScreenState
               isLoading: _isLoading,
               hasResidentLocation: _residentLocation != null,
               hasRoute: _route != null,
-              destinationLabel: _destinationLabel,
               message: _message,
             ),
           ),
@@ -919,7 +1211,6 @@ class _ResponderNavigationScreenState
               onNavigate: _fitRoute,
               isLoading: _isLoading,
               responderLocation: _responderLocation,
-              destinationLabel: _destinationLabel,
             ),
           ),
         ],
@@ -939,6 +1230,8 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
   final _mapController = MapController();
 
   StreamSubscription<GeoPoint>? _locationSubscription;
+  StreamSubscription<Map<String, Object?>>? _teamLocationSub;
+  StreamSubscription<Map<String, Object?>>? _hazardWarningSub;
   Timer? _refreshTimer;
   GeoPoint? _responderLocation;
   bool _isLocating = false;
@@ -946,29 +1239,90 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
 
   List<RescueRequestModel> _sosRequests = const [];
   List<EvacuationCenterModel> _shelters = const [];
+  final Map<String, TeamMemberModel> _teamMembers = {};
+  List<Map<String, Object?>> _hazardWarningNodes = [];
+
+  bool _showLayerMenu = false;
+  bool _showIncidentsLayer = true;
+  bool _showTeamsLayer = true;
+  bool _showSheltersLayer = true;
+  bool _showHazardZonesLayer = true;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _loadMapData();
+      if (mounted) {
+        _loadMapData();
+        _listenToTeamLocations();
+        _listenToHazardWarnings();
+      }
     });
-    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted) _loadMapData();
-    });
+    _refreshTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) { if (mounted) _loadMapData(); },
+    );
   }
 
   @override
   void dispose() {
     _locationSubscription?.cancel();
+    _teamLocationSub?.cancel();
+    _hazardWarningSub?.cancel();
     _refreshTimer?.cancel();
     super.dispose();
   }
 
+  void _listenToTeamLocations() {
+    final socket = AppDependenciesScope.of(context).towerSocket;
+    _teamLocationSub = socket.onTeamLocation.listen((data) {
+      if (!mounted) return;
+      final userId = data['user_id']?.toString();
+      if (userId == null) return;
+      final lat = data['latitude'];
+      final lng = data['longitude'];
+      final latitude = lat is num ? lat.toDouble() : double.tryParse('$lat');
+      final longitude = lng is num ? lng.toDouble() : double.tryParse('$lng');
+      if (latitude == null || longitude == null) return;
+
+      setState(() {
+        _teamMembers[userId] = TeamMemberModel(
+          id: userId,
+          userId: userId,
+          firstName: data['first_name']?.toString() ?? '',
+          lastName: data['last_name']?.toString() ?? '',
+          role: 'member',
+          latitude: latitude,
+          longitude: longitude,
+          locationUpdatedAt: DateTime.now(),
+        );
+      });
+    });
+  }
+
+  void _listenToHazardWarnings() {
+    final socket = AppDependenciesScope.of(context).towerSocket;
+    _hazardWarningSub = socket.onHazardWarning.listen((data) {
+      if (!mounted) return;
+      final nodes = data['nodes'];
+      if (nodes is List) {
+        final parsed = <Map<String, Object?>>[];
+        for (final node in nodes) {
+          if (node is Map) {
+            parsed.add(Map<String, Object?>.from(node));
+          }
+        }
+        if (parsed.isNotEmpty) {
+          setState(() {
+            _hazardWarningNodes = parsed;
+          });
+        }
+      }
+    });
+  }
+
   Future<void> _loadMapData() async {
-    final deps = AppDependenciesScope.of(context);
-    final repo = deps.rescueRepository;
-    final responderId = deps.authRepository.currentUser?.id;
+    final repo = AppDependenciesScope.of(context).rescueRepository;
     try {
       final results = await Future.wait([
         repo.fetchRequests(),
@@ -977,13 +1331,7 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
       if (!mounted) return;
       setState(() {
         _sosRequests = (results[0] as List<RescueRequestModel>)
-            .where(
-              (r) =>
-                  _isVisibleToResponder(r, responderId) &&
-                  _isActiveRescueRequest(r) &&
-                  r.latitude != null &&
-                  r.longitude != null,
-            )
+            .where((r) => r.latitude != null && r.longitude != null)
             .toList();
         _shelters = results[1] as List<EvacuationCenterModel>;
       });
@@ -1030,34 +1378,13 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
   }
 
   void _showShelterInfoSheet(
-    BuildContext context,
-    EvacuationCenterModel shelter,
-  ) {
+      BuildContext context, EvacuationCenterModel shelter) {
     showModalBottomSheet<void>(
       context: context,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => _ShelterInfoSheet(
-        shelter: shelter,
-        onDeleted: _loadMapData,
-        onNavigate: () {
-          Navigator.of(context).pop();
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => _ResponderNavigationScreen(
-                incident: _Incident.fromShelter(shelter),
-                destinationOverride: RescueLocationModel(
-                  latitude: shelter.latitude,
-                  longitude: shelter.longitude,
-                  locationLabel: shelter.name,
-                ),
-                title: 'Navigate to Shelter',
-              ),
-            ),
-          );
-        },
-      ),
+      builder: (_) => _ShelterInfoSheet(shelter: shelter),
     );
   }
 
@@ -1210,7 +1537,7 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
                 ),
                 IconButton(
                   tooltip: 'Layers',
-                  onPressed: () {},
+                  onPressed: () => setState(() => _showLayerMenu = !_showLayerMenu),
                   icon: const Icon(Icons.layers, color: Colors.white),
                 ),
               ],
@@ -1223,14 +1550,30 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
                   height: double.infinity,
                   mapController: _mapController,
                   responderLocation: _responderLocation,
-                  sosRequests: _sosRequests,
-                  shelters: _shelters,
+                  sosRequests: _showIncidentsLayer ? _sosRequests : const [],
+                  shelters: _showSheltersLayer ? _shelters : const [],
+                  teamMembers: _showTeamsLayer ? _teamMembers.values.toList() : const [],
+                  hazardZones: _showHazardZonesLayer ? _hazardWarningNodes : const [],
                   onSosRequestTap: (request) =>
                       _showSosBottomSheet(context, request),
                   onShelterTap: (shelter) =>
                       _showShelterInfoSheet(context, shelter),
                 ),
-                const Positioned(top: 12, left: 12, child: _MapLayerMenu()),
+                if (_showLayerMenu)
+                  Positioned(
+                    top: 12,
+                    left: 12,
+                    child: _MapLayerMenu(
+                      showIncidents: _showIncidentsLayer,
+                      showTeams: _showTeamsLayer,
+                      showShelters: _showSheltersLayer,
+                      showHazardZones: _showHazardZonesLayer,
+                      onToggleIncidents: () => setState(() => _showIncidentsLayer = !_showIncidentsLayer),
+                      onToggleTeams: () => setState(() => _showTeamsLayer = !_showTeamsLayer),
+                      onToggleShelters: () => setState(() => _showSheltersLayer = !_showSheltersLayer),
+                      onToggleHazardZones: () => setState(() => _showHazardZonesLayer = !_showHazardZonesLayer),
+                    ),
+                  ),
                 Positioned(
                   top: 12,
                   right: 12,
@@ -1275,74 +1618,664 @@ class ResponderTeamsScreen extends StatefulWidget {
 }
 
 class _ResponderTeamsScreenState extends State<ResponderTeamsScreen> {
-  List<RescueRequestModel> _requests = [];
+  static const _natoAlphabet = [
+    'Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot',
+    'Golf', 'Hotel', 'India', 'Juliet', 'Kilo', 'Lima',
+    'Mike', 'November', 'Oscar', 'Papa', 'Quebec', 'Romeo',
+    'Sierra', 'Tango', 'Uniform', 'Victor', 'Whiskey', 'X-ray',
+    'Yankee', 'Zulu',
+  ];
+
+  List<TeamModel> _teams = [];
+  TeamModel? _currentTeam;
   bool _isLoading = true;
+  bool _isActing = false;
+  String? _error;
+  bool _liveLocationEnabled = false;
+  Timer? _locationTimer;
+  StreamSubscription<Map<String, Object?>>? _locationSub;
+  StreamSubscription<Map<String, Object?>>? _joinedSub;
+  StreamSubscription<Map<String, Object?>>? _leftSub;
+
+  String? get _userId =>
+      AppDependenciesScope.of(context).authRepository.currentUser?.id;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _load();
+      if (mounted) {
+        _load();
+        _listenToSocket();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _locationTimer?.cancel();
+    _locationSub?.cancel();
+    _joinedSub?.cancel();
+    _leftSub?.cancel();
+    super.dispose();
+  }
+
+  void _listenToSocket() {
+    final socket = AppDependenciesScope.of(context).towerSocket;
+
+    _locationSub = socket.onTeamLocation.listen((data) {
+      if (!mounted || _currentTeam == null) return;
+      final teamId = data['team_id']?.toString();
+      if (teamId != _currentTeam!.id) return;
+      _load();
+    });
+
+    _joinedSub = socket.onTeamMemberJoined.listen((data) {
+      if (!mounted) return;
+      _load();
+    });
+
+    _leftSub = socket.onTeamMemberLeft.listen((data) {
+      if (!mounted) return;
+      final teamId = data['team_id']?.toString();
+      final leftUserId = data['user_id']?.toString();
+      if (teamId == _currentTeam?.id && leftUserId == _userId) {
+        setState(() => _currentTeam = null);
+      }
+      _load();
     });
   }
 
   Future<void> _load() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
     try {
-      final requests = await AppDependenciesScope.of(
-        context,
-      ).rescueRepository.fetchRequests();
+      final deps = AppDependenciesScope.of(context);
+      final teams = await deps.teamRepository.fetchTeams();
       if (!mounted) return;
+
+      final userId = _userId;
+      TeamModel? myTeam;
+      if (userId != null) {
+        for (final team in teams) {
+          final isMember = team.members.any((m) => m.userId == userId);
+          if (isMember) {
+            myTeam = team;
+            break;
+          }
+        }
+      }
+
       setState(() {
-        _requests = requests;
+        _teams = teams;
+        _currentTeam = myTeam;
         _isLoading = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
-      setState(() => _isLoading = false);
+      setState(() {
+        _error = 'Could not load teams: $e';
+        _isLoading = false;
+      });
     }
+  }
+
+  Future<void> _createTeam(String name) async {
+    final userId = _userId;
+    if (userId == null) return;
+    setState(() => _isActing = true);
+    try {
+      final deps = AppDependenciesScope.of(context);
+      await deps.teamRepository.createTeam(name, userId);
+      if (!mounted) return;
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not create team: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _isActing = false);
+    }
+  }
+
+  Future<void> _joinTeam(TeamModel team) async {
+    final userId = _userId;
+    if (userId == null) return;
+    setState(() => _isActing = true);
+    try {
+      final deps = AppDependenciesScope.of(context);
+      await deps.teamRepository.joinTeam(team.id, userId);
+      if (!mounted) return;
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not join team: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _isActing = false);
+    }
+  }
+
+  Future<void> _leaveTeam() async {
+    final userId = _userId;
+    final team = _currentTeam;
+    if (userId == null || team == null) return;
+    setState(() => _isActing = true);
+    _stopLiveLocation();
+    try {
+      final deps = AppDependenciesScope.of(context);
+      await deps.teamRepository.leaveTeam(team.id, userId);
+      if (!mounted) return;
+      setState(() => _currentTeam = null);
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not leave team: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _isActing = false);
+    }
+  }
+
+  void _toggleLiveLocation(bool enabled) {
+    setState(() => _liveLocationEnabled = enabled);
+    if (enabled) {
+      _startLiveLocation();
+    } else {
+      _stopLiveLocation();
+    }
+  }
+
+  void _startLiveLocation() {
+    _locationTimer?.cancel();
+    _sendLocation();
+    _locationTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => _sendLocation(),
+    );
+  }
+
+  void _stopLiveLocation() {
+    _locationTimer?.cancel();
+    _locationTimer = null;
+    if (mounted) setState(() => _liveLocationEnabled = false);
+  }
+
+  Future<void> _sendLocation() async {
+    final team = _currentTeam;
+    final userId = _userId;
+    if (team == null || userId == null) return;
+
+    try {
+      final deps = AppDependenciesScope.of(context);
+      final location = await deps.locationService.currentLocation();
+      if (!mounted) return;
+      await deps.teamRepository.updateLocation(
+        team.id,
+        userId,
+        location.latitude,
+        location.longitude,
+      );
+      deps.towerSocket.emitLocationUpdate(
+        team.id,
+        location.latitude,
+        location.longitude,
+      );
+    } catch (_) {
+      // Location send is best-effort
+    }
+  }
+
+  void _showCreateTeamDialog() {
+    final controller = TextEditingController();
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Create Team'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                labelText: 'Team Name',
+                hintText: 'e.g. Alpha, Bravo, Charlie',
+              ),
+              textCapitalization: TextCapitalization.words,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Suggestions',
+              style: Theme.of(dialogContext).textTheme.labelMedium,
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final name in _natoAlphabet.take(8))
+                  ActionChip(
+                    label: Text(name, style: const TextStyle(fontSize: 12)),
+                    onPressed: () => controller.text = name,
+                  ),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final name = controller.text.trim();
+              if (name.isEmpty) return;
+              Navigator.of(dialogContext).pop();
+              _createTeam(name);
+            },
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _teamStatusColor(String status) {
+    return switch (status) {
+      'deployed' => AppTheme.safeGreen,
+      'returning' => AppTheme.warningAmber,
+      _ => AppTheme.signalBlue,
+    };
   }
 
   @override
   Widget build(BuildContext context) {
-    final responderId = AppDependenciesScope.of(
-      context,
-    ).authRepository.currentUser?.id;
-    final active = _requestsForResponder(_requests, responderId);
+    final team = _currentTeam;
 
     return _ResponderPage(
+      onRefresh: _load,
       header: const _SimpleResponderHeader(title: 'Team Coordination'),
       children: [
-        _SectionTitle(
-          title: _isLoading
-              ? 'Active Deployments'
-              : 'Active Deployments (${active.length})',
-        ),
-        const SizedBox(height: 10),
         if (_isLoading)
-          const Center(
-            child: Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: CircularProgressIndicator(),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 40),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (_error != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Column(
+              children: [
+                Text(_error!, textAlign: TextAlign.center),
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: _load,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry'),
+                ),
+              ],
             ),
           )
-        else if (active.isEmpty)
+        else if (team != null)
+          _buildMyTeamView(team)
+        else
+          _buildTeamListView(),
+      ],
+    );
+  }
+
+  Widget _buildMyTeamView(TeamModel team) {
+    final userId = _userId;
+    final statusColor = _teamStatusColor(team.status);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Card(
+          color: AppTheme.deepNavy,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.groups,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Team ${team.name}',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(color: Colors.white),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '${team.members.length} member${team.members.length == 1 ? '' : 's'}',
+                        style: Theme.of(context).textTheme.labelMedium
+                            ?.copyWith(color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                ),
+                _SeverityPill(
+                  label: team.status.toUpperCase(),
+                  color: statusColor,
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(
+              children: [
+                Icon(
+                  _liveLocationEnabled ? Icons.gps_fixed : Icons.gps_off,
+                  color: _liveLocationEnabled
+                      ? AppTheme.safeGreen
+                      : AppTheme.textMuted,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Live Location Sharing',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      Text(
+                        _liveLocationEnabled
+                            ? 'Your GPS is broadcasting to the team'
+                            : 'Share your position with team members',
+                        style: Theme.of(context).textTheme.labelSmall,
+                      ),
+                    ],
+                  ),
+                ),
+                Switch(
+                  value: _liveLocationEnabled,
+                  onChanged: _toggleLiveLocation,
+                  activeTrackColor: AppTheme.safeGreen,
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 18),
+        _SectionTitle(
+          title: 'Team Members (${team.members.length})',
+        ),
+        const SizedBox(height: 10),
+        if (team.members.isEmpty)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 16),
             child: Center(
               child: Text(
-                'No active deployments at this time.',
+                'No members in this team yet.',
                 style: TextStyle(color: AppTheme.textMuted),
               ),
             ),
           )
         else
-          for (final req in active) _DeploymentTile(request: req),
+          for (final member in team.members)
+            _TeamMemberTile(
+              member: member,
+              isCurrentUser: member.userId == userId,
+            ),
         const SizedBox(height: 18),
-        const _SectionTitle(title: 'Quick Actions'),
-        const SizedBox(height: 10),
-        const _QuickActionGrid(),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _isActing ? null : _leaveTeam,
+            icon: const Icon(Icons.logout, color: AppTheme.dangerRed),
+            label: const Text(
+              'Leave Team',
+              style: TextStyle(color: AppTheme.dangerRed),
+            ),
+          ),
+        ),
       ],
+    );
+  }
+
+  Widget _buildTeamListView() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionTitle(
+          title: 'Available Teams (${_teams.length})',
+        ),
+        const SizedBox(height: 10),
+        if (_teams.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Center(
+              child: Column(
+                children: [
+                  const Icon(
+                    Icons.groups_outlined,
+                    size: 48,
+                    color: AppTheme.textMuted,
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'No teams available yet.',
+                    style: TextStyle(color: AppTheme.textMuted),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: _isActing ? null : _showCreateTeamDialog,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Create First Team'),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else ...[
+          for (final team in _teams) ...[
+            _TeamCard(
+              team: team,
+              statusColor: _teamStatusColor(team.status),
+              onJoin: _isActing ? null : () => _joinTeam(team),
+            ),
+            const SizedBox(height: 10),
+          ],
+        ],
+        const SizedBox(height: 18),
+        SizedBox(
+          width: double.infinity,
+          child: SentryButton(
+            label: 'Create New Team',
+            icon: Icons.add,
+            onPressed: _isActing ? null : _showCreateTeamDialog,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TeamCard extends StatelessWidget {
+  const _TeamCard({
+    required this.team,
+    required this.statusColor,
+    this.onJoin,
+  });
+
+  final TeamModel team;
+  final Color statusColor;
+  final VoidCallback? onJoin;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onJoin,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              _IconBubble(
+                icon: Icons.groups,
+                color: statusColor,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Team ${team.name}',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${team.memberCount} member${team.memberCount == 1 ? '' : 's'}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  _SeverityPill(
+                    label: team.status.toUpperCase(),
+                    color: statusColor,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Tap to join',
+                    style: TextStyle(
+                      color: AppTheme.signalBlue,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TeamMemberTile extends StatelessWidget {
+  const _TeamMemberTile({
+    required this.member,
+    required this.isCurrentUser,
+  });
+
+  final TeamMemberModel member;
+  final bool isCurrentUser;
+
+  @override
+  Widget build(BuildContext context) {
+    final isLeader = member.role == 'leader';
+    final locationLabel = member.hasLocation && member.locationUpdatedAt != null
+        ? _timeAgoLabel(member.locationUpdatedAt!)
+        : 'No location';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Card(
+        child: ListTile(
+          leading: CircleAvatar(
+            backgroundColor: isLeader
+                ? AppTheme.warningAmber.withValues(alpha: 0.14)
+                : AppTheme.signalBlue.withValues(alpha: 0.14),
+            child: Icon(
+              isLeader ? Icons.star : Icons.person,
+              color: isLeader ? AppTheme.warningAmber : AppTheme.signalBlue,
+              size: 20,
+            ),
+          ),
+          title: Row(
+            children: [
+              Flexible(
+                child: Text(
+                  member.fullName.isEmpty ? 'Member' : member.fullName,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (isCurrentUser)
+                const Padding(
+                  padding: EdgeInsets.only(left: 6),
+                  child: Text(
+                    '(You)',
+                    style: TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              if (isLeader)
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppTheme.warningAmber.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text(
+                      'LEADER',
+                      style: TextStyle(
+                        color: AppTheme.warningAmber,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          subtitle: Text(locationLabel),
+          trailing: member.hasLocation
+              ? const Icon(
+                  Icons.location_on,
+                  color: AppTheme.safeGreen,
+                  size: 18,
+                )
+              : const Icon(
+                  Icons.location_off,
+                  color: AppTheme.textMuted,
+                  size: 18,
+                ),
+        ),
+      ),
     );
   }
 }
@@ -1359,8 +2292,6 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
   int _resolvedToday = 0;
   int _dispatched = 0;
   int _activeAlerts = 0;
-  List<RescueRequestModel> _requests = const [];
-  List<AlertModel> _alerts = const [];
   bool _isLoading = true;
 
   @override
@@ -1383,32 +2314,30 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
       if (!mounted) return;
 
       final requests = results[0] as List<RescueRequestModel>;
-      final alerts = results[1] as List<AlertModel>;
-      final responderId = deps.authRepository.currentUser?.id;
-      final visibleRequests = requests
-          .where((request) => _isVisibleToResponder(request, responderId))
-          .toList();
+      final alerts = results[1];
       final today = DateTime.now();
 
       setState(() {
-        _requests = visibleRequests;
-        _alerts = alerts;
-        _activeIncidents = visibleRequests.where(_isActiveRescueRequest).length;
+        _activeIncidents = requests
+            .where(
+              (r) =>
+                  r.status == RescueStatus.pending ||
+                  r.status == RescueStatus.acknowledged ||
+                  r.status == RescueStatus.inProgress,
+            )
+            .length;
         _resolvedToday = requests
             .where(
               (r) =>
-                  _isVisibleToResponder(r, responderId) &&
                   r.status == RescueStatus.resolved &&
                   r.createdAt.year == today.year &&
                   r.createdAt.month == today.month &&
                   r.createdAt.day == today.day,
             )
             .length;
-        _dispatched = visibleRequests
+        _dispatched = requests
             .where(
               (r) =>
-                  r.assignedResponderId == responderId ||
-                  r.assignedTeamId != null ||
                   r.status == RescueStatus.acknowledged ||
                   r.status == RescueStatus.inProgress,
             )
@@ -1425,13 +2354,6 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
   @override
   Widget build(BuildContext context) {
     final timeStr = _formatTime(DateTime.now());
-    final activeRequests = _requests.where(_isActiveRescueRequest).toList();
-    final resolvedRows = _requests
-        .where((request) => request.status == RescueStatus.resolved)
-        .toList();
-    final teamRows = activeRequests
-        .where((request) => request.assignedTeamName != null)
-        .toList();
 
     return _ResponderPage(
       header: const _SimpleResponderHeader(title: 'Reports'),
@@ -1447,18 +2369,6 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
               ? 'Loading…'
               : '$_activeIncidents active · $_resolvedToday resolved today',
           icon: Icons.summarize,
-          onTap: _isLoading
-              ? null
-              : () => _showReportSheet(
-                  title: 'Situation Report',
-                  rows: [
-                    'Active incidents: $_activeIncidents',
-                    'Resolved records: ${resolvedRows.length}',
-                    'People needing help: ${activeRequests.fold<int>(0, (sum, request) => sum + request.peopleNeedingHelp)}',
-                    for (final request in activeRequests.take(8))
-                      '${_hazardTitle(request.emergencyType)} - ${request.locationLabel ?? request.description}',
-                  ],
-                ),
         ),
         _ReportTile(
           title: 'Team Status',
@@ -1466,17 +2376,6 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
               ? 'Loading…'
               : '$_dispatched dispatched · network healthy',
           icon: Icons.inventory_2,
-          onTap: _isLoading
-              ? null
-              : () => _showReportSheet(
-                  title: 'Team Status',
-                  rows: [
-                    'Assigned teams: ${teamRows.map((request) => request.assignedTeamId).toSet().length}',
-                    'Network status: healthy',
-                    for (final request in teamRows.take(10))
-                      '${request.assignedTeamName}: ${request.assignedTeamStatus ?? 'assigned'} - ${request.locationLabel ?? request.description}',
-                  ],
-                ),
         ),
         _ReportTile(
           title: 'Alert Summary',
@@ -1484,30 +2383,8 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
               ? 'Loading…'
               : '$_activeAlerts active alert${_activeAlerts == 1 ? '' : 's'} in the system',
           icon: Icons.forum,
-          onTap: _isLoading
-              ? null
-              : () => _showReportSheet(
-                  title: 'Alert Summary',
-                  rows: [
-                    'Active alerts: $_activeAlerts',
-                    for (final alert in _alerts.take(10))
-                      '${alert.title} - ${alert.location}',
-                  ],
-                ),
         ),
       ],
-    );
-  }
-
-  void _showReportSheet({required String title, required List<String> rows}) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (context) => _ReportDetailSheet(title: title, rows: rows),
     );
   }
 }
@@ -1520,13 +2397,26 @@ String _formatTime(DateTime dt) {
 }
 
 class _ResponderPage extends StatelessWidget {
-  const _ResponderPage({required this.header, required this.children});
+  const _ResponderPage({required this.header, required this.children, this.onRefresh});
 
   final Widget header;
   final List<Widget> children;
+  final Future<void> Function()? onRefresh;
 
   @override
   Widget build(BuildContext context) {
+    Widget listView = ListView(
+      padding: const EdgeInsets.all(16),
+      children: children,
+    );
+
+    if (onRefresh != null) {
+      listView = RefreshIndicator(
+        onRefresh: onRefresh!,
+        child: listView,
+      );
+    }
+
     return ColoredBox(
       color: AppTheme.surface,
       child: SafeArea(
@@ -1534,12 +2424,7 @@ class _ResponderPage extends StatelessWidget {
         child: Column(
           children: [
             header,
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: children,
-              ),
-            ),
+            Expanded(child: listView),
           ],
         ),
       ),
@@ -1628,7 +2513,7 @@ class _SimpleResponderHeader extends StatelessWidget {
       child: Row(
         children: [
           IconButton(
-            onPressed: () {},
+            onPressed: () => Navigator.maybePop(context),
             tooltip: 'Back',
             icon: Icon(leadingIcon ?? Icons.menu, color: Colors.white),
           ),
@@ -1642,11 +2527,14 @@ class _SimpleResponderHeader extends StatelessWidget {
               ),
             ),
           ),
-          IconButton(
-            onPressed: () {},
-            tooltip: 'Action',
-            icon: Icon(trailingIcon ?? Icons.more_vert, color: Colors.white),
-          ),
+          if (trailingIcon != null)
+            IconButton(
+              onPressed: () {},
+              tooltip: 'Action',
+              icon: Icon(trailingIcon, color: Colors.white),
+            )
+          else
+            const SizedBox(width: 48),
         ],
       ),
     );
@@ -1699,9 +2587,9 @@ class _LiveStatusBanner extends StatelessWidget {
                   const SizedBox(height: 3),
                   Text(
                     subtitle,
-                    style: Theme.of(
-                      context,
-                    ).textTheme.labelMedium?.copyWith(color: Colors.white70),
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: Colors.white70,
+                    ),
                   ),
                 ],
               ),
@@ -1743,18 +2631,14 @@ class _AiReasoningCardState extends State<_AiReasoningCard> {
       return;
     }
     try {
-      final node = await AppDependenciesScope.of(context).predictionRepository
-          .fetchIncidentPrediction(
-            latitude: lat,
-            longitude: lon,
-            hazardType: widget.incident.hazardType,
-          );
-      if (mounted) {
-        setState(() {
-          _node = node;
-          _loading = false;
-        });
-      }
+      final node = await AppDependenciesScope.of(
+        context,
+      ).predictionRepository.fetchIncidentPrediction(
+        latitude: lat,
+        longitude: lon,
+        hazardType: widget.incident.hazardType,
+      );
+      if (mounted) setState(() { _node = node; _loading = false; });
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -1785,10 +2669,7 @@ class _AiReasoningCardState extends State<_AiReasoningCard> {
                     color: AppTheme.signalBlue.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(
-                    Icons.psychology,
-                    color: AppTheme.signalBlue,
-                  ),
+                  child: const Icon(Icons.psychology, color: AppTheme.signalBlue),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -1816,8 +2697,7 @@ class _AiReasoningCardState extends State<_AiReasoningCard> {
             else if (node == null)
               const _ReasonLine(
                 label: 'Status',
-                value:
-                    'AI assessment unavailable — incident location not pinned yet.',
+                value: 'AI assessment unavailable — incident location not pinned yet.',
               )
             else ...[
               _ReasonLine(label: 'Risk', value: node.probabilityLabel),
@@ -1958,7 +2838,10 @@ class _StatTile extends StatelessWidget {
 }
 
 class _LiveRecentIncidents extends StatelessWidget {
-  const _LiveRecentIncidents({required this.requests, required this.isLoading});
+  const _LiveRecentIncidents({
+    required this.requests,
+    required this.isLoading,
+  });
 
   final List<RescueRequestModel> requests;
   final bool isLoading;
@@ -2005,9 +2888,6 @@ class _LiveRecentIncidents extends StatelessWidget {
   }
 }
 
-/// Live hazard risk heatmap, built from the predictions the backend has saved
-/// (driven by the typhoon simulator). Each location becomes a weighted hot spot
-/// coloured by risk.
 class _HeatmapPreview extends StatefulWidget {
   const _HeatmapPreview();
 
@@ -2016,213 +2896,197 @@ class _HeatmapPreview extends StatefulWidget {
 }
 
 class _HeatmapPreviewState extends State<_HeatmapPreview> {
-  static const _center = LatLng(13.6218, 123.1948);
-
-  final _controller = MapController();
-  List<HazardHeatPoint>? _points;
-  bool _loading = true;
+  PredictionBundle? _bundle;
+  List<RescueRequestModel> _activeRequests = const [];
+  bool _isLoading = true;
+  String? _errorMessage;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _load();
+      if (mounted) _fetchData();
+    });
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) _fetchData(showLoading: false);
     });
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _refreshTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
-    try {
-      final points = await AppDependenciesScope.of(
-        context,
-      ).predictionRepository.fetchHazardHeatPoints();
-      if (!mounted) return;
+  Future<void> _fetchData({bool showLoading = true}) async {
+    if (showLoading) {
       setState(() {
-        _points = points;
-        _loading = false;
+        _isLoading = true;
+        _errorMessage = null;
       });
-      _fitTo(points);
-    } catch (_) {
+    }
+
+    try {
+      final dependencies = AppDependenciesScope.of(context);
+      final results = await Future.wait([
+        dependencies.predictionRepository.fetchHomePredictions(),
+        dependencies.rescueRepository.fetchRequests(),
+      ]);
+      if (!mounted) return;
+      final bundle = results[0] as PredictionBundle;
+      final requests = results[1] as List<RescueRequestModel>;
+      setState(() {
+        _bundle = bundle;
+        _activeRequests = requests
+            .where(
+              (r) =>
+                  r.status != RescueStatus.resolved &&
+                  r.status != RescueStatus.cancelled &&
+                  r.latitude != null &&
+                  r.longitude != null,
+            )
+            .toList();
+        _isLoading = false;
+      });
+    } catch (e) {
       if (!mounted) return;
       setState(() {
-        _points = const [];
-        _loading = false;
+        _errorMessage = 'Could not load risk data: $e';
+        _isLoading = false;
       });
     }
   }
 
-  void _fitTo(List<HazardHeatPoint> points) {
-    if (points.isEmpty) return;
-    final bounds = LatLngBounds.fromPoints(
-      points.map((p) => LatLng(p.latitude, p.longitude)).toList(),
-    );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      try {
-        _controller.fitCamera(
-          CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(40)),
-        );
-      } catch (_) {
-        // Camera not ready yet — the initial center is a sensible fallback.
-      }
-    });
-  }
-
-  static Color _heatColor(double severity) {
-    if (severity >= 0.7) return AppTheme.dangerRed;
-    if (severity >= 0.45) return AppTheme.warningAmber;
-    return AppTheme.safeGreen;
+  List<Map<String, Object?>> get _hazardZones {
+    final bundle = _bundle;
+    if (bundle == null) return const [];
+    return [
+      for (final node in [bundle.flood, bundle.landslide])
+        if (node != null && node.latitude != null && node.longitude != null)
+          {
+            'lat': node.latitude,
+            'lon': node.longitude,
+            'alert_level': node.alertLevel,
+          },
+    ];
   }
 
   @override
   Widget build(BuildContext context) {
-    final points = _points;
-    final hasPoints = points != null && points.isNotEmpty;
+    final bundle = _bundle;
+
+    // Count active alerts from predictions
+    int activeAlerts = 0;
+    int highRiskAreas = 0;
+    String floodStatus = 'N/A';
+    String landslideStatus = 'N/A';
+
+    if (bundle != null) {
+      if (bundle.flood != null) {
+        if (bundle.flood!.alert) activeAlerts++;
+        if (bundle.flood!.alertLevel.toLowerCase().contains('high') ||
+            bundle.flood!.alertLevel.toLowerCase().contains('critical')) {
+          highRiskAreas++;
+        }
+        floodStatus = bundle.flood!.alertLevel;
+      }
+      if (bundle.landslide != null) {
+        if (bundle.landslide!.alert) activeAlerts++;
+        if (bundle.landslide!.alertLevel.toLowerCase().contains('high') ||
+            bundle.landslide!.alertLevel.toLowerCase().contains('critical')) {
+          highRiskAreas++;
+        }
+        landslideStatus = bundle.landslide!.alertLevel;
+      }
+    }
+
+    final String title;
+    final String subtitle;
+
+    if (_isLoading && bundle == null) {
+      title = 'Loading risk assessment...';
+      subtitle = 'Fetching prediction data from backend.';
+    } else if (_errorMessage != null && bundle == null) {
+      title = 'Risk layer unavailable';
+      subtitle = _errorMessage!;
+    } else if (bundle == null) {
+      title = 'No prediction data';
+      subtitle = 'Backend has not returned risk data yet.';
+    } else {
+      title = '$activeAlerts active alert${activeAlerts == 1 ? '' : 's'}, '
+          '$highRiskAreas high-risk area${highRiskAreas == 1 ? '' : 's'}';
+      subtitle = 'Flood: $floodStatus  |  Landslide: $landslideStatus  |  '
+          'Rainfall: ${bundle.rainfallMm.toStringAsFixed(0)} mm';
+    }
 
     return Card(
       clipBehavior: Clip.antiAlias,
-      child: SizedBox(
-        height: 220,
-        child: Stack(
-          children: [
-            FlutterMap(
-              mapController: _controller,
-              options: const MapOptions(
-                initialCenter: _center,
-                initialZoom: 11.5,
-                minZoom: 4,
-                maxZoom: 18,
-                interactionOptions: InteractionOptions(
-                  flags: InteractiveFlag.pinchZoom | InteractiveFlag.drag,
-                ),
-              ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 6, 6),
+            child: Row(
               children: [
-                TileLayer(
-                  urlTemplate: MapTileConfig.mapboxStreetsUrl,
-                  userAgentPackageName: 'com.example.sentrymesh_frontend',
-                  maxZoom: 18,
-                ),
-                if (hasPoints)
-                  CircleLayer(
-                    circles: [
-                      for (final point in points)
-                        CircleMarker(
-                          point: LatLng(point.latitude, point.longitude),
-                          radius: 320 + point.severity * 900,
-                          useRadiusInMeter: true,
-                          color: _heatColor(
-                            point.severity,
-                          ).withValues(alpha: 0.28),
-                          borderColor: _heatColor(
-                            point.severity,
-                          ).withValues(alpha: 0.65),
-                          borderStrokeWidth: 1.2,
-                        ),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: Theme.of(context).textTheme.titleSmall),
+                      const SizedBox(height: 2),
+                      Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
                     ],
                   ),
+                ),
+                IconButton(
+                  tooltip: 'Refresh risk map',
+                  onPressed: _isLoading ? null : _fetchData,
+                  icon: _isLoading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh),
+                ),
               ],
             ),
-            if (hasPoints)
-              const Positioned(left: 8, bottom: 8, child: _HeatmapLegend()),
-            Positioned(
-              top: 8,
-              right: 8,
-              child: Material(
-                color: Colors.white,
-                shape: const CircleBorder(),
-                elevation: 2,
-                child: IconButton(
-                  tooltip: 'Refresh risk layer',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: _loading ? null : _load,
-                  icon: const Icon(Icons.refresh_rounded, size: 20),
-                ),
+          ),
+          GestureDetector(
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const ResponderLiveMapScreen(),
               ),
             ),
-            if (_loading)
-              const Positioned.fill(
-                child: ColoredBox(
-                  color: Color(0x66FFFFFF),
-                  child: Center(
-                    child: SizedBox(
-                      width: 26,
-                      height: 26,
-                      child: CircularProgressIndicator(strokeWidth: 3),
-                    ),
-                  ),
-                ),
-              ),
-            if (!_loading && !hasPoints)
-              Positioned.fill(
-                child: ColoredBox(
-                  color: const Color(0xF2FFFFFF),
-                  child: Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(18),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.layers_clear_rounded,
-                            color: AppTheme.signalBlue,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'No risk data yet',
-                            style: Theme.of(context).textTheme.titleSmall,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Run the typhoon simulator or wait for predictions to populate the risk layer.',
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _HeatmapLegend extends StatelessWidget {
-  const _HeatmapLegend();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.92),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: const Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _LegendDot(color: AppTheme.safeGreen, label: 'Low'),
-          SizedBox(width: 10),
-          _LegendDot(color: AppTheme.warningAmber, label: 'Medium'),
-          SizedBox(width: 10),
-          _LegendDot(color: AppTheme.dangerRed, label: 'High'),
+            child: _ResponderMapPreview(
+              height: 170,
+              sosRequests: _activeRequests,
+              hazardZones: _hazardZones,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: const [
+                _RiskLegendDot(color: AppTheme.safeGreen, label: 'Low'),
+                SizedBox(width: 18),
+                _RiskLegendDot(color: AppTheme.warningAmber, label: 'Medium'),
+                SizedBox(width: 18),
+                _RiskLegendDot(color: AppTheme.dangerRed, label: 'High'),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
 }
 
-class _LegendDot extends StatelessWidget {
-  const _LegendDot({required this.color, required this.label});
+class _RiskLegendDot extends StatelessWidget {
+  const _RiskLegendDot({required this.color, required this.label});
 
   final Color color;
   final String label;
@@ -2237,15 +3101,8 @@ class _LegendDot extends StatelessWidget {
           height: 10,
           decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
-        const SizedBox(width: 4),
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 10,
-            fontWeight: FontWeight.w700,
-            color: AppTheme.textPrimary,
-          ),
-        ),
+        const SizedBox(width: 6),
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
       ],
     );
   }
@@ -2257,10 +3114,11 @@ class _ResponderMapPreview extends StatelessWidget {
     this.mapController,
     this.responderLocation,
     this.residentLocation,
-    this.destinationLabel = 'Resident',
     this.route,
     this.sosRequests = const [],
     this.shelters = const [],
+    this.teamMembers = const [],
+    this.hazardZones = const [],
     this.onSosRequestTap,
     this.onShelterTap,
   });
@@ -2269,14 +3127,20 @@ class _ResponderMapPreview extends StatelessWidget {
   final MapController? mapController;
   final GeoPoint? responderLocation;
   final GeoPoint? residentLocation;
-  final String destinationLabel;
   final RouteModel? route;
   final List<RescueRequestModel> sosRequests;
   final List<EvacuationCenterModel> shelters;
+  final List<TeamMemberModel> teamMembers;
+  final List<Map<String, Object?>> hazardZones;
   final void Function(RescueRequestModel)? onSosRequestTap;
   final void Function(EvacuationCenterModel)? onShelterTap;
 
   static const _center = LatLng(13.6218, 123.1948);
+
+  static double? _parseDouble(Object? value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2308,6 +3172,7 @@ class _ResponderMapPreview extends StatelessWidget {
         children: [
           TileLayer(
             urlTemplate: MapTileConfig.mapboxSatelliteStreetsUrl,
+            tileProvider: MapTileConfig.cachedTileProvider,
             userAgentPackageName: 'com.example.sentrymesh_frontend',
           ),
           if (routePoints.length > 1)
@@ -2325,22 +3190,26 @@ class _ResponderMapPreview extends StatelessWidget {
                 ),
               ],
             ),
-          if (sosRequests.isNotEmpty)
+          if (hazardZones.isNotEmpty)
             CircleLayer(
               circles: [
-                for (final request in sosRequests)
-                  if (request.latitude != null && request.longitude != null)
+                for (final zone in hazardZones)
+                  if (_parseDouble(zone['lat']) != null &&
+                      _parseDouble(zone['lon']) != null)
                     CircleMarker(
-                      point: LatLng(request.latitude!, request.longitude!),
-                      radius: 220 + request.peopleNeedingHelp.clamp(1, 8) * 120,
+                      point: LatLng(
+                        _parseDouble(zone['lat'])!,
+                        _parseDouble(zone['lon'])!,
+                      ),
+                      radius: 500,
                       useRadiusInMeter: true,
-                      color: _severityFromPeople(
-                        request.peopleNeedingHelp,
-                      ).withValues(alpha: 0.18),
-                      borderColor: _severityFromPeople(
-                        request.peopleNeedingHelp,
-                      ).withValues(alpha: 0.4),
-                      borderStrokeWidth: 1.2,
+                      color: _riskTierColor(
+                        zone['alert_level'] ?? zone['alertLevel'],
+                      ).withValues(alpha: 0.2),
+                      borderColor: _riskTierColor(
+                        zone['alert_level'] ?? zone['alertLevel'],
+                      ).withValues(alpha: 0.6),
+                      borderStrokeWidth: 2,
                     ),
               ],
             ),
@@ -2369,16 +3238,14 @@ class _ResponderMapPreview extends StatelessWidget {
                       child: _SosRequestMarker(request: request),
                     ),
                   ),
-              // Assigned team markers
-              for (final request in sosRequests)
-                if (request.latitude != null &&
-                    request.longitude != null &&
-                    request.assignedTeamName != null)
+              // Team member markers
+              for (final member in teamMembers)
+                if (member.hasLocation)
                   Marker(
-                    point: _responderTeamPointForRequest(request),
-                    width: 92,
-                    height: 72,
-                    child: _ResponderTeamMarker(request: request),
+                    point: LatLng(member.latitude!, member.longitude!),
+                    width: 84,
+                    height: 76,
+                    child: _TeamMemberMarker(member: member),
                   ),
               // Responder / base marker
               if (responderPoint == null)
@@ -2400,7 +3267,7 @@ class _ResponderMapPreview extends StatelessWidget {
                   point: residentPoint,
                   width: 64,
                   height: 72,
-                  child: _ResidentLocationMarker(label: destinationLabel),
+                  child: const _ResidentLocationMarker(),
                 ),
             ],
           ),
@@ -2422,14 +3289,12 @@ class _NavigationFetchStatus extends StatelessWidget {
     required this.hasResidentLocation,
     required this.hasRoute,
     required this.message,
-    this.destinationLabel = 'Resident',
   });
 
   final bool isLoading;
   final bool hasResidentLocation;
   final bool hasRoute;
   final String? message;
-  final String destinationLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -2465,7 +3330,7 @@ class _NavigationFetchStatus extends StatelessWidget {
             Expanded(
               child: Text(
                 isLoading
-                    ? 'Fetching ${destinationLabel.toLowerCase()} GPS and safe route from backend...'
+                    ? 'Fetching resident GPS and safe route from backend...'
                     : message ?? 'Waiting for backend response.',
                 style: Theme.of(
                   context,
@@ -2489,7 +3354,6 @@ class _ResidentRoutePanel extends StatelessWidget {
     required this.onNavigate,
     required this.isLoading,
     required this.responderLocation,
-    this.destinationLabel = 'Resident',
   });
 
   final _Incident incident;
@@ -2500,7 +3364,6 @@ class _ResidentRoutePanel extends StatelessWidget {
   final VoidCallback onNavigate;
   final bool isLoading;
   final GeoPoint? responderLocation;
-  final String destinationLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -2528,7 +3391,7 @@ class _ResidentRoutePanel extends StatelessWidget {
                       ),
                       Text(
                         location == null
-                            ? 'Waiting for ${destinationLabel.toLowerCase()} GPS'
+                            ? 'Waiting for resident GPS'
                             : '${location.latitude.toStringAsFixed(5)}, ${location.longitude.toStringAsFixed(5)}',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
@@ -2633,10 +3496,48 @@ class _IncidentCard extends StatelessWidget {
                       incident.meta,
                       style: Theme.of(context).textTheme.labelSmall,
                     ),
+                    if (incident.assignedTeamName != null) ...[
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF7B1FA2).withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.shield_rounded,
+                              size: 10,
+                              color: Color(0xFF7B1FA2),
+                            ),
+                            const SizedBox(width: 3),
+                            Text(
+                              'Team ${incident.assignedTeamName}',
+                              style: const TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF7B1FA2),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
-              _SeverityPill(label: incident.severity, color: incident.color),
+              if (incident.priorityRank != null)
+                _SeverityPill(
+                  label: '#${incident.priorityRank}',
+                  color: _riskTierColor(incident.riskLevel),
+                )
+              else
+                _SeverityPill(label: incident.severity, color: incident.color),
             ],
           ),
         ),
@@ -2656,55 +3557,42 @@ class _Incident {
     required this.color,
     required this.people,
     required this.status,
+    required this.rawStatus,
     required this.hazardType,
-    this.assignedTeamName,
-    this.assignedTeamStatus,
-    this.assignedResponderId,
-    this.assignedResponderName,
     this.latitude,
     this.longitude,
+    this.assignedTeamName,
+    this.riskLevel,
+    this.priorityRank,
   });
 
   factory _Incident.fromRescueRequest(RescueRequestModel request) {
     final severityLabel = _severityLabelFromPeople(request.peopleNeedingHelp);
+    final riskLevel = request.riskLevel;
+    final metaParts = [
+      '${request.peopleNeedingHelp} people',
+      _timeAgoLabel(request.createdAt),
+      if (riskLevel != null && riskLevel.isNotEmpty) '$riskLevel risk',
+      _rescueStatusLabel(request.status),
+    ];
 
     return _Incident(
       id: request.id,
       icon: _incidentIcon(request.emergencyType),
       title: _hazardTitle(request.emergencyType),
       location: request.locationLabel ?? request.description,
-      meta:
-          '${request.peopleNeedingHelp} people - ${_timeAgoLabel(request.createdAt)} - ${_rescueStatusLabel(request.status)}',
+      meta: metaParts.join(' - '),
       severity: severityLabel,
       color: _severityFromPeople(request.peopleNeedingHelp),
       people: request.peopleNeedingHelp,
       status: _rescueStatusLabel(request.status),
+      rawStatus: request.status,
       hazardType: request.emergencyType,
-      assignedTeamName: request.assignedTeamName,
-      assignedTeamStatus: request.assignedTeamStatus,
-      assignedResponderId: request.assignedResponderId,
-      assignedResponderName: request.assignedResponderName,
       latitude: request.latitude,
       longitude: request.longitude,
-    );
-  }
-
-  /// A shelter dressed up as an incident so it can drive the responder
-  /// navigation screen (which keys off icon/title/colour and a destination).
-  factory _Incident.fromShelter(EvacuationCenterModel shelter) {
-    return _Incident(
-      id: shelter.id,
-      icon: Icons.home_rounded,
-      title: shelter.name,
-      location: shelter.address,
-      meta: '',
-      severity: 'Shelter',
-      color: AppTheme.safeGreen,
-      people: 0,
-      status: '',
-      hazardType: HazardType.flood,
-      latitude: shelter.latitude,
-      longitude: shelter.longitude,
+      assignedTeamName: request.assignedTeamName,
+      riskLevel: riskLevel,
+      priorityRank: request.priorityRank,
     );
   }
 
@@ -2717,13 +3605,13 @@ class _Incident {
   final Color color;
   final int people;
   final String status;
+  final RescueStatus rawStatus;
   final HazardType hazardType;
-  final String? assignedTeamName;
-  final String? assignedTeamStatus;
-  final String? assignedResponderId;
-  final String? assignedResponderName;
   final double? latitude;
   final double? longitude;
+  final String? assignedTeamName;
+  final String? riskLevel;
+  final int? priorityRank;
 }
 
 class _SectionTitle extends StatelessWidget {
@@ -2768,19 +3656,43 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
+/// Status a queue tab maps to. `null` means "All".
+const Map<String, List<RescueStatus>?> _incidentTabStatuses = {
+  'All': null,
+  'Pending': [RescueStatus.pending],
+  'Dispatched': [RescueStatus.acknowledged],
+  'En Route': [RescueStatus.inProgress],
+  'Done': [RescueStatus.resolved, RescueStatus.cancelled],
+};
+
 class _IncidentFilters extends StatelessWidget {
-  const _IncidentFilters();
+  const _IncidentFilters({
+    required this.incidents,
+    required this.selectedFilter,
+    required this.onFilterChanged,
+  });
+
+  final List<_Incident> incidents;
+  final String selectedFilter;
+  final ValueChanged<String> onFilterChanged;
+
+  int _countFor(List<RescueStatus>? statuses) {
+    if (statuses == null) return incidents.length;
+    return incidents.where((i) => statuses.contains(i.rawStatus)).length;
+  }
 
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
-        children: const [
-          _FilterChip(label: 'All (23)', selected: true),
-          _FilterChip(label: 'High (8)'),
-          _FilterChip(label: 'Medium (10)'),
-          _FilterChip(label: 'Low (5)'),
+        children: [
+          for (final entry in _incidentTabStatuses.entries)
+            _FilterChip(
+              label: '${entry.key} (${_countFor(entry.value)})',
+              selected: selectedFilter == entry.key,
+              onTap: () => onFilterChanged(entry.key),
+            ),
         ],
       ),
     );
@@ -2788,31 +3700,35 @@ class _IncidentFilters extends StatelessWidget {
 }
 
 class _FilterChip extends StatelessWidget {
-  const _FilterChip({required this.label, this.selected = false});
+  const _FilterChip({required this.label, this.selected = false, this.onTap});
 
   final String label;
   final bool selected;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(right: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-      decoration: BoxDecoration(
-        color: selected
-            ? AppTheme.signalBlue.withValues(alpha: 0.12)
-            : Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: selected ? AppTheme.signalBlue : AppTheme.border,
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(right: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: selected
+              ? AppTheme.signalBlue.withValues(alpha: 0.12)
+              : Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: selected ? AppTheme.signalBlue : AppTheme.border,
+          ),
         ),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: selected ? AppTheme.signalBlue : AppTheme.textPrimary,
-          fontWeight: FontWeight.w700,
-          fontSize: 12,
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? AppTheme.signalBlue : AppTheme.textPrimary,
+            fontWeight: FontWeight.w700,
+            fontSize: 12,
+          ),
         ),
       ),
     );
@@ -2904,7 +3820,10 @@ class _BellBadge extends StatelessWidget {
       clipBehavior: Clip.none,
       children: [
         IconButton(
-          onPressed: () {},
+          onPressed: () {
+            Navigator.of(context).pushNamed(AppRouter.alerts);
+          },
+          tooltip: 'View alerts',
           icon: const Icon(Icons.notifications, color: Colors.white),
         ),
         Positioned(
@@ -2925,21 +3844,23 @@ class _BellBadge extends StatelessWidget {
 }
 
 class _DetailTabs extends StatelessWidget {
-  const _DetailTabs();
+  const _DetailTabs({required this.peopleNeedingHelp});
+
+  final int peopleNeedingHelp;
 
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
-        children: const [
-          _FilterChip(label: 'Overview', selected: true),
-          SizedBox(width: 8),
-          _FilterChip(label: 'Victims (12)'),
-          SizedBox(width: 8),
-          _FilterChip(label: 'Updates'),
-          SizedBox(width: 8),
-          _FilterChip(label: 'Media'),
+        children: [
+          const _FilterChip(label: 'Overview', selected: true),
+          const SizedBox(width: 8),
+          _FilterChip(label: 'Victims ($peopleNeedingHelp)'),
+          const SizedBox(width: 8),
+          const _FilterChip(label: 'Updates'),
+          const SizedBox(width: 8),
+          const _FilterChip(label: 'Media'),
         ],
       ),
     );
@@ -2997,31 +3918,57 @@ class _LivePill extends StatelessWidget {
 }
 
 class _MapLayerMenu extends StatelessWidget {
-  const _MapLayerMenu();
+  const _MapLayerMenu({
+    required this.showIncidents,
+    required this.showTeams,
+    required this.showShelters,
+    required this.showHazardZones,
+    required this.onToggleIncidents,
+    required this.onToggleTeams,
+    required this.onToggleShelters,
+    required this.onToggleHazardZones,
+  });
+
+  final bool showIncidents;
+  final bool showTeams;
+  final bool showShelters;
+  final bool showHazardZones;
+  final VoidCallback onToggleIncidents;
+  final VoidCallback onToggleTeams;
+  final VoidCallback onToggleShelters;
+  final VoidCallback onToggleHazardZones;
 
   @override
   Widget build(BuildContext context) {
     return Column(
-      children: const [
+      children: [
         _LayerButton(
           icon: Icons.crisis_alert,
           label: 'Incidents',
           color: AppTheme.dangerRed,
+          active: showIncidents,
+          onTap: onToggleIncidents,
         ),
         _LayerButton(
           icon: Icons.groups,
           label: 'Teams',
           color: AppTheme.signalBlue,
+          active: showTeams,
+          onTap: onToggleTeams,
         ),
         _LayerButton(
           icon: Icons.home,
           label: 'Shelters',
           color: AppTheme.signalBlue,
+          active: showShelters,
+          onTap: onToggleShelters,
         ),
         _LayerButton(
           icon: Icons.route,
-          label: 'Safer Route',
+          label: 'Hazard Zones',
           color: AppTheme.safeGreen,
+          active: showHazardZones,
+          onTap: onToggleHazardZones,
         ),
       ],
     );
@@ -3033,37 +3980,48 @@ class _LayerButton extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.color,
+    required this.active,
+    required this.onTap,
   });
 
   final IconData icon;
   final String label;
   final Color color;
+  final bool active;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 112,
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(6),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 8),
-        ],
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: color, size: 18),
-          const SizedBox(width: 7),
-          Expanded(
-            child: Text(
-              label,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 112,
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+        decoration: BoxDecoration(
+          color: active ? Colors.white : Colors.white.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(6),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 8),
+          ],
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: active ? color : AppTheme.textMuted, size: 18),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: active ? AppTheme.textPrimary : AppTheme.textMuted,
+                ),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -3229,9 +4187,7 @@ class _NavigationPanel extends StatelessWidget {
                 const Icon(Icons.chevron_right, color: AppTheme.textMuted),
                 Expanded(
                   child: Text(
-                    hasLiveLocation
-                        ? 'Responder position active'
-                        : 'No route selected',
+                    hasLiveLocation ? 'Responder position active' : 'No route selected',
                   ),
                 ),
                 Text('—', style: Theme.of(context).textTheme.titleSmall),
@@ -3240,12 +4196,8 @@ class _NavigationPanel extends StatelessWidget {
             const Divider(height: 20),
             Row(
               children: [
-                const Expanded(
-                  child: _MiniMetric(value: '—', label: 'Est. time'),
-                ),
-                const Expanded(
-                  child: _MiniMetric(value: '—', label: 'Distance'),
-                ),
+                const Expanded(child: _MiniMetric(value: '—', label: 'Est. time')),
+                const Expanded(child: _MiniMetric(value: '—', label: 'Distance')),
                 SizedBox(
                   width: 126,
                   child: SentryButton(
@@ -3281,465 +4233,16 @@ class _MiniMetric extends StatelessWidget {
   }
 }
 
-class _DeploymentTile extends StatelessWidget {
-  const _DeploymentTile({required this.request});
-
-  final RescueRequestModel request;
-
-  @override
-  Widget build(BuildContext context) {
-    final status = _rescueStatusLabel(request.status);
-    final teamName = request.assignedTeamName ?? 'Auto team pending';
-    final teamStatus =
-        request.assignedTeamStatus?.replaceAll('_', ' ').toUpperCase() ??
-        'ASSIGNED';
-    final color = switch (request.status) {
-      RescueStatus.inProgress => AppTheme.safeGreen,
-      RescueStatus.acknowledged => AppTheme.warningAmber,
-      _ => AppTheme.signalBlue,
-    };
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Card(
-        child: ListTile(
-          leading: Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(_incidentIcon(request.emergencyType), color: color),
-          ),
-          title: Text('${_hazardTitle(request.emergencyType)} - $teamName'),
-          subtitle: Text(
-            '${request.locationLabel ?? 'Unknown location'} · ${_timeAgoLabel(request.createdAt)}',
-          ),
-          trailing: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              _SeverityPill(label: status, color: color),
-              const SizedBox(height: 5),
-              Text(teamStatus, style: Theme.of(context).textTheme.labelSmall),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _QuickActionGrid extends StatelessWidget {
-  const _QuickActionGrid();
-
-  @override
-  Widget build(BuildContext context) {
-    return GridView.count(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 2,
-      mainAxisSpacing: 10,
-      crossAxisSpacing: 10,
-      childAspectRatio: 1.9,
-      children: [
-        _QuickAction(
-          icon: Icons.campaign,
-          title: 'Broadcast',
-          color: AppTheme.signalBlue,
-          onTap: () => _openBroadcast(context, emergency: false),
-        ),
-        _QuickAction(
-          icon: Icons.chat,
-          title: 'Team Chat',
-          color: AppTheme.violet,
-          onTap: () => _openTeamChat(context),
-        ),
-        _QuickAction(
-          icon: Icons.sos,
-          title: 'Emergency',
-          color: AppTheme.dangerRed,
-          onTap: () => _openBroadcast(context, emergency: true),
-        ),
-        _QuickAction(
-          icon: Icons.inventory,
-          title: 'Resources',
-          color: AppTheme.safeGreen,
-          onTap: () => _openResources(context),
-        ),
-      ],
-    );
-  }
-
-  void _openBroadcast(BuildContext context, {required bool emergency}) {
-    showDialog<void>(
-      context: context,
-      builder: (_) => _BroadcastComposeDialog(emergency: emergency),
-    );
-  }
-
-  void _openTeamChat(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => Scaffold(
-          backgroundColor: AppTheme.surface,
-          appBar: AppBar(title: const Text('Team Chat')),
-          body: const MessagesScreen(),
-        ),
-      ),
-    );
-  }
-
-  void _openResources(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (_) => const _ResourcesSheet(),
-    );
-  }
-}
-
-class _QuickAction extends StatelessWidget {
-  const _QuickAction({
-    required this.icon,
-    required this.title,
-    required this.color,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final Color color;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      color: color.withValues(alpha: 0.07),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              _IconBubble(icon: icon, color: color),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  title,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(color: color),
-                ),
-              ),
-              Icon(Icons.chevron_right, color: color.withValues(alpha: 0.5)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BroadcastComposeDialog extends StatefulWidget {
-  const _BroadcastComposeDialog({required this.emergency});
-
-  /// Emergency broadcasts default to a critical distress alert.
-  final bool emergency;
-
-  @override
-  State<_BroadcastComposeDialog> createState() =>
-      _BroadcastComposeDialogState();
-}
-
-class _BroadcastComposeDialogState extends State<_BroadcastComposeDialog> {
-  final _titleController = TextEditingController();
-  final _locationController = TextEditingController(text: 'Naga City');
-  final _messageController = TextEditingController();
-  late AlertSeverity _severity = widget.emergency
-      ? AlertSeverity.critical
-      : AlertSeverity.high;
-  late HazardType _hazard = widget.emergency
-      ? HazardType.distress
-      : HazardType.flood;
-  bool _sending = false;
-
-  @override
-  void dispose() {
-    _titleController.dispose();
-    _locationController.dispose();
-    _messageController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _send() async {
-    final title = _titleController.text.trim();
-    final message = _messageController.text.trim();
-    final location = _locationController.text.trim();
-    if (title.isEmpty || message.isEmpty || location.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Fill in title, location and message.')),
-      );
-      return;
-    }
-
-    setState(() => _sending = true);
-    try {
-      await AppDependenciesScope.of(context).alertRepository.createAlert(
-        title: title,
-        location: location,
-        message: message,
-        severity: _severity,
-        hazardType: _hazard,
-      );
-      if (!mounted) return;
-      Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            widget.emergency
-                ? 'Emergency broadcast sent to residents.'
-                : 'Broadcast sent to residents.',
-          ),
-        ),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _sending = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not send broadcast: $error')),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final accent = widget.emergency ? AppTheme.dangerRed : AppTheme.signalBlue;
-
-    return AlertDialog(
-      title: Row(
-        children: [
-          Icon(widget.emergency ? Icons.sos : Icons.campaign, color: accent),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              widget.emergency ? 'Emergency Broadcast' : 'Broadcast',
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      ),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _titleController,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(labelText: 'Title'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _locationController,
-              decoration: const InputDecoration(labelText: 'Location'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _messageController,
-              minLines: 2,
-              maxLines: 4,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(labelText: 'Message'),
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<AlertSeverity>(
-              initialValue: _severity,
-              decoration: const InputDecoration(labelText: 'Severity'),
-              items: [
-                for (final s in AlertSeverity.values)
-                  DropdownMenuItem(value: s, child: Text(s.label)),
-              ],
-              onChanged: (value) {
-                if (value != null) setState(() => _severity = value);
-              },
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<HazardType>(
-              initialValue: _hazard,
-              decoration: const InputDecoration(labelText: 'Hazard type'),
-              items: [
-                for (final h in HazardType.values)
-                  DropdownMenuItem(value: h, child: Text(_hazardTitle(h))),
-              ],
-              onChanged: (value) {
-                if (value != null) setState(() => _hazard = value);
-              },
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _sending ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: _sending ? null : _send,
-          style: ElevatedButton.styleFrom(backgroundColor: accent),
-          child: _sending
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.2,
-                    color: Colors.white,
-                  ),
-                )
-              : const Text('Send'),
-        ),
-      ],
-    );
-  }
-}
-
-class _ResourcesSheet extends StatefulWidget {
-  const _ResourcesSheet();
-
-  @override
-  State<_ResourcesSheet> createState() => _ResourcesSheetState();
-}
-
-class _ResourcesSheetState extends State<_ResourcesSheet> {
-  List<EvacuationCenterModel> _centers = const [];
-  bool _isLoading = true;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _load();
-    });
-  }
-
-  Future<void> _load() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-    try {
-      final centers = await AppDependenciesScope.of(
-        context,
-      ).rescueRepository.fetchEvacuationCenters();
-      if (!mounted) return;
-      setState(() {
-        _centers = centers;
-        _isLoading = false;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _error = 'Could not load resources: $error';
-        _isLoading = false;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 4, 18, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Evacuation Centers & Resources',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 12),
-            if (_isLoading)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 28),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else if (_error != null)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                child: Column(
-                  children: [
-                    Text(_error!, textAlign: TextAlign.center),
-                    const SizedBox(height: 10),
-                    OutlinedButton.icon(
-                      onPressed: _load,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Retry'),
-                    ),
-                  ],
-                ),
-              )
-            else if (_centers.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Center(child: Text('No evacuation centers listed yet.')),
-              )
-            else
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.sizeOf(context).height * 0.5,
-                ),
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: _centers.length,
-                  separatorBuilder: (_, _) => const Divider(height: 1),
-                  itemBuilder: (_, index) {
-                    final c = _centers[index];
-                    final full = c.availableSlots <= 0;
-                    return ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: _IconBubble(
-                        icon: Icons.home_work_rounded,
-                        color: full
-                            ? AppTheme.warningAmber
-                            : AppTheme.safeGreen,
-                      ),
-                      title: Text(c.name),
-                      subtitle: Text(
-                        '${c.address}\n'
-                        '${c.availableSlots} of ${c.capacity} slots available · '
-                        '${c.status.toUpperCase()}',
-                      ),
-                      isThreeLine: true,
-                    );
-                  },
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _ReportTile extends StatelessWidget {
   const _ReportTile({
     required this.title,
     required this.subtitle,
     required this.icon,
-    this.onTap,
   });
 
   final String title;
   final String subtitle;
   final IconData icon;
-  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -3751,62 +4254,6 @@ class _ReportTile extends StatelessWidget {
           title: Text(title),
           subtitle: Text(subtitle),
           trailing: const Icon(Icons.chevron_right),
-          onTap: onTap,
-        ),
-      ),
-    );
-  }
-}
-
-class _ReportDetailSheet extends StatelessWidget {
-  const _ReportDetailSheet({required this.title, required this.rows});
-
-  final String title;
-  final List<String> rows;
-
-  @override
-  Widget build(BuildContext context) {
-    final visibleRows = rows.isEmpty
-        ? const ['No report data available.']
-        : rows;
-
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 4, 18, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 12),
-            ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.sizeOf(context).height * 0.48,
-              ),
-              child: ListView.separated(
-                shrinkWrap: true,
-                itemCount: visibleRows.length,
-                separatorBuilder: (_, _) => const Divider(height: 1),
-                itemBuilder: (context, index) => ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: CircleAvatar(
-                    radius: 13,
-                    backgroundColor: AppTheme.signalBlue.withValues(alpha: 0.1),
-                    child: Text(
-                      '${index + 1}',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                        color: AppTheme.signalBlue,
-                      ),
-                    ),
-                  ),
-                  title: Text(visibleRows[index]),
-                ),
-              ),
-            ),
-          ],
         ),
       ),
     );
@@ -3851,72 +4298,6 @@ class _CommandCenterMarker extends StatelessWidget {
             ),
             child: const Icon(
               Icons.local_police,
-              color: Colors.white,
-              size: 18,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-LatLng _responderTeamPointForRequest(RescueRequestModel request) {
-  final seed = request.id.codeUnits.fold<int>(0, (sum, code) => sum + code);
-  return LatLng(
-    request.latitude! + 0.0012 + (seed % 4) * 0.0002,
-    request.longitude! + 0.0011 + (seed % 6) * 0.00018,
-  );
-}
-
-class _ResponderTeamMarker extends StatelessWidget {
-  const _ResponderTeamMarker({required this.request});
-
-  final RescueRequestModel request;
-
-  @override
-  Widget build(BuildContext context) {
-    final name = request.assignedTeamName ?? 'Team';
-    final shortName = name
-        .replaceAll(' Response', '')
-        .replaceAll(' Rescue', '')
-        .replaceAll(' Evacuation', '');
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Material(
-          color: AppTheme.signalBlue,
-          borderRadius: BorderRadius.circular(8),
-          elevation: 3,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-            child: Text(
-              shortName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 9,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 3),
-        Material(
-          color: AppTheme.signalBlue,
-          shape: const CircleBorder(),
-          elevation: 3,
-          child: Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-            ),
-            child: const Icon(
-              Icons.groups_rounded,
               color: Colors.white,
               size: 18,
             ),
@@ -4027,11 +4408,8 @@ class _SosRequestMarker extends StatelessWidget {
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2.5),
             ),
-            child: const Icon(
-              Icons.person_pin_rounded,
-              color: Colors.white,
-              size: 20,
-            ),
+            child: const Icon(Icons.person_pin_rounded,
+                color: Colors.white, size: 20),
           ),
         ),
       ],
@@ -4079,11 +4457,7 @@ class _ShelterMarker extends StatelessWidget {
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2),
             ),
-            child: const Icon(
-              Icons.home_rounded,
-              color: Colors.white,
-              size: 18,
-            ),
+            child: const Icon(Icons.home_rounded, color: Colors.white, size: 18),
           ),
         ),
       ],
@@ -4092,9 +4466,7 @@ class _ShelterMarker extends StatelessWidget {
 }
 
 class _ResidentLocationMarker extends StatelessWidget {
-  const _ResidentLocationMarker({this.label = 'Resident'});
-
-  final String label;
+  const _ResidentLocationMarker();
 
   @override
   Widget build(BuildContext context) {
@@ -4105,11 +4477,11 @@ class _ResidentLocationMarker extends StatelessWidget {
           color: AppTheme.dangerRed,
           borderRadius: BorderRadius.circular(8),
           elevation: 3,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 5),
             child: Text(
-              label,
-              style: const TextStyle(
+              'Resident',
+              style: TextStyle(
                 color: Colors.white,
                 fontSize: 10,
                 fontWeight: FontWeight.w800,
@@ -4141,6 +4513,71 @@ class _ResidentLocationMarker extends StatelessWidget {
   }
 }
 
+class _TeamMemberMarker extends StatelessWidget {
+  const _TeamMemberMarker({required this.member});
+
+  final TeamMemberModel member;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = member.firstName.isNotEmpty
+        ? member.firstName
+        : 'Member';
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Material(
+          color: AppTheme.violet,
+          borderRadius: BorderRadius.circular(8),
+          elevation: 3,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 3),
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: AppTheme.violet.withValues(alpha: 0.18),
+            shape: BoxShape.circle,
+          ),
+          child: Center(
+            child: Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: AppTheme.violet,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 3),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppTheme.violet.withValues(alpha: 0.35),
+                    blurRadius: 8,
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.person,
+                color: Colors.white,
+                size: 12,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 // ── SOS request bottom sheet ─────────────────────────────────────────────────
 
 class _SosRequestSheet extends StatefulWidget {
@@ -4154,7 +4591,7 @@ class _SosRequestSheet extends StatefulWidget {
   final RescueRequestModel request;
   final List<EvacuationCenterModel> shelters;
   final Future<void> Function(String id, String name, String? address)
-  onShelterAssigned;
+      onShelterAssigned;
   final VoidCallback onNavigate;
 
   @override
@@ -4164,22 +4601,6 @@ class _SosRequestSheet extends StatefulWidget {
 class _SosRequestSheetState extends State<_SosRequestSheet> {
   bool _showPicker = false;
   bool _isAssigning = false;
-
-  bool get _canNavigate {
-    final role = AppDependenciesScope.of(
-      context,
-    ).authRepository.currentUser?.role;
-    return role != 'super_admin';
-  }
-
-  // Assigning a resident to an existing shelter is a dispatch decision owned by
-  // the super admin. Field responders only navigate; they don't assign shelters.
-  bool get _canAssignShelter {
-    final role = AppDependenciesScope.of(
-      context,
-    ).authRepository.currentUser?.role;
-    return role == 'super_admin';
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -4191,10 +4612,7 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
         onSelect: (shelter) async {
           setState(() => _isAssigning = true);
           await widget.onShelterAssigned(
-            shelter.id,
-            shelter.name,
-            shelter.address,
-          );
+              shelter.id, shelter.name, shelter.address);
           if (mounted) setState(() => _isAssigning = false);
         },
       );
@@ -4205,11 +4623,7 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
-        20,
-        12,
-        20,
-        20 + MediaQuery.of(context).viewInsets.bottom,
-      ),
+          20, 12, 20, 20 + MediaQuery.of(context).viewInsets.bottom),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4233,10 +4647,8 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      incident.title,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
+                    Text(incident.title,
+                        style: Theme.of(context).textTheme.titleMedium),
                     Text(
                       '${request.peopleNeedingHelp} people · ${request.status.name}',
                       style: Theme.of(context).textTheme.bodySmall,
@@ -4249,12 +4661,10 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
           ),
           if (request.description.isNotEmpty) ...[
             const SizedBox(height: 10),
-            Text(
-              request.description,
-              style: Theme.of(context).textTheme.bodySmall,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-            ),
+            Text(request.description,
+                style: Theme.of(context).textTheme.bodySmall,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis),
           ],
           if (request.assignedShelterName != null) ...[
             const SizedBox(height: 10),
@@ -4264,16 +4674,12 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
                 color: AppTheme.safeGreen.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                  color: AppTheme.safeGreen.withValues(alpha: 0.3),
-                ),
+                    color: AppTheme.safeGreen.withValues(alpha: 0.3)),
               ),
               child: Row(
                 children: [
-                  const Icon(
-                    Icons.home_rounded,
-                    color: AppTheme.safeGreen,
-                    size: 16,
-                  ),
+                  const Icon(Icons.home_rounded,
+                      color: AppTheme.safeGreen, size: 16),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -4292,28 +4698,24 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
           const SizedBox(height: 16),
           Row(
             children: [
-              // Route guidance is a field-responder task; the super admin
-              // oversees and dispatches but does not navigate to the scene.
-              if (_canNavigate)
-                Expanded(
-                  child: SentryButton(
-                    label: 'Navigate',
-                    icon: Icons.navigation,
-                    backgroundColor: AppTheme.safeGreen,
-                    onPressed: widget.onNavigate,
-                  ),
+              Expanded(
+                child: SentryButton(
+                  label: 'Navigate',
+                  icon: Icons.navigation,
+                  backgroundColor: AppTheme.safeGreen,
+                  onPressed: widget.onNavigate,
                 ),
-              // Only the super admin assigns residents to an existing shelter.
-              if (_canAssignShelter)
-                Expanded(
-                  child: SentryButton(
-                    label: 'Assign Shelter',
-                    icon: Icons.home_rounded,
-                    onPressed: widget.shelters.isEmpty
-                        ? null
-                        : () => setState(() => _showPicker = true),
-                  ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: SentryButton(
+                  label: 'Assign Shelter',
+                  icon: Icons.home_rounded,
+                  onPressed: widget.shelters.isEmpty
+                      ? null
+                      : () => setState(() => _showPicker = true),
                 ),
+              ),
             ],
           ),
         ],
@@ -4352,10 +4754,8 @@ class _ShelterPickerView extends StatelessWidget {
                 constraints: const BoxConstraints(),
               ),
               const SizedBox(width: 8),
-              Text(
-                'Assign Shelter',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
+              Text('Assign Shelter',
+                  style: Theme.of(context).textTheme.titleMedium),
             ],
           ),
           const SizedBox(height: 8),
@@ -4380,26 +4780,19 @@ class _ShelterPickerView extends StatelessWidget {
                       ? const Color(0xFFE65100)
                       : const Color(0xFF2E7D32);
                   return ListTile(
-                    leading: Icon(Icons.home_rounded, color: color),
-                    title: Text(
-                      shelter.name,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                      ),
-                    ),
+                    leading:
+                        Icon(Icons.home_rounded, color: color),
+                    title: Text(shelter.name,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 14)),
                     subtitle: Text(
-                      '${shelter.address} · ${shelter.availableSlots} slots available',
-                    ),
+                        '${shelter.address} · ${shelter.availableSlots} slots available'),
                     trailing: isFull
-                        ? const Text(
-                            'FULL',
+                        ? const Text('FULL',
                             style: TextStyle(
-                              color: Color(0xFFE65100),
-                              fontSize: 11,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          )
+                                color: Color(0xFFE65100),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800))
                         : const Icon(Icons.chevron_right),
                     onTap: isFull ? null : () => onSelect(shelter),
                   );
@@ -4414,92 +4807,16 @@ class _ShelterPickerView extends StatelessWidget {
 
 // ── Shelter info bottom sheet ─────────────────────────────────────────────────
 
-class _ShelterInfoSheet extends StatefulWidget {
-  const _ShelterInfoSheet({
-    required this.shelter,
-    this.onDeleted,
-    this.onNavigate,
-  });
+class _ShelterInfoSheet extends StatelessWidget {
+  const _ShelterInfoSheet({required this.shelter});
 
   final EvacuationCenterModel shelter;
 
-  /// Called after the shelter is removed so the map can refresh. Only the
-  /// super admin can trigger removal.
-  final Future<void> Function()? onDeleted;
-
-  /// Opens turn-by-turn routing to this shelter. Field responders use this to
-  /// drive residents to the shelter; the super admin does not navigate.
-  final VoidCallback? onNavigate;
-
-  @override
-  State<_ShelterInfoSheet> createState() => _ShelterInfoSheetState();
-}
-
-class _ShelterInfoSheetState extends State<_ShelterInfoSheet> {
-  bool _isDeleting = false;
-
-  bool get _canRemove {
-    final role = AppDependenciesScope.of(
-      context,
-    ).authRepository.currentUser?.role;
-    return role == 'super_admin';
-  }
-
-  bool get _canNavigate {
-    final role = AppDependenciesScope.of(
-      context,
-    ).authRepository.currentUser?.role;
-    return role != 'super_admin';
-  }
-
-  Future<void> _confirmAndDelete() async {
-    final shelter = widget.shelter;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Remove shelter?'),
-        content: Text(
-          '"${shelter.name}" will be permanently removed and can no longer '
-          'be assigned to residents.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            style: TextButton.styleFrom(foregroundColor: AppTheme.dangerRed),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true || !mounted) return;
-
-    setState(() => _isDeleting = true);
-    try {
-      await AppDependenciesScope.of(
-        context,
-      ).rescueRepository.deleteEvacuationCenter(shelter.id);
-      if (!mounted) return;
-      Navigator.of(context).pop();
-      await widget.onDeleted?.call();
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _isDeleting = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not remove shelter: $error')),
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final shelter = widget.shelter;
     final isFull = shelter.availableSlots <= 0;
-    final color = isFull ? const Color(0xFFE65100) : const Color(0xFF2E7D32);
+    final color =
+        isFull ? const Color(0xFFE65100) : const Color(0xFF2E7D32);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
@@ -4526,14 +4843,10 @@ class _ShelterInfoSheetState extends State<_ShelterInfoSheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      shelter.name,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    Text(
-                      shelter.address,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+                    Text(shelter.name,
+                        style: Theme.of(context).textTheme.titleMedium),
+                    Text(shelter.address,
+                        style: Theme.of(context).textTheme.bodySmall),
                   ],
                 ),
               ),
@@ -4543,75 +4856,35 @@ class _ShelterInfoSheetState extends State<_ShelterInfoSheet> {
           Row(
             children: [
               Expanded(
-                child: _ShelterStat(
-                  label: 'Capacity',
-                  value: '${shelter.capacity}',
-                ),
-              ),
+                  child: _ShelterStat(
+                      label: 'Capacity',
+                      value: '${shelter.capacity}')),
               Expanded(
-                child: _ShelterStat(
-                  label: 'Occupied',
-                  value: '${shelter.currentOccupancy}',
-                ),
-              ),
+                  child: _ShelterStat(
+                      label: 'Occupied',
+                      value: '${shelter.currentOccupancy}')),
               Expanded(
-                child: _ShelterStat(
-                  label: 'Available',
-                  value: '${shelter.availableSlots}',
-                  color: color,
-                ),
-              ),
+                  child: _ShelterStat(
+                      label: 'Available',
+                      value: '${shelter.availableSlots}',
+                      color: color)),
             ],
           ),
           const SizedBox(height: 14),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(8),
-            ),
+                color: color,
+                borderRadius: BorderRadius.circular(8)),
             child: Text(
               shelter.status.toUpperCase(),
               style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-              ),
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800),
             ),
           ),
-          if (_canNavigate && widget.onNavigate != null) ...[
-            const SizedBox(height: 18),
-            SizedBox(
-              width: double.infinity,
-              child: SentryButton(
-                label: 'Take Route to Shelter',
-                icon: Icons.navigation,
-                backgroundColor: AppTheme.safeGreen,
-                onPressed: widget.onNavigate,
-              ),
-            ),
-          ],
-          if (_canRemove) ...[
-            const SizedBox(height: 18),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _isDeleting ? null : _confirmAndDelete,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppTheme.dangerRed,
-                  side: const BorderSide(color: AppTheme.dangerRed),
-                ),
-                icon: _isDeleting
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2.2),
-                      )
-                    : const Icon(Icons.delete_outline),
-                label: Text(_isDeleting ? 'Removing…' : 'Remove Shelter'),
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -4619,7 +4892,8 @@ class _ShelterInfoSheetState extends State<_ShelterInfoSheet> {
 }
 
 class _ShelterStat extends StatelessWidget {
-  const _ShelterStat({required this.label, required this.value, this.color});
+  const _ShelterStat(
+      {required this.label, required this.value, this.color});
 
   final String label;
   final String value;
@@ -4639,7 +4913,8 @@ class _ShelterStat extends StatelessWidget {
         ),
         Text(
           label,
-          style: const TextStyle(fontSize: 11, color: Color(0xFF607895)),
+          style: const TextStyle(
+              fontSize: 11, color: Color(0xFF607895)),
         ),
       ],
     );

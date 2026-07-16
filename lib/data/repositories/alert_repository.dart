@@ -1,41 +1,58 @@
-import '../../shared/enums/alert_severity.dart';
-import '../../shared/enums/hazard_type.dart';
+import '../../core/services/connectivity_service.dart';
+import '../../core/services/offline/offline_data_cache.dart';
 import '../models/alert_model.dart';
 import '../sources/remote/alerts_api.dart';
 
 class AlertRepository {
-  const AlertRepository({required AlertsApi remote}) : _remote = remote;
+  const AlertRepository({
+    required AlertsApi remote,
+    required ConnectivityService connectivityService,
+    required OfflineDataCache offlineDataCache,
+  }) : _remote = remote,
+       _connectivityService = connectivityService,
+       _offlineDataCache = offlineDataCache;
 
   final AlertsApi _remote;
+  final ConnectivityService _connectivityService;
+  final OfflineDataCache _offlineDataCache;
 
   Future<List<AlertModel>> fetchAlerts() async {
-    final payload = await _remote.fetchAlerts();
-    final items = payload['items'];
-    if (items is! List) {
-      return const [];
+    final status = await _connectivityService.currentStatus();
+    if (status == ConnectivityStatus.offline) {
+      return _offlineDataCache.getCachedAlerts();
     }
 
-    return items
-        .whereType<Map<String, Object?>>()
-        .map(AlertModel.fromJson)
-        .toList();
+    try {
+      final payload = await _remote.fetchAlerts();
+      final items = payload['items'];
+      if (items is! List) {
+        return const [];
+      }
+
+      final alerts = items
+          .whereType<Map<String, Object?>>()
+          .map(AlertModel.fromJson)
+          .toList();
+      await _offlineDataCache.cacheAlerts(alerts);
+      return alerts;
+    } catch (_) {
+      return _offlineDataCache.getCachedAlerts();
+    }
   }
 
-  Future<AlertModel> createAlert({
+  Future<void> createAlert({
     required String title,
-    required String location,
     required String message,
-    required AlertSeverity severity,
-    required HazardType hazardType,
+    required String location,
+    required String severity,
+    required String hazardType,
   }) async {
-    final payload = await _remote.createAlert({
+    await _remote.createAlert({
       'title': title,
-      'location': location,
       'message': message,
-      'severity': severity.name,
-      'hazard_type': hazardType.name,
-      'issued_at': DateTime.now().toUtc().toIso8601String(),
+      'location': location,
+      'severity': severity,
+      'hazard_type': hazardType,
     });
-    return AlertModel.fromJson(payload);
   }
 }

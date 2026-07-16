@@ -1,6 +1,10 @@
 import 'dart:math';
 
+import '../../core/services/connectivity_service.dart';
+import '../../core/services/lora/lora_service.dart';
 import '../../core/services/location_service.dart';
+import '../../core/services/offline/offline_data_cache.dart';
+import '../../core/services/offline/sync_queue.dart';
 import '../models/evacuation_center_model.dart';
 import '../models/rescue_location_model.dart';
 import '../models/rescue_navigation_model.dart';
@@ -12,12 +16,24 @@ import 'map_repository.dart';
 class RescueRepository {
   const RescueRepository({
     required RescueApi remote,
+    required LoRaService loraService,
     required MapRepository mapRepository,
+    required ConnectivityService connectivityService,
+    required OfflineDataCache offlineDataCache,
+    required SyncQueue syncQueue,
   }) : _remote = remote,
-       _mapRepository = mapRepository;
+       _loraService = loraService,
+       _mapRepository = mapRepository,
+       _connectivityService = connectivityService,
+       _offlineDataCache = offlineDataCache,
+       _syncQueue = syncQueue;
 
   final RescueApi _remote;
+  final LoRaService _loraService;
   final MapRepository _mapRepository;
+  final ConnectivityService _connectivityService;
+  final OfflineDataCache _offlineDataCache;
+  final SyncQueue _syncQueue;
 
   Future<List<RescueRequestModel>> fetchRequests() async {
     final payload = await _remote.fetchRequests();
@@ -33,38 +49,126 @@ class RescueRepository {
   }
 
   Future<RescueRequestModel> submitRequest(RescueRequestModel request) async {
-    // No offline relay yet (LoRa is on standby) — failures propagate to the
-    // caller so the user sees an honest "couldn't send" error.
-    final payload = await _remote.createRequest(request);
-    if (payload.isEmpty) {
+    final status = await _connectivityService.currentStatus();
+    if (status == ConnectivityStatus.offline) {
+      await _syncQueue.enqueue(SyncOperation(
+        id: request.id,
+        type: 'sos',
+        endpoint: '/rescue-requests',
+        method: 'POST',
+        body: request.toCreateJson(),
+        createdAt: DateTime.now(),
+      ));
+      await _loraService.sendDistressPing(
+        LoRaDistressPing(
+          nodeId: request.id,
+          sentAt: request.createdAt,
+          payload: request.toJson(),
+        ),
+      );
       return request;
     }
 
-    return RescueRequestModel.fromJson(payload);
+    try {
+      final payload = await _remote.createRequest(request);
+      if (payload.isEmpty) {
+        return request;
+      }
+
+      return RescueRequestModel.fromJson(payload);
+    } catch (_) {
+      await _syncQueue.enqueue(SyncOperation(
+        id: request.id,
+        type: 'sos',
+        endpoint: '/rescue-requests',
+        method: 'POST',
+        body: request.toCreateJson(),
+        createdAt: DateTime.now(),
+      ));
+      await _loraService.sendDistressPing(
+        LoRaDistressPing(
+          nodeId: request.id,
+          sentAt: request.createdAt,
+          payload: request.toJson(),
+        ),
+      );
+      rethrow;
+    }
   }
 
   Future<RescueLocationModel?> updateRequestLocation({
     required String id,
     required RescueLocationModel location,
   }) async {
-    return location;
+    final connectivity = await _connectivityService.currentStatus();
+    if (connectivity == ConnectivityStatus.offline) {
+      await _syncQueue.enqueue(SyncOperation(
+        id: '${id}_loc_${DateTime.now().millisecondsSinceEpoch}',
+        type: 'location_update',
+        endpoint: '/rescue-requests/$id/location',
+        method: 'PATCH',
+        body: location.toJson(),
+        createdAt: DateTime.now(),
+      ));
+      return location;
+    }
+
+    try {
+      final payload = await _remote.updateRequestLocation(
+        id: id,
+        location: location,
+      );
+      if (payload.isEmpty) {
+        return location;
+      }
+      return RescueLocationModel.fromJson(payload);
+    } catch (_) {
+      await _syncQueue.enqueue(SyncOperation(
+        id: '${id}_loc_${DateTime.now().millisecondsSinceEpoch}',
+        type: 'location_update',
+        endpoint: '/rescue-requests/$id/location',
+        method: 'PATCH',
+        body: location.toJson(),
+        createdAt: DateTime.now(),
+      ));
+      return location;
+    }
   }
 
   Future<RescueRequestModel?> updateRequestStatus({
     required String id,
     required RescueStatus status,
-    String? responderId,
   }) async {
-    final payload = await _remote.updateRequestStatus(
-      id: id,
-      status: status,
-      responderId: responderId,
-    );
-    if (payload.isEmpty) {
+    final connectivity = await _connectivityService.currentStatus();
+    if (connectivity == ConnectivityStatus.offline) {
+      await _syncQueue.enqueue(SyncOperation(
+        id: '${id}_status_${DateTime.now().millisecondsSinceEpoch}',
+        type: 'status_change',
+        endpoint: '/rescue-requests/$id/status',
+        method: 'PATCH',
+        body: {'status': status.name},
+        createdAt: DateTime.now(),
+      ));
       return null;
     }
 
-    return RescueRequestModel.fromJson(payload);
+    try {
+      final payload = await _remote.updateRequestStatus(id: id, status: status);
+      if (payload.isEmpty) {
+        return null;
+      }
+      return RescueRequestModel.fromJson(payload);
+    } catch (_) {
+      await _syncQueue.enqueue(SyncOperation(
+        id: '${id}_status_${DateTime.now().millisecondsSinceEpoch}',
+        type: 'status_change',
+        endpoint: '/rescue-requests/$id/status',
+        method: 'PATCH',
+        body: {'status': status.name},
+        createdAt: DateTime.now(),
+      ));
+      return null;
+    }
   }
 
   Future<RescueLocationModel?> fetchRequestLocation(String id) async {
@@ -105,38 +209,25 @@ class RescueRepository {
     );
   }
 
-  /// Builds a safe route from the responder to an arbitrary destination (e.g. a
-  /// shelter), without going through a rescue request's backend GPS lookup.
-  Future<RescueNavigationModel?> fetchNavigationToPoint({
-    required GeoPoint responderLocation,
-    required GeoPoint destination,
-  }) async {
-    final route = await _mapRepository.fetchSafeRoute(
-      origin: responderLocation,
-      destination: destination,
-    );
-
-    return RescueNavigationModel(
-      directDistanceKm: route?.distanceKm ?? 0,
-      bearingDegrees: _bearing(responderLocation, destination),
-      route: route,
-      navigationUrl:
-          'https://www.google.com/maps/dir/?api=1&destination=${destination.latitude},${destination.longitude}&travelmode=driving',
-    );
-  }
-
   Future<List<EvacuationCenterModel>> fetchEvacuationCenters() async {
-    final payload = await _remote.fetchEvacuationCenters();
-    final items = payload['items'];
-    if (items is! List) return const [];
-    return items
-        .whereType<Map<String, Object?>>()
-        .map(EvacuationCenterModel.fromJson)
-        .toList();
-  }
+    final status = await _connectivityService.currentStatus();
+    if (status == ConnectivityStatus.offline) {
+      return _offlineDataCache.getCachedEvacuationCenters();
+    }
 
-  Future<void> deleteEvacuationCenter(String id) async {
-    await _remote.deleteEvacuationCenter(id);
+    try {
+      final payload = await _remote.fetchEvacuationCenters();
+      final items = payload['items'];
+      if (items is! List) return const [];
+      final centers = items
+          .whereType<Map<String, Object?>>()
+          .map(EvacuationCenterModel.fromJson)
+          .toList();
+      await _offlineDataCache.cacheEvacuationCenters(centers);
+      return centers;
+    } catch (_) {
+      return _offlineDataCache.getCachedEvacuationCenters();
+    }
   }
 
   Future<RescueRequestModel?> assignShelter({
@@ -150,20 +241,6 @@ class RescueRepository {
       shelterId: shelterId,
       shelterName: shelterName,
       shelterAddress: shelterAddress,
-    );
-    if (payload.isEmpty) return null;
-    return RescueRequestModel.fromJson(payload);
-  }
-
-  Future<RescueRequestModel?> assignResponder({
-    required String requestId,
-    required String responderId,
-    required String responderName,
-  }) async {
-    final payload = await _remote.assignResponder(
-      id: requestId,
-      responderId: responderId,
-      responderName: responderName,
     );
     if (payload.isEmpty) return null;
     return RescueRequestModel.fromJson(payload);

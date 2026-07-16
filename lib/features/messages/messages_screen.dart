@@ -34,12 +34,11 @@ class _MessagesScreenState extends State<MessagesScreen> {
     });
 
     try {
-      final alerts = await AppDependenciesScope.of(
-        context,
-      ).alertRepository.fetchAlerts();
+      final alerts =
+          await AppDependenciesScope.of(context).alertRepository.fetchAlerts();
       if (!mounted) return;
       setState(() {
-        _alerts = alerts.where((alert) => !_isSmokeTestAlert(alert)).toList();
+        _alerts = alerts;
         _isLoading = false;
       });
     } catch (error) {
@@ -116,9 +115,10 @@ class _MessagesScreenState extends State<MessagesScreen> {
                         ? alert.message
                         : '${alert.location} — ${_severityLabel(alert.severity)}',
                     color: _severityColor(alert.severity),
-                    onTap: () => Navigator.of(
-                      context,
-                    ).pushNamed(AppRouter.alertDetails, arguments: alert),
+                    onTap: () => Navigator.of(context).pushNamed(
+                      AppRouter.alertDetails,
+                      arguments: alert,
+                    ),
                   ),
                   const SizedBox(height: 10),
                 ],
@@ -128,12 +128,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
       ),
     );
   }
-}
-
-bool _isSmokeTestAlert(AlertModel alert) {
-  final haystack = '${alert.title} ${alert.message}'.toLowerCase();
-  return haystack.contains('api smoke test') ||
-      haystack.contains('smoke test alert');
 }
 
 IconData _hazardIcon(HazardType type) {
@@ -193,8 +187,15 @@ class _MessageTile extends StatelessWidget {
           ),
           child: Icon(icon, color: color),
         ),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
-        subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
+        title: Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        subtitle: Text(
+          subtitle,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
         trailing: const Icon(Icons.chevron_right),
         onTap: onTap,
       ),

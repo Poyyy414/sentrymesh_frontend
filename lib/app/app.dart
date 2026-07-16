@@ -13,10 +13,18 @@ class SentryMeshApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final initialUser = dependencies.initialUser;
+    if (initialUser != null) {
+      dependencies.towerSocket.connect(
+        role: initialUser.role,
+        userId: initialUser.id,
+      );
+    }
     final initialRoute = initialUser == null
         ? AppRouter.login
         : initialUser.role == 'responder'
         ? AppRouter.responderShell
+        : initialUser.role == 'super_admin'
+        ? AppRouter.adminShell
         : AppRouter.appShell;
 
     return AppDependenciesScope(

@@ -166,6 +166,11 @@ class AuthRepository {
     );
   }
 
+  Future<void> updateCurrentUserLocally(UserModel updatedUser) async {
+    _currentUser = updatedUser;
+    await _storage.saveAuthUser(updatedUser.toJson());
+  }
+
   Future<void> logout() async {
     _remote.setAuthToken(null);
     _currentUser = null;

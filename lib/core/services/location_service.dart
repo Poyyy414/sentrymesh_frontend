@@ -51,8 +51,8 @@ class LocationService {
     try {
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-          timeLimit: Duration(seconds: 8),
+          accuracy: LocationAccuracy.best,
+          timeLimit: Duration(seconds: 30),
         ),
       );
 
@@ -73,8 +73,8 @@ class LocationService {
 
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.low,
-          timeLimit: Duration(seconds: 8),
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 25),
         ),
       );
 
@@ -102,7 +102,7 @@ class LocationService {
 
     yield* Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.medium,
+        accuracy: LocationAccuracy.high,
         distanceFilter: 10,
       ),
     ).map(

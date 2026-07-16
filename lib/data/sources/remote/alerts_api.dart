@@ -10,7 +10,7 @@ class AlertsApi {
     return _client.get(ApiEndpoints.alerts);
   }
 
-  Future<Map<String, Object?>> createAlert(Map<String, Object?> body) {
-    return _client.post(ApiEndpoints.alerts, body: body);
+  Future<Map<String, Object?>> createAlert(Map<String, Object?> data) {
+    return _client.post(ApiEndpoints.alerts, body: data);
   }
 }

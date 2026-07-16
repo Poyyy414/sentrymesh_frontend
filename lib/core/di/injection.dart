@@ -8,6 +8,7 @@ import '../../data/repositories/family_repository.dart';
 import '../../data/repositories/map_repository.dart';
 import '../../data/repositories/prediction_repository.dart';
 import '../../data/repositories/rescue_repository.dart';
+import '../../data/repositories/team_repository.dart';
 import '../../data/sources/local/cache_manager.dart';
 import '../../data/sources/local/local_storage.dart';
 import '../../data/sources/remote/alerts_api.dart';
@@ -16,6 +17,7 @@ import '../../data/sources/remote/family_api.dart';
 import '../../data/sources/remote/map_api.dart';
 import '../../data/sources/remote/prediction_api.dart';
 import '../../data/sources/remote/rescue_api.dart';
+import '../../data/sources/remote/teams_api.dart';
 import '../config/api_config.dart';
 import '../config/env.dart';
 import '../network/api_client.dart';
@@ -24,8 +26,11 @@ import '../services/location_service.dart';
 import '../services/lora/lora_service.dart';
 import '../services/map_service.dart';
 import '../services/notification_service.dart';
+import '../services/offline/offline_data_cache.dart';
 import '../services/offline/offline_map_cache.dart';
+import '../services/offline/sync_queue.dart';
 import '../services/storage_service.dart';
+import '../services/tower_socket_service.dart';
 
 Future<AppDependencies> configureDependencies() async {
   final localStorage = await LocalStorage.create();
@@ -33,6 +38,20 @@ Future<AppDependencies> configureDependencies() async {
     apiConfig: Env.apiConfig,
     localStorage: localStorage,
   );
+
+  // Resolve which backend is actually reachable (tower vs cloud) before the
+  // login screen can submit anything. Without this, apiClient/aiClient keep
+  // whatever base URL was baked in at build time — e.g. the tower IP, which
+  // doesn't exist on regular WiFi — and login has no way to recover, since
+  // the tower/cloud switch used to only run after a successful login.
+  await dependencies.connectivityService.currentStatus();
+  dependencies.apiClient.updateBaseUrl(
+    dependencies.connectivityService.activeApiUrl,
+  );
+  dependencies.aiClient.updateBaseUrl(
+    dependencies.connectivityService.activeAiUrl,
+  );
+
   dependencies.initialUser = await dependencies.authRepository.restoreSession();
   return dependencies;
 }
@@ -44,14 +63,15 @@ class AppDependencies {
     cacheManager = CacheManager(storage: localStorage);
     storageService = StorageService(localStorage: localStorage);
     connectivityService = ConnectivityService();
+    connectivityService.startMonitoring();
     locationService = LocationService();
     notificationService = NotificationService();
-    // LoRa is on standby until mesh hardware is available. The stub stays
-    // registered so it can be wired back into the repositories later, but no
-    // feature currently falls back to it.
     loraService = OfflineLoRaService();
     offlineMapCache = OfflineMapCache(storage: localStorage);
+    offlineDataCache = OfflineDataCache(storage: localStorage);
+    syncQueue = SyncQueue(storage: localStorage);
     mapService = MapService(offlineMapCache: offlineMapCache);
+    towerSocket = TowerSocketService();
 
     authApi = AuthApi(apiClient);
     alertsApi = AlertsApi(apiClient);
@@ -59,16 +79,30 @@ class AppDependencies {
     mapApi = MapApi(apiClient);
     familyApi = FamilyApi(apiClient);
     predictionApi = PredictionApi(apiClient);
+    teamsApi = TeamsApi(apiClient);
 
     authRepository = AuthRepository(remote: authApi, storage: storageService);
-    alertRepository = AlertRepository(remote: alertsApi);
+    alertRepository = AlertRepository(
+      remote: alertsApi,
+      connectivityService: connectivityService,
+      offlineDataCache: offlineDataCache,
+    );
     mapRepository = MapRepository(remote: mapApi);
     rescueRepository = RescueRepository(
       remote: rescueApi,
+      loraService: loraService,
       mapRepository: mapRepository,
+      connectivityService: connectivityService,
+      offlineDataCache: offlineDataCache,
+      syncQueue: syncQueue,
     );
     familyRepository = FamilyRepository(remote: familyApi);
     predictionRepository = PredictionRepository(remote: predictionApi);
+    teamRepository = TeamRepository(
+      remote: teamsApi,
+      connectivityService: connectivityService,
+      offlineDataCache: offlineDataCache,
+    );
     dashboardRepository = DashboardRepository(alertRepository: alertRepository);
   }
 
@@ -84,7 +118,10 @@ class AppDependencies {
   late final NotificationService notificationService;
   late final LoRaService loraService;
   late final OfflineMapCache offlineMapCache;
+  late final OfflineDataCache offlineDataCache;
+  late final SyncQueue syncQueue;
   late final MapService mapService;
+  late final TowerSocketService towerSocket;
 
   late final AuthApi authApi;
   late final AlertsApi alertsApi;
@@ -92,6 +129,7 @@ class AppDependencies {
   late final MapApi mapApi;
   late final FamilyApi familyApi;
   late final PredictionApi predictionApi;
+  late final TeamsApi teamsApi;
 
   late final AuthRepository authRepository;
   late final AlertRepository alertRepository;
@@ -99,6 +137,7 @@ class AppDependencies {
   late final MapRepository mapRepository;
   late final FamilyRepository familyRepository;
   late final PredictionRepository predictionRepository;
+  late final TeamRepository teamRepository;
   late final DashboardRepository dashboardRepository;
 }
 

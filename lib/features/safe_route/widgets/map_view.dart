@@ -8,18 +8,19 @@ import '../../../app/theme.dart';
 import '../../../core/config/map_tile_config.dart';
 import '../../../core/services/location_service.dart';
 import '../../../data/models/evacuation_center_model.dart';
-import '../../../data/models/rescue_request_model.dart';
 import '../../../data/models/route_model.dart';
+import '../../../data/models/team_model.dart';
 import '../state/asean_country.dart';
 
 class MapLayerVisibility {
   const MapLayerVisibility({
-    this.incidents = false,
+    this.incidents = true,
     this.hazards = true,
     this.safeRoute = true,
     this.evacuationCenters = true,
-    this.loraNodes = false,
+    this.loraNodes = true,
     this.location = true,
+    this.teams = true,
   });
 
   final bool incidents;
@@ -28,6 +29,7 @@ class MapLayerVisibility {
   final bool evacuationCenters;
   final bool loraNodes;
   final bool location;
+  final bool teams;
 
   MapLayerVisibility copyWith({
     bool? incidents,
@@ -36,6 +38,7 @@ class MapLayerVisibility {
     bool? evacuationCenters,
     bool? loraNodes,
     bool? location,
+    bool? teams,
   }) {
     return MapLayerVisibility(
       incidents: incidents ?? this.incidents,
@@ -44,6 +47,7 @@ class MapLayerVisibility {
       evacuationCenters: evacuationCenters ?? this.evacuationCenters,
       loraNodes: loraNodes ?? this.loraNodes,
       location: location ?? this.location,
+      teams: teams ?? this.teams,
     );
   }
 }
@@ -54,11 +58,12 @@ class MapView extends StatefulWidget {
     required this.layers,
     this.route,
     this.userLocation,
-    this.evacuationCenters = const [],
-    this.incidents = const [],
-    this.heatPoints = const [],
     this.isDaytime = true,
     this.rainfallMmPh = 0.0,
+    this.evacuationCenters = const [],
+    this.teamLocations = const [],
+    this.selectedCenterId,
+    this.onEvacuationCenterTap,
     super.key,
   });
 
@@ -66,11 +71,12 @@ class MapView extends StatefulWidget {
   final GeoPoint? userLocation;
   final MapLayerVisibility layers;
   final RouteModel? route;
-  final List<EvacuationCenterModel> evacuationCenters;
-  final List<RescueRequestModel> incidents;
-  final List<SeverityHeatPoint> heatPoints;
   final bool isDaytime;
   final double rainfallMmPh;
+  final List<EvacuationCenterModel> evacuationCenters;
+  final List<TeamModel> teamLocations;
+  final String? selectedCenterId;
+  final ValueChanged<EvacuationCenterModel>? onEvacuationCenterTap;
 
   @override
   State<MapView> createState() => _MapViewState();
@@ -161,26 +167,10 @@ class _MapViewState extends State<MapView> {
           children: [
             TileLayer(
               urlTemplate: MapTileConfig.mapboxStreetsUrl,
+              tileProvider: MapTileConfig.cachedTileProvider,
               userAgentPackageName: 'com.example.sentrymesh_frontend',
               maxZoom: 18,
             ),
-            if (widget.layers.hazards && widget.heatPoints.isNotEmpty)
-              CircleLayer(
-                circles: [
-                  for (final point in widget.heatPoints)
-                    CircleMarker(
-                      point: LatLng(
-                        point.location.latitude,
-                        point.location.longitude,
-                      ),
-                      radius: 260 + (point.severity * 760),
-                      useRadiusInMeter: true,
-                      color: point.color.withValues(alpha: 0.2),
-                      borderColor: point.color.withValues(alpha: 0.42),
-                      borderStrokeWidth: 1.2,
-                    ),
-                ],
-              ),
             if (widget.layers.safeRoute && routePoints.length > 1)
               PolylineLayer(
                 polylines: [
@@ -215,30 +205,28 @@ class _MapViewState extends State<MapView> {
                   for (final center in widget.evacuationCenters)
                     Marker(
                       point: LatLng(center.latitude, center.longitude),
-                      width: 78,
-                      height: 76,
-                      child: _EvacuationCenterMarker(center: center),
+                      width: 120,
+                      height: 48,
+                      child: _EvacuationCenterMarker(
+                        center: center,
+                        isSelected: center.id == widget.selectedCenterId,
+                        onTap: () => widget.onEvacuationCenterTap?.call(center),
+                      ),
                     ),
-                if (widget.layers.incidents)
-                  for (final request in widget.incidents)
-                    if (request.latitude != null && request.longitude != null)
-                      Marker(
-                        point: LatLng(request.latitude!, request.longitude!),
-                        width: 72,
-                        height: 76,
-                        child: _IncidentMarker(request: request),
-                      ),
-                if (widget.layers.loraNodes)
-                  for (final request in widget.incidents)
-                    if (request.latitude != null &&
-                        request.longitude != null &&
-                        request.assignedTeamName != null)
-                      Marker(
-                        point: _teamPointForRequest(request),
-                        width: 90,
-                        height: 72,
-                        child: _AssignedTeamMarker(request: request),
-                      ),
+                if (widget.layers.teams)
+                  for (final team in widget.teamLocations)
+                    for (final member in team.members)
+                      if (member.hasLocation)
+                        Marker(
+                          point: LatLng(member.latitude!, member.longitude!),
+                          width: 100,
+                          height: 44,
+                          child: _TeamMemberMapMarker(
+                            teamName: team.name,
+                            memberName: member.firstName,
+                            status: team.status,
+                          ),
+                        ),
                 if (widget.layers.location)
                   if (userPoint != null)
                     Marker(
@@ -276,32 +264,6 @@ class _MapViewState extends State<MapView> {
   }
 }
 
-class SeverityHeatPoint {
-  const SeverityHeatPoint({
-    required this.location,
-    required this.label,
-    required this.severity,
-  });
-
-  final GeoPoint location;
-  final String label;
-  final double severity;
-
-  Color get color {
-    if (severity >= 0.7) return AppTheme.dangerRed;
-    if (severity >= 0.35) return AppTheme.warningAmber;
-    return AppTheme.safeGreen;
-  }
-}
-
-LatLng _teamPointForRequest(RescueRequestModel request) {
-  final seed = request.id.codeUnits.fold<int>(0, (sum, code) => sum + code);
-  final latOffset = 0.0012 + (seed % 5) * 0.00022;
-  final lonOffset = 0.0012 + (seed % 7) * 0.00018;
-
-  return LatLng(request.latitude! + latOffset, request.longitude! + lonOffset);
-}
-
 // ── Night overlay ──────────────────────────────────────────────────────────
 
 class _NightOverlay extends StatelessWidget {
@@ -310,7 +272,10 @@ class _NightOverlay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return IgnorePointer(
-      child: const ColoredBox(color: Color(0x88000B20), child: _StarField()),
+      child: const ColoredBox(
+        color: Color(0x88000B20),
+        child: _StarField(),
+      ),
     );
   }
 }
@@ -346,11 +311,7 @@ class _StarPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..color = Colors.white.withValues(alpha: 0.55);
     for (final s in stars) {
-      canvas.drawCircle(
-        Offset(s.x * size.width, s.y * size.height),
-        s.r,
-        paint,
-      );
+      canvas.drawCircle(Offset(s.x * size.width, s.y * size.height), s.r, paint);
     }
   }
 
@@ -406,7 +367,10 @@ class _RainOverlayState extends State<_RainOverlay>
 }
 
 class _RainPainter extends CustomPainter {
-  const _RainPainter({required this.progress, required this.intensityMmPh});
+  const _RainPainter({
+    required this.progress,
+    required this.intensityMmPh,
+  });
 
   final double progress;
   final double intensityMmPh;
@@ -448,7 +412,11 @@ class _RainPainter extends CustomPainter {
       final y = t * (size.height + 30) - 15;
       final len = _lengths[i];
 
-      canvas.drawLine(Offset(x, y), Offset(x + len * 0.18, y + len), dropPaint);
+      canvas.drawLine(
+        Offset(x, y),
+        Offset(x + len * 0.18, y + len),
+        dropPaint,
+      );
 
       // tiny splash when drop hits bottom
       if (t > 0.92) {
@@ -523,136 +491,156 @@ class _CountryCenterMarker extends StatelessWidget {
   }
 }
 
+// ── Evacuation center marker ──────────────────────────────────────────────
+
 class _EvacuationCenterMarker extends StatelessWidget {
-  const _EvacuationCenterMarker({required this.center});
+  const _EvacuationCenterMarker({
+    required this.center,
+    required this.isSelected,
+    required this.onTap,
+  });
 
   final EvacuationCenterModel center;
+  final bool isSelected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final isFull = center.availableSlots <= 0;
-    final color = isFull ? AppTheme.warningAmber : AppTheme.safeGreen;
+    final bgColor = isSelected
+        ? AppTheme.signalBlue
+        : center.isOpen
+            ? AppTheme.safeGreen
+            : Colors.grey;
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _MapMarkerLabel(
-          label: isFull ? 'FULL' : '${center.availableSlots} slots',
-          color: color,
-        ),
-        const SizedBox(height: 3),
-        _MapMarkerBubble(icon: Icons.home_rounded, color: color),
-      ],
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: bgColor.withValues(alpha: 0.4),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.home_rounded, size: 13, color: Colors.white),
+                const SizedBox(width: 3),
+                Flexible(
+                  child: Text(
+                    center.name,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              center.availableSlots > 0
+                  ? '${center.availableSlots} slots'
+                  : 'FULL',
+              style: TextStyle(
+                fontSize: 8,
+                fontWeight: FontWeight.w700,
+                color: center.availableSlots > 0
+                    ? AppTheme.safeGreen
+                    : AppTheme.dangerRed,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
-class _IncidentMarker extends StatelessWidget {
-  const _IncidentMarker({required this.request});
+// ── Team member marker ────────────────────────────────────────────────────
 
-  final RescueRequestModel request;
+class _TeamMemberMapMarker extends StatelessWidget {
+  const _TeamMemberMapMarker({
+    required this.teamName,
+    required this.memberName,
+    required this.status,
+  });
+
+  final String teamName;
+  final String memberName;
+  final String status;
 
   @override
   Widget build(BuildContext context) {
-    final color = _severityColorForPeople(request.peopleNeedingHelp);
+    final color = status == 'active'
+        ? AppTheme.safeGreen
+        : const Color(0xFFE8A317);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _MapMarkerLabel(
-          label: 'SOS ${request.peopleNeedingHelp}',
-          color: color,
-        ),
-        const SizedBox(height: 3),
-        _MapMarkerBubble(icon: Icons.person_pin_rounded, color: color),
-      ],
-    );
-  }
-}
-
-class _AssignedTeamMarker extends StatelessWidget {
-  const _AssignedTeamMarker({required this.request});
-
-  final RescueRequestModel request;
-
-  @override
-  Widget build(BuildContext context) {
-    final name = request.assignedTeamName ?? 'Team';
-    final shortName = name
-        .replaceAll(' Response', '')
-        .replaceAll(' Rescue', '')
-        .replaceAll(' Evacuation', '');
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _MapMarkerLabel(label: shortName, color: AppTheme.signalBlue),
-        const SizedBox(height: 3),
-        _MapMarkerBubble(
-          icon: Icons.groups_rounded,
-          color: AppTheme.signalBlue,
-        ),
-      ],
-    );
-  }
-}
-
-class _MapMarkerLabel extends StatelessWidget {
-  const _MapMarkerLabel({required this.label, required this.color});
-
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: color,
-      borderRadius: BorderRadius.circular(8),
-      elevation: 3,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-        child: Text(
-          label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 9,
-            fontWeight: FontWeight.w900,
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(6),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.3),
+                blurRadius: 3,
+                offset: const Offset(0, 1),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.shield_rounded, size: 11, color: Colors.white),
+              const SizedBox(width: 2),
+              Text(
+                teamName,
+                style: const TextStyle(
+                  fontSize: 8,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                ),
+              ),
+            ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _MapMarkerBubble extends StatelessWidget {
-  const _MapMarkerBubble({required this.icon, required this.color});
-
-  final IconData icon;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: color,
-      shape: const CircleBorder(),
-      elevation: 3,
-      child: Container(
-        width: 34,
-        height: 34,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 2),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            memberName,
+            style: TextStyle(
+              fontSize: 7,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
         ),
-        child: Icon(icon, color: Colors.white, size: 18),
-      ),
+      ],
     );
   }
-}
-
-Color _severityColorForPeople(int people) {
-  if (people >= 5) return AppTheme.dangerRed;
-  if (people >= 2) return AppTheme.warningAmber;
-  return AppTheme.safeGreen;
 }

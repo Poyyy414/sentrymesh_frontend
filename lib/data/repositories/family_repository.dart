@@ -40,8 +40,6 @@ class FamilyRepository {
     await _remote.removeMember(id);
   }
 
-  /// Sends a text message to [toNumber] via the backend. Throws if the network
-  /// is unavailable — there is no offline relay yet (LoRa is on standby).
   Future<void> sendMessage({
     required String toNumber,
     required String body,

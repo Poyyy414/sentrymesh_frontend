@@ -1,3 +1,5 @@
+import '../../core/services/location_service.dart';
+
 class EvacuationCenterModel {
   const EvacuationCenterModel({
     required this.id,
@@ -22,6 +24,22 @@ class EvacuationCenterModel {
   final String status;
 
   bool get isOpen => status == 'open';
+
+  GeoPoint get point => GeoPoint(latitude: latitude, longitude: longitude);
+
+  Map<String, Object?> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'address': address,
+      'capacity': capacity,
+      'current_occupancy': currentOccupancy,
+      'available_slots': availableSlots,
+      'latitude': latitude,
+      'longitude': longitude,
+      'status': status,
+    };
+  }
 
   factory EvacuationCenterModel.fromJson(Map<String, Object?> json) {
     return EvacuationCenterModel(

@@ -17,8 +17,11 @@ class RescueApi {
     );
   }
 
-  Future<Map<String, Object?>> fetchRequests() {
-    return _client.get(ApiEndpoints.rescueRequests);
+  Future<Map<String, Object?>> fetchRequests({String? status}) {
+    return _client.get(
+      ApiEndpoints.rescueRequests,
+      queryParameters: status == null ? null : {'status': status},
+    );
   }
 
   Future<Map<String, Object?>> fetchRequest(String id) {
@@ -32,14 +35,11 @@ class RescueApi {
   Future<Map<String, Object?>> updateRequestStatus({
     required String id,
     required RescueStatus status,
-    String? responderId,
   }) {
-    final body = <String, Object?>{'status': status.name};
-    if (responderId != null) {
-      body['responder_id'] = responderId;
-    }
-
-    return _client.patch(ApiEndpoints.rescueRequestStatus(id), body: body);
+    return _client.patch(
+      ApiEndpoints.rescueRequestStatus(id),
+      body: {'status': status.name},
+    );
   }
 
   Future<Map<String, Object?>> fetchRequestNavigation({
@@ -69,10 +69,6 @@ class RescueApi {
     return _client.get(ApiEndpoints.evacuationCenters);
   }
 
-  Future<Map<String, Object?>> deleteEvacuationCenter(String id) {
-    return _client.delete(ApiEndpoints.evacuationCenterById(id));
-  }
-
   Future<Map<String, Object?>> assignShelter({
     required String id,
     required String shelterId,
@@ -86,17 +82,6 @@ class RescueApi {
         'shelter_name': shelterName,
         'shelter_address': shelterAddress,
       },
-    );
-  }
-
-  Future<Map<String, Object?>> assignResponder({
-    required String id,
-    required String responderId,
-    required String responderName,
-  }) {
-    return _client.patch(
-      ApiEndpoints.rescueRequestResponder(id),
-      body: {'responder_id': responderId, 'responder_name': responderName},
     );
   }
 }

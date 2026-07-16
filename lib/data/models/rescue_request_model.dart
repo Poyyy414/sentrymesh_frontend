@@ -16,11 +16,16 @@ class RescueRequestModel {
     this.assignedShelterId,
     this.assignedShelterName,
     this.assignedShelterAddress,
+    this.nearestEvacuationName,
+    this.nearestEvacuationLat,
+    this.nearestEvacuationLng,
+    this.nearestEvacuationDistanceKm,
     this.assignedTeamId,
     this.assignedTeamName,
-    this.assignedTeamStatus,
-    this.assignedResponderId,
-    this.assignedResponderName,
+    this.assignedAt,
+    this.riskLevel,
+    this.priorityScore,
+    this.priorityRank,
   });
 
   final String id;
@@ -36,11 +41,16 @@ class RescueRequestModel {
   final String? assignedShelterId;
   final String? assignedShelterName;
   final String? assignedShelterAddress;
+  final String? nearestEvacuationName;
+  final double? nearestEvacuationLat;
+  final double? nearestEvacuationLng;
+  final double? nearestEvacuationDistanceKm;
   final String? assignedTeamId;
   final String? assignedTeamName;
-  final String? assignedTeamStatus;
-  final String? assignedResponderId;
-  final String? assignedResponderName;
+  final DateTime? assignedAt;
+  final String? riskLevel;
+  final double? priorityScore;
+  final int? priorityRank;
 
   factory RescueRequestModel.fromJson(Map<String, Object?> json) {
     return RescueRequestModel(
@@ -68,11 +78,16 @@ class RescueRequestModel {
       assignedShelterId: json['assigned_shelter_id']?.toString(),
       assignedShelterName: json['assigned_shelter_name']?.toString(),
       assignedShelterAddress: json['assigned_shelter_address']?.toString(),
+      nearestEvacuationName: json['nearest_evacuation_name']?.toString(),
+      nearestEvacuationLat: _doubleFrom(json['nearest_evacuation_lat']),
+      nearestEvacuationLng: _doubleFrom(json['nearest_evacuation_lng']),
+      nearestEvacuationDistanceKm: _doubleFrom(json['nearest_evacuation_distance_km']),
       assignedTeamId: json['assigned_team_id']?.toString(),
       assignedTeamName: json['assigned_team_name']?.toString(),
-      assignedTeamStatus: json['assigned_team_status']?.toString(),
-      assignedResponderId: json['assigned_responder_id']?.toString(),
-      assignedResponderName: json['assigned_responder_name']?.toString(),
+      assignedAt: DateTime.tryParse(json['assigned_at']?.toString() ?? ''),
+      riskLevel: json['risk_level']?.toString(),
+      priorityScore: _doubleFrom(json['priority_score']),
+      priorityRank: int.tryParse(json['priority_rank']?.toString() ?? ''),
     );
   }
 

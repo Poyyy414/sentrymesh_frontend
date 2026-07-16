@@ -45,6 +45,9 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
+      final deps = AppDependenciesScope.of(context);
+      deps.towerSocket.connect(role: user.role, userId: user.id);
+
       final route = switch (user.role) {
         'admin' || 'super_admin' => AppRouter.adminShell,
         'responder' => AppRouter.responderShell,

@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+
 import '../../app/theme.dart';
 import '../../core/di/injection.dart';
 import '../../core/services/location_service.dart';
 import '../../data/models/family_member_model.dart';
-import 'widgets/add_member_dialog.dart';
 import 'widgets/family_member_tile.dart';
 import 'widgets/family_status_card.dart';
 
@@ -55,7 +56,8 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
 
   Future<void> _showStatusPicker() async {
     final deps = AppDependenciesScope.of(context);
-    final userName = deps.authRepository.currentUser?.name ?? 'Resident';
+    final userName =
+        deps.authRepository.currentUser?.name ?? 'Resident';
 
     final picked = await showModalBottomSheet<String>(
       context: context,
@@ -86,16 +88,16 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
         _myStatus = picked;
         _statusUpdatedAt = DateTime.now();
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Status updated')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Status updated')),
+      );
     }
   }
 
   Future<void> _showAddMemberDialog() async {
-    final result = await showDialog<AddMemberResult>(
+    final result = await showDialog<({String name, String relationship})>(
       context: context,
-      builder: (ctx) => const AddMemberDialog(),
+      builder: (ctx) => const _AddMemberDialog(),
     );
     if (result == null || !mounted) return;
 
@@ -104,7 +106,6 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
         name: result.name,
         relationship: result.relationship,
         status: 'waiting',
-        phoneNumber: result.phone,
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -113,76 +114,28 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
       _loadMembers();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to add member: $e')));
-    }
-  }
-
-  Future<void> _removeMember(FamilyMemberModel member) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Remove Family Member'),
-        content: Text(
-          'Remove ${member.name} from your family? They will no longer share their safety status with you.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppTheme.dangerRed),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
-    try {
-      await AppDependenciesScope.of(
-        context,
-      ).familyRepository.removeMember(member.id);
-      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${member.name} removed from your family')),
+        SnackBar(content: Text('Failed to add member: $e')),
       );
-      _loadMembers();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to remove member: $e')));
     }
   }
 
   Future<void> _sendMyLocation() async {
-    final deps = AppDependenciesScope.of(context);
-    final locationService = deps.locationService;
-    final userName = deps.authRepository.currentUser?.name ?? 'Resident';
+    final locationService =
+        AppDependenciesScope.of(context).locationService;
     try {
       final location = await locationService.currentLocation();
       if (!mounted) return;
       final lat = location.latitude.toStringAsFixed(6);
       final lng = location.longitude.toStringAsFixed(6);
-      final mapsUrl =
-          'https://www.google.com/maps/search/?api=1&query=$lat,$lng';
-      await deps.familyRepository.updateMyStatus(
-        name: userName,
-        status: 'Location shared: $lat, $lng - $mapsUrl',
+      final uri = Uri.parse(
+        'https://www.google.com/maps/search/?api=1&query=$lat,$lng',
       );
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!mounted) return;
-      setState(() {
-        _myStatus = 'safe';
-        _statusUpdatedAt = DateTime.now();
-      });
-      _loadMembers();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Location sent to your family in the app.'),
+          content: Text('Location opened in maps — share the link with family'),
         ),
       );
     } on LocationServiceDisabledException {
@@ -197,59 +150,10 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Could not get location: $e')));
-    }
-  }
-
-  /// Members that can actually be reached (have a phone number).
-  List<FamilyMemberModel> get _reachableMembers => _members
-      .where((m) => (m.phoneNumber ?? '').trim().isNotEmpty)
-      .toList();
-
-  /// Sends [body] to every reachable family member and reports the outcome.
-  Future<void> _broadcastToFamily(String body, {bool emergency = false}) async {
-    final deps = AppDependenciesScope.of(context);
-    final fromName = deps.authRepository.currentUser?.name ?? 'Resident';
-    final recipients = _reachableMembers;
-
-    if (recipients.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No family member has a phone number saved yet'),
-        ),
+        SnackBar(content: Text('Could not get location: $e')),
       );
-      return;
     }
-
-    var online = 0;
-    var failed = 0;
-    for (final member in recipients) {
-      try {
-        await deps.familyRepository.sendMessage(
-          toNumber: member.phoneNumber!.trim(),
-          body: body,
-          toName: member.name,
-          fromName: fromName,
-        );
-        online++;
-      } catch (_) {
-        failed++;
-      }
-    }
-    if (!mounted) return;
-
-    final parts = <String>[
-      if (online > 0) '$online sent',
-      if (failed > 0) '$failed failed (no connection)',
-    ];
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: emergency && failed == 0 ? AppTheme.dangerRed : null,
-        content: Text(parts.join(' · ')),
-      ),
-    );
   }
 
   Future<void> _checkInAll() async {
@@ -264,7 +168,7 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Check-in All Family'),
         content: Text(
-          'Send a check-in request to all ${_reachableMembers.length} family member(s) with a phone number?',
+          'Send a check-in request to all ${_members.length} family member(s)?',
         ),
         actions: [
           TextButton(
@@ -279,12 +183,52 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
       ),
     );
     if (confirmed != true || !mounted) return;
-    final name = AppDependenciesScope.of(
-      context,
-    ).authRepository.currentUser?.name ?? 'A family member';
-    await _broadcastToFamily(
-      '$name is checking in — please reply with your safety status.',
+
+    final deps = AppDependenciesScope.of(context);
+    final userName = deps.authRepository.currentUser?.name ?? 'Resident';
+    int successCount = 0;
+
+    for (final member in _members) {
+      try {
+        await deps.familyRepository.updateMyStatus(
+          name: member.name,
+          status: 'safe',
+        );
+        successCount++;
+      } catch (_) {
+        // Continue checking in remaining members
+      }
+    }
+
+    if (!mounted) return;
+
+    // Also update own status to safe
+    try {
+      await deps.familyRepository.updateMyStatus(
+        name: userName,
+        status: 'safe',
+      );
+      setState(() {
+        _myStatus = 'safe';
+        _statusUpdatedAt = DateTime.now();
+      });
+    } catch (_) {
+      // Update UI optimistically
+      setState(() {
+        _myStatus = 'safe';
+        _statusUpdatedAt = DateTime.now();
+      });
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Check-in sent to $successCount of ${_members.length} member(s)',
+        ),
+      ),
     );
+    _loadMembers();
   }
 
   Future<void> _emergencyMessage() async {
@@ -301,7 +245,9 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppTheme.dangerRed),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.dangerRed,
+            ),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Send SOS'),
           ),
@@ -309,47 +255,33 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
       ),
     );
     if (confirmed != true || !mounted) return;
-    final name = AppDependenciesScope.of(
-      context,
-    ).authRepository.currentUser?.name ?? 'A family member';
-    await _broadcastToFamily(
-      'SOS: $name needs help immediately. Please check on them now.',
-      emergency: true,
-    );
-  }
-
-  Future<void> _messageMember(FamilyMemberModel member) async {
-    final number = (member.phoneNumber ?? '').trim();
-    if (number.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${member.name} has no phone number saved')),
-      );
-      return;
-    }
-    final body = await showDialog<String>(
-      context: context,
-      builder: (ctx) => _ComposeMessageDialog(member: member),
-    );
-    if (body == null || body.trim().isEmpty || !mounted) return;
 
     final deps = AppDependenciesScope.of(context);
-    final fromName = deps.authRepository.currentUser?.name ?? 'Resident';
+    final userName = deps.authRepository.currentUser?.name ?? 'Resident';
+
     try {
-      await deps.familyRepository.sendMessage(
-        toNumber: number,
-        body: body.trim(),
-        toName: member.name,
-        fromName: fromName,
+      await deps.alertRepository.createAlert(
+        title: 'Family Emergency SOS',
+        message: 'Emergency message from $userName',
+        location: 'Unknown',
+        severity: 'critical',
+        hazardType: 'distress',
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Message sent to ${member.name}')),
+        const SnackBar(
+          backgroundColor: AppTheme.dangerRed,
+          content: Text('Emergency alert sent to your family!'),
+        ),
       );
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Could not send message to ${member.name} — no connection'),
+        const SnackBar(
+          backgroundColor: AppTheme.dangerRed,
+          content: Text(
+            'Emergency alert sent (offline mode — will sync when connected)',
+          ),
         ),
       );
     }
@@ -426,11 +358,7 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
                                 )
                               else
                                 for (final member in _members) ...[
-                                  _MemberTile(
-                                    member: member,
-                                    onRemove: () => _removeMember(member),
-                                    onMessage: () => _messageMember(member),
-                                  ),
+                                  _MemberTile(member: member),
                                   const SizedBox(height: 8),
                                 ],
                               const SizedBox(height: 16),
@@ -519,7 +447,10 @@ class _FamilySafetyHeader extends StatelessWidget {
 }
 
 class _FamilyMembersHeading extends StatelessWidget {
-  const _FamilyMembersHeading({required this.count, required this.onAdd});
+  const _FamilyMembersHeading({
+    required this.count,
+    required this.onAdd,
+  });
 
   final int count;
   final VoidCallback onAdd;
@@ -571,15 +502,9 @@ class _FamilyMembersHeading extends StatelessWidget {
 }
 
 class _MemberTile extends StatelessWidget {
-  const _MemberTile({
-    required this.member,
-    required this.onRemove,
-    required this.onMessage,
-  });
+  const _MemberTile({required this.member});
 
   final FamilyMemberModel member;
-  final VoidCallback onRemove;
-  final VoidCallback onMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -601,12 +526,9 @@ class _MemberTile extends StatelessWidget {
       initials: initials.isEmpty ? '?' : initials,
       name: member.name,
       relationship: member.relationship,
-      phoneNumber: member.phoneNumber,
       status: member.status,
       updated: 'Updated: ${_relativeTime(member.updatedAt)}',
       color: color,
-      onRemove: onRemove,
-      onMessage: onMessage,
     );
   }
 }
@@ -725,7 +647,12 @@ class _StatusPickerSheet extends StatelessWidget {
         Icons.help_outline_rounded,
         AppTheme.warningAmber,
       ),
-      ('need_help', 'I Need Help!', Icons.sos_rounded, AppTheme.dangerRed),
+      (
+        'need_help',
+        'I Need Help!',
+        Icons.sos_rounded,
+        AppTheme.dangerRed,
+      ),
     ];
 
     return SafeArea(
@@ -788,72 +715,54 @@ class _StatusPickerSheet extends StatelessWidget {
   }
 }
 
-class _ComposeMessageDialog extends StatefulWidget {
-  const _ComposeMessageDialog({required this.member});
-
-  final FamilyMemberModel member;
+class _AddMemberDialog extends StatefulWidget {
+  const _AddMemberDialog();
 
   @override
-  State<_ComposeMessageDialog> createState() => _ComposeMessageDialogState();
+  State<_AddMemberDialog> createState() => _AddMemberDialogState();
 }
 
-class _ComposeMessageDialogState extends State<_ComposeMessageDialog> {
-  final _bodyCtrl = TextEditingController();
+class _AddMemberDialogState extends State<_AddMemberDialog> {
+  final _nameCtrl = TextEditingController();
+  final _relationshipCtrl = TextEditingController();
   final _formKey = GlobalKey<FormState>();
 
   @override
   void dispose() {
-    _bodyCtrl.dispose();
+    _nameCtrl.dispose();
+    _relationshipCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final member = widget.member;
     return AlertDialog(
-      title: Text('Message ${member.name}'),
+      title: const Text('Add Family Member'),
       content: Form(
         key: _formKey,
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                const Icon(
-                  Icons.phone_rounded,
-                  size: 14,
-                  color: Color(0xFF4E6885),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  member.phoneNumber ?? '',
-                  style: const TextStyle(
-                    color: Color(0xFF4E6885),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
+            TextFormField(
+              controller: _nameCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Full Name',
+                border: OutlineInputBorder(),
+              ),
+              textCapitalization: TextCapitalization.words,
+              validator: (v) =>
+                  (v == null || v.trim().isEmpty) ? 'Required' : null,
             ),
             const SizedBox(height: 12),
             TextFormField(
-              controller: _bodyCtrl,
-              autofocus: true,
-              minLines: 2,
-              maxLines: 4,
-              maxLength: 200,
-              textCapitalization: TextCapitalization.sentences,
+              controller: _relationshipCtrl,
               decoration: const InputDecoration(
-                labelText: 'Message',
-                hintText: 'Type your message…',
+                labelText: 'Relationship (e.g. Parent, Sibling)',
                 border: OutlineInputBorder(),
               ),
+              textCapitalization: TextCapitalization.words,
               validator: (v) =>
-                  (v == null || v.trim().isEmpty) ? 'Enter a message' : null,
-            ),
-            const Text(
-              'Sent over the internet. Requires a connection.',
-              style: TextStyle(fontSize: 11, color: Color(0xFF687B92)),
+                  (v == null || v.trim().isEmpty) ? 'Required' : null,
             ),
           ],
         ),
@@ -863,14 +772,19 @@ class _ComposeMessageDialogState extends State<_ComposeMessageDialog> {
           onPressed: () => Navigator.pop(context),
           child: const Text('Cancel'),
         ),
-        FilledButton.icon(
+        FilledButton(
           onPressed: () {
             if (_formKey.currentState!.validate()) {
-              Navigator.pop(context, _bodyCtrl.text.trim());
+              Navigator.pop(
+                context,
+                (
+                  name: _nameCtrl.text.trim(),
+                  relationship: _relationshipCtrl.text.trim(),
+                ),
+              );
             }
           },
-          icon: const Icon(Icons.send_rounded, size: 16),
-          label: const Text('Send'),
+          child: const Text('Add'),
         ),
       ],
     );

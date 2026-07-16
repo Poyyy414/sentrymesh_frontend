@@ -8,13 +8,16 @@ import '../../app/router.dart';
 import '../../app/theme.dart';
 import '../../core/config/map_tile_config.dart';
 import '../../core/di/injection.dart';
+import '../../core/services/connectivity_service.dart';
 import '../../core/services/location_service.dart';
+import '../../core/services/tower_socket_service.dart';
 import '../../data/models/alert_model.dart';
+import '../../data/models/evacuation_center_model.dart';
 import '../../data/models/family_member_model.dart';
 import '../../data/models/prediction_model.dart';
+import '../../data/models/rescue_location_model.dart';
 import '../../data/models/rescue_request_model.dart';
 import '../../data/repositories/prediction_repository.dart';
-import '../family_safety/widgets/add_member_dialog.dart';
 import '../../shared/demo/demo_scenario.dart';
 import '../../shared/enums/alert_severity.dart';
 import '../../shared/enums/hazard_type.dart';
@@ -32,13 +35,200 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<PredictionBundle>? _predictionFuture;
   Future<List<AlertModel>>? _alertsFuture;
   Future<List<FamilyMemberModel>>? _familyFuture;
+  StreamSubscription<JsonMap>? _hazardWarningSub;
+  StreamSubscription<JsonMap>? _sosStatusSub;
+  Timer? _locationUpdateTimer;
+  String? _lastSosRequestId;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_predictionFuture == null) {
       _loadAllData();
+      _subscribeToHazardWarnings();
+      _subscribeToSosStatus();
     }
+  }
+
+  @override
+  void dispose() {
+    _hazardWarningSub?.cancel();
+    _sosStatusSub?.cancel();
+    _locationUpdateTimer?.cancel();
+    super.dispose();
+  }
+
+  void _subscribeToHazardWarnings() {
+    _hazardWarningSub?.cancel();
+    final socket = AppDependenciesScope.of(context).towerSocket;
+    _hazardWarningSub = socket.onHazardWarning.listen((data) {
+      if (mounted) {
+        _showHazardWarningDialog(data);
+      }
+    });
+  }
+
+  void _subscribeToSosStatus() {
+    _sosStatusSub?.cancel();
+    final socket = AppDependenciesScope.of(context).towerSocket;
+    _sosStatusSub = socket.onSosStatus.listen((data) {
+      if (mounted) {
+        _showResponderStatusUpdate(data);
+      }
+    });
+  }
+
+  void _showResponderStatusUpdate(JsonMap data) {
+    final status = data['status']?.toString() ?? '';
+    String message;
+    IconData icon;
+    Color color;
+
+    switch (status) {
+      case 'acknowledged':
+        message = 'A responder team has been dispatched to your location!';
+        icon = Icons.check_circle_outline;
+        color = AppTheme.signalBlue;
+      case 'inProgress':
+        message = 'Responder is on the way to your location!';
+        icon = Icons.directions_run;
+        color = AppTheme.warningAmber;
+      case 'resolved':
+        message = 'Your rescue request has been resolved.';
+        icon = Icons.verified;
+        color = AppTheme.safeGreen;
+      default:
+        return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 6),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: color,
+        content: Row(
+          children: [
+            Icon(icon, color: Colors.white, size: 22),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showHazardWarningDialog(JsonMap data) {
+    final alertLevel = data['alert_level']?.toString() ?? 'HIGH';
+    final title = data['title']?.toString() ?? 'Hazard Warning';
+    final message = data['message']?.toString() ?? 'A hazard has been detected in your area.';
+    final affectedNodes = int.tryParse(data['affected_nodes']?.toString() ?? '') ?? 0;
+    final isCritical = alertLevel.toUpperCase() == 'CRITICAL';
+    final alertColor = isCritical ? AppTheme.dangerRed : AppTheme.warningAmber;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        titlePadding: EdgeInsets.zero,
+        title: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: alertColor,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 28),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      alertLevel.toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              message,
+              style: const TextStyle(fontSize: 13, height: 1.4),
+            ),
+            if (affectedNodes > 0) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: alertColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: alertColor.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.location_on, color: alertColor, size: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      '$affectedNodes affected area${affectedNodes == 1 ? '' : 's'}',
+                      style: TextStyle(
+                        color: alertColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Dismiss'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              Navigator.pushNamed(context, AppRouter.safeRoute);
+            },
+            icon: const Icon(Icons.route, size: 18),
+            label: const Text('View Evacuation Routes'),
+            style: ElevatedButton.styleFrom(backgroundColor: alertColor),
+          ),
+        ],
+      ),
+    );
   }
 
   void _loadAllData() {
@@ -53,29 +243,53 @@ class _HomeScreenState extends State<HomeScreen> {
   void _refreshData() => _loadAllData();
 
   Future<void> _addFamilyMember() async {
-    final result = await showDialog<AddMemberResult>(
-      context: context,
-      builder: (_) => const AddMemberDialog(),
-    );
-    if (result == null || !mounted) return;
+    final nameController = TextEditingController();
+    final relationshipController = TextEditingController();
 
-    try {
-      await AppDependenciesScope.of(context).familyRepository.addMember(
-        name: result.name,
-        relationship: result.relationship,
-        status: 'waiting',
-        phoneNumber: result.phone,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${result.name} added to your family')),
-      );
-      _loadAllData();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to add member: $e')),
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add Family Member'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(labelText: 'Full Name'),
+            ),
+            TextField(
+              controller: relationshipController,
+              decoration: const InputDecoration(labelText: 'Relationship'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      try {
+        await AppDependenciesScope.of(context).familyRepository.addMember(
+          name: nameController.text,
+          relationship: relationshipController.text,
+          status: 'Safe',
         );
+        _loadAllData();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to add member: $e')),
+          );
+        }
       }
     }
   }
@@ -86,15 +300,10 @@ class _HomeScreenState extends State<HomeScreen> {
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => const _SosFlowSheet(),
+      builder: (_) => _SosFlowSheet(onSubmit: _submitSosToBackend),
     );
 
     if (sent == true && mounted) {
-      final submitted = await _submitSosToBackend();
-      if (!mounted || !submitted) {
-        return;
-      }
-
       DemoScenario.instance.sendResidentSos();
       setState(() => _distressSent = true);
     }
@@ -121,8 +330,18 @@ class _HomeScreenState extends State<HomeScreen> {
         longitude: location.longitude,
         locationLabel: 'Resident GPS',
       );
-      await dependencies.rescueRepository.submitRequest(request);
+      final response = await dependencies.rescueRepository.submitRequest(request);
       _showSosSnackBar('SOS sent with your current location for responders.');
+
+      // Store request ID and start continuous location updates.
+      _lastSosRequestId = response.id;
+      _startLocationUpdates(dependencies);
+
+      // Show nearest evacuation center if available in response.
+      if (mounted && response.nearestEvacuationName != null) {
+        _showEvacuationDialog(response);
+      }
+
       return true;
     } on LocationServiceDisabledException {
       _showLocationSettingsSnackBar();
@@ -135,6 +354,112 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return false;
+  }
+
+  void _startLocationUpdates(AppDependencies dependencies) {
+    _locationUpdateTimer?.cancel();
+    _locationUpdateTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) async {
+        final requestId = _lastSosRequestId;
+        if (requestId == null || !mounted) return;
+        try {
+          final location = await dependencies.locationService.currentLocation();
+          await dependencies.rescueRepository.updateRequestLocation(
+            id: requestId,
+            location: RescueLocationModel.fromPoint(location),
+          );
+        } catch (_) {
+          // Silently ignore location update failures to avoid spamming the user.
+        }
+      },
+    );
+  }
+
+  void _showEvacuationDialog(RescueRequestModel response) {
+    final name = response.nearestEvacuationName!;
+    final distance = response.nearestEvacuationDistanceKm;
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        titlePadding: EdgeInsets.zero,
+        title: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: const BoxDecoration(
+            color: AppTheme.signalBlue,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.local_hospital_rounded, color: Colors.white, size: 28),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Nearest Evacuation Center',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              name,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+                color: Color(0xFF102E58),
+              ),
+            ),
+            if (distance != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.directions_walk, size: 18, color: Color(0xFF60738A)),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${distance.toStringAsFixed(1)} km away',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF60738A),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 12),
+            const Text(
+              'Head to this evacuation center for safety. Tap below to view the route on the map.',
+              style: TextStyle(fontSize: 12, height: 1.4, color: Color(0xFF647890)),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Dismiss'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              Navigator.pushNamed(context, AppRouter.safeRoute);
+            },
+            icon: const Icon(Icons.map_rounded, size: 18),
+            label: const Text('View on Map'),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.signalBlue),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showSosSnackBar(String message) {
@@ -204,10 +529,21 @@ class _HomeScreenState extends State<HomeScreen> {
                 ).authRepository.currentUser?.name ??
                 'Resident';
 
-            return ListView(
+            return RefreshIndicator(
+              onRefresh: () async => _refreshData(),
+              child: ListView(
               padding: EdgeInsets.zero,
               children: [
-                _HomeHeader(isWide: isWide, userName: userName),
+                FutureBuilder<List<AlertModel>>(
+                  future: _alertsFuture,
+                  builder: (context, alertSnap) {
+                    return _HomeHeader(
+                      isWide: isWide,
+                      userName: userName,
+                      alertCount: alertSnap.data?.length ?? 0,
+                    );
+                  },
+                ),
                 Padding(
                   padding: EdgeInsets.fromLTRB(
                     horizontalPadding,
@@ -225,14 +561,6 @@ class _HomeScreenState extends State<HomeScreen> {
                             isWide: isWide,
                             onSosPressed: _openSosFlow,
                             onAddFamily: _addFamilyMember,
-                            onRequestAssistance: () => Navigator.of(
-                              context,
-                            ).pushNamed(AppRouter.rescueRequest),
-                          ),
-                          const SizedBox(height: 14),
-                          _LocationAndStatus(
-                            isWide: isWide,
-                            distressSent: _distressSent,
                           ),
                           const SizedBox(height: 14),
                           FutureBuilder<PredictionBundle>(
@@ -246,6 +574,12 @@ class _HomeScreenState extends State<HomeScreen> {
                                     builder: (context, familySnapshot) {
                                       return Column(
                                         children: [
+                                          _LocationAndStatus(
+                                            isWide: isWide,
+                                            distressSent: _distressSent,
+                                            predictionBundle: predictionSnapshot.data,
+                                          ),
+                                          const SizedBox(height: 14),
                                           _FloodForecastCard(
                                             snapshot: predictionSnapshot,
                                             onRefresh: _refreshData,
@@ -275,6 +609,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ],
+            ),
             );
           },
         ),
@@ -284,10 +619,15 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _HomeHeader extends StatelessWidget {
-  const _HomeHeader({required this.isWide, required this.userName});
+  const _HomeHeader({
+    required this.isWide,
+    required this.userName,
+    this.alertCount = 0,
+  });
 
   final bool isWide;
   final String userName;
+  final int alertCount;
 
   static String _initials(String name) {
     final parts = name.trim().split(RegExp(r'\s+'));
@@ -328,9 +668,12 @@ class _HomeHeader extends StatelessWidget {
                     const _HeaderBrand(),
                     const Spacer(),
                     if (isWide) ...[
-                      const _HeaderIcon(
-                        icon: Icons.notifications_none_rounded,
-                        badge: '2',
+                      GestureDetector(
+                        onTap: () => Navigator.pushNamed(context, AppRouter.alerts),
+                        child: _HeaderIcon(
+                          icon: Icons.notifications_none_rounded,
+                          badge: alertCount > 0 ? '$alertCount' : null,
+                        ),
                       ),
                       const SizedBox(width: 12),
                       _HeaderUser(userName: userName),
@@ -510,34 +853,37 @@ class _HeaderUser extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.11),
-            shape: BoxShape.circle,
+    return GestureDetector(
+      onTap: () => Navigator.pushNamed(context, AppRouter.profile),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.11),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.person_rounded, color: Colors.white),
           ),
-          child: const Icon(Icons.person_rounded, color: Colors.white),
-        ),
-        const SizedBox(width: 9),
-        Text(
-          userName,
-          style: const TextStyle(
+          const SizedBox(width: 9),
+          Text(
+            userName,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(width: 7),
+          const Icon(
+            Icons.keyboard_arrow_down_rounded,
             color: Colors.white,
-            fontSize: 13,
-            fontWeight: FontWeight.w800,
+            size: 20,
           ),
-        ),
-        const SizedBox(width: 7),
-        const Icon(
-          Icons.keyboard_arrow_down_rounded,
-          color: Colors.white,
-          size: 20,
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -547,20 +893,37 @@ class _LiveBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final deps = AppDependenciesScope.of(context);
+    final status = deps.connectivityService.currentStatusSync;
+    final isOnline = status == ConnectivityStatus.online;
+    final dotColor = isOnline
+        ? const Color(0xFF16E29A)
+        : status == ConnectivityStatus.offline
+            ? AppTheme.dangerRed
+            : const Color(0xFFE8A317);
+    final label = isOnline
+        ? 'Live'
+        : status == ConnectivityStatus.offline
+            ? 'Offline'
+            : 'Limited';
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF008E73).withValues(alpha: 0.48),
+        color: (isOnline
+                ? const Color(0xFF008E73)
+                : dotColor)
+            .withValues(alpha: 0.48),
         borderRadius: BorderRadius.circular(999),
       ),
-      child: const Row(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          CircleAvatar(radius: 4, backgroundColor: Color(0xFF16E29A)),
-          SizedBox(width: 7),
+          CircleAvatar(radius: 4, backgroundColor: dotColor),
+          const SizedBox(width: 7),
           Text(
-            'Live',
-            style: TextStyle(
+            label,
+            style: const TextStyle(
               color: Colors.white,
               fontSize: 11,
               fontWeight: FontWeight.w800,
@@ -630,17 +993,15 @@ class _EmergencyActions extends StatelessWidget {
     required this.isWide,
     required this.onSosPressed,
     required this.onAddFamily,
-    required this.onRequestAssistance,
   });
 
   final bool isWide;
   final VoidCallback onSosPressed;
   final VoidCallback onAddFamily;
-  final VoidCallback onRequestAssistance;
 
   @override
   Widget build(BuildContext context) {
-    final backup = _BackupCard(onTap: onRequestAssistance);
+    final backup = const _BackupCard();
     final sos = _EmergencySosCard(onPressed: onSosPressed);
     final family = _FamilyCheckInCard(onTap: onAddFamily);
 
@@ -673,29 +1034,26 @@ class _EmergencyActions extends StatelessWidget {
 }
 
 class _BackupCard extends StatelessWidget {
-  const _BackupCard({required this.onTap});
-
-  final VoidCallback onTap;
+  const _BackupCard();
 
   @override
   Widget build(BuildContext context) {
     return _ActionCardShell(
       key: const Key('emergency_backup_card'),
       gradient: const [Color(0xFF06295A), Color(0xFF031D44)],
-      onTap: onTap,
       child: Row(
         children: [
           const _ActionIcon(
-            icon: Icons.medical_services_rounded,
+            icon: Icons.hub_rounded,
             foreground: Color(0xFF12D88D),
             background: Color(0xFF075A55),
           ),
           const SizedBox(width: 14),
           const Expanded(
             child: _ActionText(
-              title: 'Request Assistance',
+              title: 'Emergency Backup Ready',
               subtitle:
-                  'Medical, flood, landslide or supply help — pick a type and send.',
+                  'You can still send an emergency request if mobile signal is weak.',
             ),
           ),
           Container(
@@ -706,9 +1064,9 @@ class _BackupCard extends StatelessWidget {
               shape: BoxShape.circle,
             ),
             child: const Icon(
-              Icons.chevron_right_rounded,
+              Icons.wifi_tethering_rounded,
               color: Color(0xFF53E7B0),
-              size: 20,
+              size: 18,
             ),
           ),
         ],
@@ -935,15 +1293,37 @@ class _ActionChevron extends StatelessWidget {
 }
 
 class _LocationAndStatus extends StatelessWidget {
-  const _LocationAndStatus({required this.isWide, required this.distressSent});
+  const _LocationAndStatus({
+    required this.isWide,
+    required this.distressSent,
+    this.predictionBundle,
+  });
 
   final bool isWide;
   final bool distressSent;
+  final PredictionBundle? predictionBundle;
+
+  static int _computeRiskScore(PredictionBundle? bundle) {
+    if (bundle == null) return 0;
+    final floodProb = bundle.flood?.eventProbability ?? 0;
+    final landslideProb = bundle.landslide?.eventProbability ?? 0;
+    // Normalize probabilities to 0-1 range if they arrive as percentages.
+    final fNorm = floodProb > 1 ? floodProb / 100 : floodProb;
+    final lNorm = landslideProb > 1 ? landslideProb / 100 : landslideProb;
+    // Use the higher of the two, weighted slightly toward flood.
+    final combined = (fNorm * 0.6 + lNorm * 0.4);
+    return (combined * 100).round().clamp(0, 100);
+  }
 
   @override
   Widget build(BuildContext context) {
     final location = const _LocationMapCard();
-    final status = _DisasterStatusCard(distressSent: distressSent);
+    final riskScore = _computeRiskScore(predictionBundle);
+    final status = _DisasterStatusCard(
+      distressSent: distressSent,
+      riskScore: riskScore,
+      lastUpdated: predictionBundle?.fetchedAt,
+    );
 
     if (!isWide) {
       return Column(
@@ -969,8 +1349,57 @@ class _LocationAndStatus extends StatelessWidget {
   }
 }
 
-class _LocationMapCard extends StatelessWidget {
+class _LocationMapCard extends StatefulWidget {
   const _LocationMapCard();
+
+  @override
+  State<_LocationMapCard> createState() => _LocationMapCardState();
+}
+
+class _LocationMapCardState extends State<_LocationMapCard> {
+  String _locationTitle = 'Getting location...';
+  String _locationSubtitle = 'Acquiring GPS';
+  GeoPoint? _userLocation;
+  List<EvacuationCenterModel> _nearestCenters = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchLocation();
+    _fetchEvacuationCenters();
+  }
+
+  Future<void> _fetchLocation() async {
+    try {
+      final locationService = AppDependenciesScope.of(context).locationService;
+      final point = await locationService.currentLocation();
+      if (mounted) {
+        setState(() {
+          _userLocation = point;
+          _locationTitle =
+              '${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)}';
+          _locationSubtitle = 'GPS location acquired';
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _locationTitle = 'Location unavailable';
+          _locationSubtitle = 'Enable GPS to see coordinates';
+        });
+      }
+    }
+  }
+
+  Future<void> _fetchEvacuationCenters() async {
+    try {
+      final deps = AppDependenciesScope.of(context);
+      final centers = await deps.rescueRepository.fetchEvacuationCenters();
+      if (mounted) {
+        setState(() => _nearestCenters = centers.take(5).toList());
+      }
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -996,24 +1425,24 @@ class _LocationMapCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 11),
-                const Expanded(
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Naga City, Camarines Sur',
+                        _locationTitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
+                        style: const TextStyle(
                           color: Color(0xFF102E58),
                           fontSize: 14,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
-                      SizedBox(height: 2),
+                      const SizedBox(height: 2),
                       Text(
-                        'Philippines',
-                        style: TextStyle(
+                        _locationSubtitle,
+                        style: const TextStyle(
                           color: Color(0xFF71849A),
                           fontSize: 10,
                           fontWeight: FontWeight.w600,
@@ -1024,7 +1453,8 @@ class _LocationMapCard extends StatelessWidget {
                 ),
                 IconButton(
                   tooltip: 'Locate',
-                  onPressed: () {},
+                  onPressed: () =>
+                      Navigator.pushNamed(context, AppRouter.safeRoute),
                   icon: const Icon(
                     Icons.my_location_rounded,
                     color: Color(0xFF285489),
@@ -1033,10 +1463,14 @@ class _LocationMapCard extends StatelessWidget {
               ],
             ),
           ),
-          const Expanded(
+          Expanded(
             child: ClipRRect(
-              borderRadius: BorderRadius.vertical(bottom: Radius.circular(12)),
-              child: _MapPreview(),
+              borderRadius:
+                  const BorderRadius.vertical(bottom: Radius.circular(12)),
+              child: _MiniMapPreview(
+                userLocation: _userLocation,
+                evacuationCenters: _nearestCenters,
+              ),
             ),
           ),
         ],
@@ -1045,76 +1479,90 @@ class _LocationMapCard extends StatelessWidget {
   }
 }
 
-class _MapPreview extends StatelessWidget {
-  const _MapPreview();
+class _MiniMapPreview extends StatelessWidget {
+  const _MiniMapPreview({
+    this.userLocation,
+    this.evacuationCenters = const [],
+  });
 
-  /// Naga City, Camarines Sur — matches the label shown on the card.
-  static const _center = LatLng(13.6218, 123.1948);
-
-  @override
-  Widget build(BuildContext context) {
-    return FlutterMap(
-      options: const MapOptions(
-        initialCenter: _center,
-        initialZoom: 13.5,
-        minZoom: 3,
-        maxZoom: 18,
-        backgroundColor: Color(0xFFE9F0F7),
-        // Non-interactive: it's a preview inside a scrolling list.
-        interactionOptions: InteractionOptions(flags: InteractiveFlag.none),
-      ),
-      children: [
-        TileLayer(
-          urlTemplate: MapTileConfig.mapboxStreetsUrl,
-          userAgentPackageName: 'com.example.sentrymesh_frontend',
-          maxZoom: 18,
-        ),
-        const MarkerLayer(
-          markers: [
-            Marker(
-              point: _center,
-              width: 29,
-              height: 29,
-              child: _CurrentLocationMarker(),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _CurrentLocationMarker extends StatelessWidget {
-  const _CurrentLocationMarker();
+  final GeoPoint? userLocation;
+  final List<EvacuationCenterModel> evacuationCenters;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 29,
-      height: 29,
-      decoration: BoxDecoration(
-        color: AppTheme.signalBlue.withValues(alpha: 0.18),
-        shape: BoxShape.circle,
-      ),
-      alignment: Alignment.center,
-      child: Container(
-        width: 15,
-        height: 15,
-        decoration: BoxDecoration(
-          color: AppTheme.signalBlue,
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 2),
-          boxShadow: const [BoxShadow(color: Color(0x44245FB8), blurRadius: 6)],
+    final center = userLocation != null
+        ? LatLng(userLocation!.latitude, userLocation!.longitude)
+        : const LatLng(13.6218, 123.1948);
+
+    return AbsorbPointer(
+      child: FlutterMap(
+        options: MapOptions(
+          initialCenter: center,
+          initialZoom: 14,
+          interactionOptions: const InteractionOptions(
+            flags: InteractiveFlag.none,
+          ),
         ),
+        children: [
+          TileLayer(
+            urlTemplate: MapTileConfig.mapboxStreetsUrl,
+            tileProvider: MapTileConfig.cachedTileProvider,
+            userAgentPackageName: 'com.example.sentrymesh_frontend',
+            maxZoom: 18,
+          ),
+          MarkerLayer(
+            markers: [
+              for (final ec in evacuationCenters)
+                Marker(
+                  point: LatLng(ec.latitude, ec.longitude),
+                  width: 28,
+                  height: 28,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: ec.isOpen
+                          ? AppTheme.safeGreen
+                          : Colors.grey,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                    child: const Icon(
+                      Icons.home_rounded,
+                      size: 14,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              if (userLocation != null)
+                Marker(
+                  point: center,
+                  width: 20,
+                  height: 20,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: AppTheme.signalBlue,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 3),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
       ),
     );
   }
 }
 
 class _DisasterStatusCard extends StatelessWidget {
-  const _DisasterStatusCard({required this.distressSent});
+  const _DisasterStatusCard({
+    required this.distressSent,
+    this.riskScore,
+    this.lastUpdated,
+  });
 
   final bool distressSent;
+  final int? riskScore;
+  final DateTime? lastUpdated;
 
   @override
   Widget build(BuildContext context) {
@@ -1222,7 +1670,11 @@ class _DisasterStatusCard extends StatelessWidget {
                       ),
                       if (showRiskPanel) ...[
                         const SizedBox(width: 18),
-                        _RiskPanel(distressSent: distressSent),
+                        _RiskPanel(
+                          distressSent: distressSent,
+                          riskScore: riskScore,
+                          lastUpdated: lastUpdated,
+                        ),
                       ],
                     ],
                   );
@@ -1237,13 +1689,33 @@ class _DisasterStatusCard extends StatelessWidget {
 }
 
 class _RiskPanel extends StatelessWidget {
-  const _RiskPanel({required this.distressSent});
+  const _RiskPanel({
+    required this.distressSent,
+    this.riskScore,
+    this.lastUpdated,
+  });
 
   final bool distressSent;
+  final int? riskScore;
+  final DateTime? lastUpdated;
+
+  Color _accentForScore(int score) {
+    if (score >= 70) return AppTheme.dangerRed;
+    if (score >= 40) return AppTheme.warningAmber;
+    return AppTheme.safeGreen;
+  }
+
+  String _timeAgoLabel() {
+    if (lastUpdated == null) return 'Waiting...';
+    final diff = DateTime.now().difference(lastUpdated!);
+    if (diff.inMinutes < 1) return 'Just now';
+    return '${diff.inMinutes} min ago';
+  }
 
   @override
   Widget build(BuildContext context) {
-    final accent = distressSent ? AppTheme.warningAmber : AppTheme.safeGreen;
+    final score = riskScore ?? (distressSent ? 48 : 12);
+    final accent = _accentForScore(score);
 
     return Container(
       width: 176,
@@ -1267,7 +1739,7 @@ class _RiskPanel extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            distressSent ? '48 / 100' : '12 / 100',
+            '$score / 100',
             style: TextStyle(
               color: accent,
               fontSize: 17,
@@ -1287,9 +1759,9 @@ class _RiskPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 2),
-          const Text(
-            '2 min ago',
-            style: TextStyle(
+          Text(
+            _timeAgoLabel(),
+            style: const TextStyle(
               color: Color(0xFF16365F),
               fontSize: 11,
               fontWeight: FontWeight.w800,
@@ -1858,7 +2330,7 @@ class _WeatherHazardCard extends StatelessWidget {
                   icon: Icons.thermostat_rounded,
                   label: 'Temp',
                   value: '${temp.round()} C',
-                  detail: bundle?.weatherProviderLabel ?? 'Live weather',
+                  detail: 'OpenWeather live',
                   color: AppTheme.dangerRed,
                 ),
               ),
@@ -1905,8 +2377,8 @@ class _WeatherMetric extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 154,
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      height: 130,
+      padding: const EdgeInsets.fromLTRB(11, 10, 11, 0),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(9),
@@ -1915,38 +2387,49 @@ class _WeatherMetric extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: Icon(icon, color: color, size: 22),
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Icon(icon, color: color, size: 22),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF60738A),
+                        fontSize: 9,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 9),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Color(0xFF60738A),
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: color,
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 3),
+          const SizedBox(height: 7),
           Text(
             detail,
             maxLines: 1,
@@ -1959,10 +2442,10 @@ class _WeatherMetric extends StatelessWidget {
           ),
           const Spacer(),
           SizedBox(
-            height: 28,
+            height: 30,
             child: CustomPaint(
               painter: _SparklinePainter(color: color),
-              size: const Size(double.infinity, 28),
+              size: const Size(double.infinity, 30),
             ),
           ),
         ],
@@ -2480,40 +2963,60 @@ class _CardSectionHeading extends StatelessWidget {
 }
 
 class _SosFlowSheet extends StatefulWidget {
-  const _SosFlowSheet();
+  const _SosFlowSheet({required this.onSubmit});
+
+  /// Performs the real submission and reports whether it actually succeeded.
+  final Future<bool> Function() onSubmit;
 
   @override
   State<_SosFlowSheet> createState() => _SosFlowSheetState();
 }
 
 class _SosFlowSheetState extends State<_SosFlowSheet> {
-  int _step = 0;
-
-  static const _steps = [
+  static const _preflightSteps = [
     ('Location required', 'GPS will be checked before the request is sent.'),
     ('Signal checked', 'The app is choosing the strongest available path.'),
-    (
-      'Emergency backup ready',
-      'Nearby relay points can help send your request.',
-    ),
-    ('Responder notified', 'Your request appears in the responder dashboard.'),
   ];
 
+  int _step = -1;
+  bool _sending = false;
+  bool? _success;
+
   Future<void> _send() async {
-    for (var index = 0; index < _steps.length; index++) {
-      if (!mounted) {
-        return;
-      }
+    setState(() {
+      _sending = true;
+      _success = null;
+      _step = -1;
+    });
+
+    for (var index = 0; index < _preflightSteps.length; index++) {
+      if (!mounted) return;
       setState(() => _step = index);
-      await Future<void>.delayed(const Duration(milliseconds: 420));
+      await Future<void>.delayed(const Duration(milliseconds: 320));
     }
-    if (mounted) {
-      Navigator.of(context).pop(true);
+
+    // The result the user sees below is the actual backend outcome, not a
+    // canned animation — this used to always end in "Responder notified"
+    // even when the request never reached the backend.
+    final ok = await widget.onSubmit();
+    if (!mounted) return;
+
+    setState(() {
+      _sending = false;
+      _success = ok;
+    });
+
+    if (ok) {
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      if (mounted) Navigator.of(context).pop(true);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final showResult = _success != null;
+    final failed = showResult && _success == false;
+
     return Container(
       decoration: const BoxDecoration(
         color: AppTheme.surface,
@@ -2545,23 +3048,71 @@ class _SosFlowSheetState extends State<_SosFlowSheet> {
             ],
           ),
           const SizedBox(height: 14),
-          for (var index = 0; index < _steps.length; index++) ...[
+          for (var index = 0; index < _preflightSteps.length; index++) ...[
             _SosStepTile(
-              title: _steps[index].$1,
-              subtitle: _steps[index].$2,
-              active: index <= _step,
+              title: _preflightSteps[index].$1,
+              subtitle: _preflightSteps[index].$2,
+              active: _step >= index,
             ),
-            if (index != _steps.length - 1) const SizedBox(height: 8),
+            const SizedBox(height: 8),
           ],
-          const SizedBox(height: 18),
-          ElevatedButton.icon(
-            onPressed: _send,
-            icon: const Icon(Icons.hub),
-            label: const Text('Send Emergency Request'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.dangerRed,
+          if (_sending && !showResult)
+            const _SosStepTile(
+              title: 'Sending to responders',
+              subtitle: 'Submitting your distress ping to the tower.',
+              active: true,
+              inProgress: true,
+            )
+          else if (showResult)
+            _SosStepTile(
+              title: _success! ? 'Responder notified' : 'Send failed',
+              subtitle: _success!
+                  ? 'Your request appears in the responder dashboard.'
+                  : 'Could not reach the tower. Check the message below and try again.',
+              active: _success!,
+              isError: failed,
             ),
-          ),
+          const SizedBox(height: 18),
+          if (failed)
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('Close'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _send,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Try Again'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.dangerRed,
+                    ),
+                  ),
+                ),
+              ],
+            )
+          else
+            ElevatedButton.icon(
+              onPressed: _sending ? null : _send,
+              icon: _sending
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.hub),
+              label: Text(_sending ? 'Sending…' : 'Send Emergency Request'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.dangerRed,
+              ),
+            ),
         ],
       ),
     );
@@ -2573,20 +3124,37 @@ class _SosStepTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.active,
+    this.inProgress = false,
+    this.isError = false,
   });
 
   final String title;
   final String subtitle;
   final bool active;
+  final bool inProgress;
+  final bool isError;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(
-          active ? Icons.check_circle : Icons.radio_button_unchecked,
-          color: active ? AppTheme.safeGreen : AppTheme.textMuted,
-        ),
+        if (inProgress)
+          const SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        else
+          Icon(
+            isError
+                ? Icons.error
+                : (active
+                      ? Icons.check_circle
+                      : Icons.radio_button_unchecked),
+            color: isError
+                ? AppTheme.dangerRed
+                : (active ? AppTheme.safeGreen : AppTheme.textMuted),
+          ),
         const SizedBox(width: 10),
         Expanded(
           child: Column(

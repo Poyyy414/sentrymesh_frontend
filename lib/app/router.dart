@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../features/admin/admin_shell.dart';
 import '../features/alerts/alert_details_screen.dart';
 import '../features/alerts/alerts_screen.dart';
 import '../features/auth/login_screen.dart';
@@ -11,6 +10,7 @@ import '../features/messages/message_details_screen.dart';
 import '../features/navigation/sentry_mesh_shell.dart';
 import '../features/profile/edit_profile_screen.dart';
 import '../features/profile/profile_screen.dart';
+import '../features/admin/admin_shell.dart';
 import '../features/responder/responder_shell.dart';
 import '../features/rescue_request/rescue_request_screen.dart';
 import '../features/safe_route/safe_route_map_screen.dart';

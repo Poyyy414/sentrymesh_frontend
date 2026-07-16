@@ -7,11 +7,18 @@ import '../config/api_config.dart';
 import 'network_exceptions.dart';
 
 class ApiClient {
-  ApiClient({required this.config, http.Client? client})
-    : _client = client ?? http.Client();
+  ApiClient({required ApiConfig config, http.Client? client})
+    : _config = config,
+      _client = client ?? http.Client();
 
-  final ApiConfig config;
+  ApiConfig _config;
   final http.Client _client;
+
+  ApiConfig get config => _config;
+
+  void updateBaseUrl(String newBaseUrl) {
+    _config = ApiConfig(baseUrl: newBaseUrl, timeout: _config.timeout);
+  }
   String? _authToken;
 
   void setAuthToken(String? token) {
