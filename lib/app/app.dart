@@ -17,15 +17,20 @@ class SentryMeshApp extends StatelessWidget {
       dependencies.towerSocket.connect(
         role: initialUser.role,
         userId: initialUser.id,
+        token: dependencies.storageService.readAuthToken(),
       );
     }
+    // Must match login_screen.dart's post-login routing exactly — this one
+    // used to only check 'super_admin', so a plain 'admin' user who closed
+    // and reopened the app got dropped into the resident shell instead of
+    // the admin console they'd just logged into.
     final initialRoute = initialUser == null
         ? AppRouter.login
-        : initialUser.role == 'responder'
-        ? AppRouter.responderShell
-        : initialUser.role == 'super_admin'
-        ? AppRouter.adminShell
-        : AppRouter.appShell;
+        : switch (initialUser.role) {
+            'admin' || 'super_admin' => AppRouter.adminShell,
+            'responder' => AppRouter.responderShell,
+            _ => AppRouter.appShell,
+          };
 
     return AppDependenciesScope(
       dependencies: dependencies,

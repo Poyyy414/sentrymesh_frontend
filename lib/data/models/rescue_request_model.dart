@@ -26,9 +26,11 @@ class RescueRequestModel {
     this.riskLevel,
     this.priorityScore,
     this.priorityRank,
+    this.userId,
   });
 
   final String id;
+  final String? userId;
   final HazardType emergencyType;
   final int peopleNeedingHelp;
   final String description;
@@ -88,6 +90,7 @@ class RescueRequestModel {
       riskLevel: json['risk_level']?.toString(),
       priorityScore: _doubleFrom(json['priority_score']),
       priorityRank: int.tryParse(json['priority_rank']?.toString() ?? ''),
+      userId: json['user_id']?.toString(),
     );
   }
 
@@ -103,6 +106,26 @@ class RescueRequestModel {
       if (latitude != null) 'latitude': latitude,
       if (longitude != null) 'longitude': longitude,
       if (locationLabel != null) 'location_label': locationLabel,
+      if (userId != null) 'user_id': userId,
+      if (assignedShelterId != null) 'assigned_shelter_id': assignedShelterId,
+      if (assignedShelterName != null)
+        'assigned_shelter_name': assignedShelterName,
+      if (assignedShelterAddress != null)
+        'assigned_shelter_address': assignedShelterAddress,
+      if (nearestEvacuationName != null)
+        'nearest_evacuation_name': nearestEvacuationName,
+      if (nearestEvacuationLat != null)
+        'nearest_evacuation_lat': nearestEvacuationLat,
+      if (nearestEvacuationLng != null)
+        'nearest_evacuation_lng': nearestEvacuationLng,
+      if (nearestEvacuationDistanceKm != null)
+        'nearest_evacuation_distance_km': nearestEvacuationDistanceKm,
+      if (assignedTeamId != null) 'assigned_team_id': assignedTeamId,
+      if (assignedTeamName != null) 'assigned_team_name': assignedTeamName,
+      if (assignedAt != null) 'assigned_at': assignedAt!.toIso8601String(),
+      if (riskLevel != null) 'risk_level': riskLevel,
+      if (priorityScore != null) 'priority_score': priorityScore,
+      if (priorityRank != null) 'priority_rank': priorityRank,
     };
   }
 
@@ -112,6 +135,7 @@ class RescueRequestModel {
       'people_needing_help': peopleNeedingHelp,
       'description': description,
       'status': status.name,
+      if (userId != null) 'user_id': userId,
       if (photoUrl != null) 'photo_url': photoUrl,
       if (latitude != null) 'latitude': latitude,
       if (longitude != null) 'longitude': longitude,

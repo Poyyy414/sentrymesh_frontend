@@ -55,6 +55,7 @@ class _RescueRequestScreenState extends State<RescueRequestScreen> {
 
       final request = RescueRequestModel(
         id: '',
+        userId: dependencies.authRepository.currentUser?.id,
         emergencyType: switch (_emergencyType) {
           'Flood Rescue' => HazardType.flood,
           'Landslide Rescue' => HazardType.landslide,

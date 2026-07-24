@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import '../config/env.dart';
+import 'tower_discovery.dart';
 
 enum ConnectivityStatus { online, limited, offline }
 
@@ -26,6 +27,12 @@ class ConnectivityService {
   String get activeAiUrl => _activeBackend == ActiveBackend.tower
       ? Env.towerAiUrl
       : Env.cloudAiUrl;
+
+  // Register/login/logout need the real cloud specifically, not just "online"
+  // — that status is true whenever the tower is reachable too, and an
+  // account created against the tower's backend would only ever exist in
+  // the tower's own local database, never reaching the cloud on its own.
+  Future<bool> isCloudReachable() => _canReach(Env.cloudApiUrl);
 
   Future<ConnectivityStatus> currentStatus() async {
     final previousBackend = _activeBackend;
@@ -64,8 +71,22 @@ class ConnectivityService {
       _canReach(Env.towerApiUrl),
       _canReach(Env.cloudApiUrl),
     ]);
-    final towerReachable = reachability[0];
+    var towerReachable = reachability[0];
     final cloudReachable = reachability[1];
+
+    // The known tower host didn't answer — it may be a different tower
+    // device, or this hotspot uses a different gateway convention than
+    // last time. Search the current network for one before giving up.
+    if (!towerReachable) {
+      final uri = Uri.parse(Env.towerApiUrl);
+      final discovered = await TowerDiscovery.findHost(
+        port: uri.hasPort ? uri.port : 80,
+      );
+      if (discovered != null) {
+        Env.setDiscoveredTowerHost(discovered);
+        towerReachable = true;
+      }
+    }
 
     // Prefer the local tower when both are reachable — it's the faster,
     // fully-offline-capable path.

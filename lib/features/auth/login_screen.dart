@@ -46,7 +46,11 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       final deps = AppDependenciesScope.of(context);
-      deps.towerSocket.connect(role: user.role, userId: user.id);
+      deps.towerSocket.connect(
+        role: user.role,
+        userId: user.id,
+        token: deps.storageService.readAuthToken(),
+      );
 
       final route = switch (user.role) {
         'admin' || 'super_admin' => AppRouter.adminShell,

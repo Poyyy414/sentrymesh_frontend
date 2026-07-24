@@ -1,3 +1,4 @@
+import '../../core/services/geo_bounds.dart';
 import '../../shared/enums/hazard_type.dart';
 import '../models/prediction_model.dart';
 import '../sources/remote/prediction_api.dart';
@@ -39,33 +40,22 @@ class PredictionRepository {
 
   final PredictionApi _remote;
 
+  // Used only when a real device location isn't available (permission
+  // denied / GPS off), so the home screen still shows a plausible reading
+  // instead of nothing. See kDefaultMapCenter for why this one constant.
+  static const _fallbackLatitude = kDefaultLatitude;
+  static const _fallbackLongitude = kDefaultLongitude;
+
   Future<NodePredictionModel?> fetchIncidentPrediction({
     required double latitude,
     required double longitude,
     required HazardType hazardType,
   }) async {
-    final hour = DateTime.now().hour;
     final isLandslide = hazardType == HazardType.landslide;
     final payload = <String, Object?>{
       'latitude': latitude,
       'longitude': longitude,
-      'hour': hour,
       'hazard_type': isLandslide ? 2 : 1,
-      'rainfall_mm': 0,
-      'wind_speed_kph': 0,
-      'water_level_m': 0,
-      'river_level_m': 0,
-      'slope': isLandslide ? 15.0 : 0.05,
-      'soil_moisture': 0.5,
-      'surface_runoff': 0.3,
-      'upstream_water_level': 0,
-      'ground_movement': 0,
-      'humidity': 75,
-      'pressure': 1010,
-      'temperature': 27,
-      'elevation': isLandslide ? 80.0 : 20.0,
-      'distance_to_river': 1.0,
-      'recent_reports': 1,
       'location_label': 'Incident location',
     };
 
@@ -75,11 +65,35 @@ class PredictionRepository {
     return response.firstNode;
   }
 
-  Future<PredictionBundle> fetchHomePredictions() async {
+  /// The AI service fetches its own live rainfall/terrain data for whatever
+  /// coordinates are sent — pass the resident's real device location when
+  /// known, rather than a fixed reference point, so the risk shown actually
+  /// reflects where they are.
+  Future<PredictionBundle> fetchHomePredictions({
+    double? latitude,
+    double? longitude,
+    String? locationLabel,
+  }) async {
+    final lat = latitude ?? _fallbackLatitude;
+    final lon = longitude ?? _fallbackLongitude;
+    final label = locationLabel ?? 'Naga City, Camarines Sur';
+
     final responses = await Future.wait([
-      _remote.predictFlood(payload: _predictionPayload(_nagaFloodSignals)),
+      _remote.predictFlood(
+        payload: {
+          'latitude': lat,
+          'longitude': lon,
+          'hazard_type': 1,
+          'location_label': label,
+        },
+      ),
       _remote.predictLandslide(
-        payload: _predictionPayload(_nagaLandslideSignals),
+        payload: {
+          'latitude': lat,
+          'longitude': lon,
+          'hazard_type': 2,
+          'location_label': label,
+        },
       ),
     ]);
 
@@ -90,77 +104,10 @@ class PredictionRepository {
       fetchedAt: DateTime.now(),
     );
   }
-
-  Map<String, Object?> _predictionPayload(Map<String, num> signals) {
-    return {
-      for (final entry in signals.entries) entry.key: entry.value,
-      'location_label': 'Naga City, Camarines Sur',
-    };
-  }
 }
 
 const _fallbackFeatureColumns = [
   'latitude',
   'longitude',
-  'hour',
-  'rainfall_mm',
-  'wind_speed_kph',
   'hazard_type',
-  'water_level_m',
-  'river_level_m',
-  'slope',
-  'soil_moisture',
-  'surface_runoff',
-  'upstream_water_level',
-  'ground_movement',
-  'humidity',
-  'pressure',
-  'temperature',
-  'elevation',
-  'distance_to_river',
-  'recent_reports',
 ];
-
-const _nagaFloodSignals = {
-  'latitude': 13.6218,
-  'longitude': 123.1948,
-  'hour': 9,
-  'rainfall_mm': 162,
-  'wind_speed_kph': 42,
-  'hazard_type': 1,
-  'water_level_m': 1.42,
-  'river_level_m': 1.68,
-  'slope': 0.18,
-  'soil_moisture': 0.74,
-  'surface_runoff': 0.58,
-  'upstream_water_level': 1.91,
-  'ground_movement': 0.03,
-  'humidity': 88,
-  'pressure': 988,
-  'temperature': 27,
-  'elevation': 21,
-  'distance_to_river': 0.7,
-  'recent_reports': 6,
-};
-
-const _nagaLandslideSignals = {
-  'latitude': 13.6502,
-  'longitude': 123.2477,
-  'hour': 9,
-  'rainfall_mm': 118,
-  'wind_speed_kph': 38,
-  'hazard_type': 2,
-  'water_level_m': 0.34,
-  'river_level_m': 0.52,
-  'slope': 31,
-  'soil_moisture': 0.86,
-  'surface_runoff': 0.44,
-  'upstream_water_level': 0.61,
-  'ground_movement': 0.21,
-  'humidity': 91,
-  'pressure': 986,
-  'temperature': 26,
-  'elevation': 126,
-  'distance_to_river': 2.4,
-  'recent_reports': 4,
-};

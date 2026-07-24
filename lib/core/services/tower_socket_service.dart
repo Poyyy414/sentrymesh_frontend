@@ -18,6 +18,7 @@ class TowerSocketService {
   final _teamMemberLeftController = StreamController<JsonMap>.broadcast();
   final _hazardWarningController = StreamController<JsonMap>.broadcast();
   final _teamAssignmentController = StreamController<JsonMap>.broadcast();
+  final _sosAssignedController = StreamController<JsonMap>.broadcast();
 
   Stream<JsonMap> get onSosNew => _sosNewController.stream;
   Stream<JsonMap> get onSosStatus => _sosStatusController.stream;
@@ -27,27 +28,35 @@ class TowerSocketService {
   Stream<JsonMap> get onTeamMemberLeft => _teamMemberLeftController.stream;
   Stream<JsonMap> get onHazardWarning => _hazardWarningController.stream;
   Stream<JsonMap> get onTeamAssignment => _teamAssignmentController.stream;
+  // Broadcast to every connected responder (unlike team:assignment, which is
+  // scoped to a `team:<id>` socket room this client never actually joins) —
+  // this is the reliable way to learn "a team just got a new assignment"
+  // regardless of dispatch timing.
+  Stream<JsonMap> get onSosAssigned => _sosAssignedController.stream;
 
   bool get isConnected => _socket?.connected ?? false;
 
   String? _lastRole;
   String? _lastUserId;
+  String? _lastToken;
 
-  void connect({String? role, String? userId, String? baseUrl}) {
+  void connect({String? role, String? userId, String? token, String? baseUrl}) {
     _lastRole = role;
     _lastUserId = userId;
+    _lastToken = token;
     final url = baseUrl ?? Env.apiBaseUrl;
 
     _socket = io.io(
       url,
       io.OptionBuilder()
           .setTransports(['websocket', 'polling'])
+          .setAuth({'token': token})
           .disableAutoConnect()
           .build(),
     );
 
     _socket!.onConnect((_) {
-      _socket!.emit('join', {'role': role, 'userId': userId});
+      _socket!.emit('join', {});
     });
 
     _socket!.on('sos:new', (data) {
@@ -98,14 +107,21 @@ class TowerSocketService {
       }
     });
 
+    _socket!.on('sos:assigned', (data) {
+      if (data is Map) {
+        _sosAssignedController.add(Map<String, Object?>.from(data));
+      }
+    });
+
     _socket!.connect();
   }
 
-  void reconnect({String? role, String? userId, String? baseUrl}) {
+  void reconnect({String? role, String? userId, String? token, String? baseUrl}) {
     disconnect();
     connect(
       role: role ?? _lastRole,
       userId: userId ?? _lastUserId,
+      token: token ?? _lastToken,
       baseUrl: baseUrl,
     );
   }
@@ -134,5 +150,6 @@ class TowerSocketService {
     _teamMemberLeftController.close();
     _hazardWarningController.close();
     _teamAssignmentController.close();
+    _sosAssignedController.close();
   }
 }

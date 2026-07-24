@@ -22,6 +22,8 @@ class ApiEndpoints {
 
   static String familyMemberById(String id) => '/family/members/$id';
 
+  static String familyMemberStatus(String id) => '/family/members/$id/status';
+
   static String evacuationCenterById(String id) => '/evacuation-centers/$id';
 
   static String rescueRequestResponder(String id) =>

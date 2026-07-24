@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/theme.dart';
 import '../../core/di/injection.dart';
 import '../../core/services/location_service.dart';
+import '../../core/services/offline/sync_queue.dart';
 import '../../data/models/family_member_model.dart';
 import 'widgets/family_member_tile.dart';
 import 'widgets/family_status_card.dart';
@@ -56,8 +57,6 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
 
   Future<void> _showStatusPicker() async {
     final deps = AppDependenciesScope.of(context);
-    final userName =
-        deps.authRepository.currentUser?.name ?? 'Resident';
 
     final picked = await showModalBottomSheet<String>(
       context: context,
@@ -69,10 +68,7 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
     if (picked == null || !mounted) return;
 
     try {
-      await deps.familyRepository.updateMyStatus(
-        name: userName,
-        status: picked,
-      );
+      await deps.familyRepository.updateMyStatus(status: picked);
       if (!mounted) return;
       setState(() {
         _myStatus = picked;
@@ -81,15 +77,21 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Status updated successfully')),
       );
-    } catch (_) {
+    } on QueuedForSyncException catch (error) {
       if (!mounted) return;
-      // Update UI optimistically even if backend is unreachable
+      // The status will actually reach the backend once synced, so it's
+      // fair to reflect it locally now — but say "queued", not "updated".
       setState(() {
         _myStatus = picked;
         _statusUpdatedAt = DateTime.now();
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Status updated')),
+        SnackBar(content: Text('$error'), backgroundColor: AppTheme.warningAmber),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update status: $error')),
       );
     }
   }
@@ -112,6 +114,14 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
         SnackBar(content: Text('${result.name} added to your family')),
       );
       _loadMembers();
+    } on QueuedForSyncException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${result.name}: $error'),
+          backgroundColor: AppTheme.warningAmber,
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -185,46 +195,50 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
     if (confirmed != true || !mounted) return;
 
     final deps = AppDependenciesScope.of(context);
-    final userName = deps.authRepository.currentUser?.name ?? 'Resident';
     int successCount = 0;
+    int queuedCount = 0;
 
     for (final member in _members) {
       try {
-        await deps.familyRepository.updateMyStatus(
-          name: member.name,
+        await deps.familyRepository.updateMemberStatus(
+          id: member.id,
           status: 'safe',
         );
         successCount++;
+      } on QueuedForSyncException {
+        queuedCount++;
       } catch (_) {
-        // Continue checking in remaining members
+        // Genuinely failed for this member — continue with the rest.
       }
     }
 
     if (!mounted) return;
 
-    // Also update own status to safe
+    // Also update own status to safe. Reflect it locally either way (it's
+    // either confirmed or will sync), but don't blur the two in the summary.
     try {
-      await deps.familyRepository.updateMyStatus(
-        name: userName,
-        status: 'safe',
-      );
-      setState(() {
-        _myStatus = 'safe';
-        _statusUpdatedAt = DateTime.now();
-      });
+      await deps.familyRepository.updateMyStatus(status: 'safe');
+    } on QueuedForSyncException {
+      // Still queued — counted separately below via queuedCount/successCount.
     } catch (_) {
-      // Update UI optimistically
-      setState(() {
-        _myStatus = 'safe';
-        _statusUpdatedAt = DateTime.now();
-      });
+      // Own-status failure doesn't block reporting the members' results.
     }
+    setState(() {
+      _myStatus = 'safe';
+      _statusUpdatedAt = DateTime.now();
+    });
 
     if (!mounted) return;
+    final parts = [
+      if (successCount > 0) '$successCount sent',
+      if (queuedCount > 0) '$queuedCount queued (offline)',
+    ];
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Check-in sent to $successCount of ${_members.length} member(s)',
+          parts.isEmpty
+              ? 'Check-in failed for all ${_members.length} member(s)'
+              : 'Check-in: ${parts.join(', ')} of ${_members.length} member(s)',
         ),
       ),
     );
@@ -232,6 +246,13 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
   }
 
   Future<void> _emergencyMessage() async {
+    if (_members.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No family members to notify yet')),
+      );
+      return;
+    }
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -259,32 +280,72 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
     final deps = AppDependenciesScope.of(context);
     final userName = deps.authRepository.currentUser?.name ?? 'Resident';
 
+    // Best-effort real GPS — this is an emergency alert, so a missing fix
+    // (GPS disabled/denied) shouldn't block sending it, but 'Unknown' was
+    // being sent unconditionally even though LocationService is right here.
+    String location = 'Unknown';
     try {
-      await deps.alertRepository.createAlert(
-        title: 'Family Emergency SOS',
-        message: 'Emergency message from $userName',
-        location: 'Unknown',
-        severity: 'critical',
-        hazardType: 'distress',
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: AppTheme.dangerRed,
-          content: Text('Emergency alert sent to your family!'),
-        ),
-      );
+      final point = await deps.locationService.currentLocation();
+      location =
+          '${point.latitude.toStringAsFixed(6)}, ${point.longitude.toStringAsFixed(6)}';
     } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: AppTheme.dangerRed,
-          content: Text(
-            'Emergency alert sent (offline mode — will sync when connected)',
-          ),
-        ),
-      );
+      // Keep 'Unknown' — still send the alert without precise location.
     }
+    if (!mounted) return;
+
+    // This used to go through alertRepository.createAlert(), which hits the
+    // backend's public /alerts feed — the same one every resident on the
+    // platform reads. There's no per-user scoping there at all, so this
+    // would've broadcast "I need help" to total strangers instead of just
+    // this resident's own family, on top of the backend actually rejecting
+    // the request outright (POST /alerts requires responder/admin roles —
+    // a resident calling it always got a 403). Family messages are the
+    // properly-scoped path for this, and already have a real sync-queue
+    // fallback wired in from earlier this session.
+    final messageBody =
+        'EMERGENCY: $userName needs help immediately. Last known location: $location';
+
+    var sentCount = 0;
+    var queuedCount = 0;
+    var skippedCount = 0;
+
+    for (final member in _members) {
+      final phoneNumber = member.phoneNumber;
+      if (phoneNumber == null || phoneNumber.isEmpty) {
+        skippedCount++;
+        continue;
+      }
+      try {
+        await deps.familyRepository.sendMessage(
+          toNumber: phoneNumber,
+          body: messageBody,
+          toName: member.name,
+          fromName: userName,
+        );
+        sentCount++;
+      } on QueuedForSyncException {
+        queuedCount++;
+      } catch (_) {
+        skippedCount++;
+      }
+    }
+
+    if (!mounted) return;
+    final parts = [
+      if (sentCount > 0) '$sentCount sent',
+      if (queuedCount > 0) '$queuedCount queued (offline)',
+      if (skippedCount > 0) '$skippedCount could not be reached',
+    ];
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppTheme.dangerRed,
+        content: Text(
+          parts.isEmpty
+              ? 'Could not reach any family members'
+              : 'Emergency alert: ${parts.join(', ')}',
+        ),
+      ),
+    );
   }
 
   @override

@@ -4,6 +4,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
 import 'package:http/http.dart' as http;
 
+import '../services/tower_discovery.dart';
 import 'env.dart';
 
 class MapTileConfig {
@@ -27,9 +28,6 @@ class MapTileConfig {
   static String get _towerStreetsUrl =>
       '${Env.towerTileUrl}/streets/{z}/{x}/{y}.png';
 
-  static String get _towerSatelliteUrl =>
-      '${Env.towerTileUrl}/satellite/{z}/{x}/{y}.png';
-
   static bool _hasInternet = true;
   static bool _hasTower = false;
   static bool _checked = false;
@@ -52,11 +50,26 @@ class MapTileConfig {
   }
 
   static Future<bool> _canReachTower() async {
+    final uri = Uri.parse(Env.towerTileUrl);
+    final port = uri.hasPort ? uri.port : 80;
+    if (await _canReachHost(uri.host, port)) return true;
+
+    // The known tower host didn't answer — search the current network for
+    // one before giving up (see TowerDiscovery for why this works without
+    // a single hardcoded address).
+    final discovered = await TowerDiscovery.findHost(port: port);
+    if (discovered != null) {
+      Env.setDiscoveredTowerHost(discovered);
+      return true;
+    }
+    return false;
+  }
+
+  static Future<bool> _canReachHost(String host, int port) async {
     try {
-      final uri = Uri.parse(Env.towerTileUrl);
       final socket = await Socket.connect(
-        uri.host,
-        uri.hasPort ? uri.port : 80,
+        host,
+        port,
         timeout: const Duration(seconds: 2),
       );
       socket.destroy();
@@ -75,7 +88,11 @@ class MapTileConfig {
 
   static String get mapboxSatelliteStreetsUrl {
     if (!_checked) return _mapboxSatelliteStreets;
-    if (_hasTower) return _towerSatelliteUrl;
+    // The tower only ever pre-downloads streets tiles (see
+    // download-tiles.sh / tiles/streets) — requesting a satellite path from
+    // it would silently render blank tiles for every request, since
+    // serve-tiles.py returns a blank PNG for anything it doesn't have.
+    if (_hasTower) return _towerStreetsUrl;
     if (!_hasInternet) return _osmStreetsUrl;
     return _mapboxSatelliteStreets;
   }

@@ -32,56 +32,59 @@ class AlertFilterTabs extends StatelessWidget {
           final selected = selectedIndex == index;
 
           return Expanded(
-            child: InkWell(
-              key: Key('alert_filter_$index'),
-              onTap: () => onChanged(index),
-              child: Column(
-                children: [
-                  Expanded(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          item.icon,
-                          size: 18,
-                          color: selected
-                              ? AppTheme.signalBlue
-                              : const Color(0xFF5F7188),
-                        ),
-                        const SizedBox(width: 5),
-                        Flexible(
-                          child: Text(
-                            item.label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: selected
-                                  ? AppTheme.signalBlue
-                                  : const Color(0xFF5F7188),
-                              fontSize: 12,
-                              fontWeight: selected
-                                  ? FontWeight.w900
-                                  : FontWeight.w600,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                key: Key('alert_filter_$index'),
+                onTap: () => onChanged(index),
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            item.icon,
+                            size: 18,
+                            color: selected
+                                ? AppTheme.signalBlue
+                                : const Color(0xFF5F7188),
+                          ),
+                          const SizedBox(width: 5),
+                          Flexible(
+                            child: Text(
+                              item.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: selected
+                                    ? AppTheme.signalBlue
+                                    : const Color(0xFF5F7188),
+                                fontSize: 12,
+                                fontWeight: selected
+                                    ? FontWeight.w900
+                                    : FontWeight.w600,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 160),
-                    height: 3,
-                    width: selected ? 86 : 0,
-                    decoration: BoxDecoration(
-                      color: selected
-                          ? AppTheme.signalBlue
-                          : Colors.transparent,
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(3),
+                        ],
                       ),
                     ),
-                  ),
-                ],
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
+                      height: 3,
+                      width: selected ? 86 : 0,
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? AppTheme.signalBlue
+                            : Colors.transparent,
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(3),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           );

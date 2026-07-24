@@ -1,23 +1,44 @@
 import '../../core/network/network_exceptions.dart';
+import '../../core/services/connectivity_service.dart';
 import '../../core/services/storage_service.dart';
 import '../models/user_model.dart';
 import '../sources/remote/auth_api.dart';
 
 class AuthRepository {
-  AuthRepository({required AuthApi remote, required StorageService storage})
-    : _remote = remote,
-      _storage = storage;
+  AuthRepository({
+    required AuthApi remote,
+    required StorageService storage,
+    required ConnectivityService connectivity,
+  }) : _remote = remote,
+       _storage = storage,
+       _connectivity = connectivity;
 
   final AuthApi _remote;
   final StorageService _storage;
+  final ConnectivityService _connectivity;
   UserModel? _currentUser;
 
   UserModel? get currentUser => _currentUser;
+
+  // Accounts only ever exist wherever they were created — a tower has no
+  // way to hand a freshly-registered or freshly-authenticated account to the
+  // cloud, and a "logged out" tower-only device could never log back in.
+  // So registration, login, and logout are all gated on genuine cloud
+  // reachability, never just the tower.
+  Future<void> _requireCloud(String action) async {
+    final reachable = await _connectivity.isCloudReachable();
+    if (!reachable) {
+      throw AuthException(
+        'Please connect to the internet to $action. This is not possible while only connected to a tower.',
+      );
+    }
+  }
 
   Future<UserModel> login({
     required String email,
     required String password,
   }) async {
+    await _requireCloud('log in');
     final normalizedEmail = email.trim().toLowerCase();
     try {
       final payload = await _remote.login(
@@ -48,6 +69,7 @@ class AuthRepository {
     required String password,
     String? responderCode,
   }) async {
+    await _requireCloud('register');
     try {
       final payload = await _remote.register(
         firstName: firstName.trim(),
@@ -92,7 +114,11 @@ class AuthRepository {
       return user;
     } on NetworkException catch (error) {
       if (error.statusCode == 401 || error.statusCode == 403) {
-        await logout();
+        // The server itself just rejected this token, so we're necessarily
+        // online right now — clear directly rather than through the public
+        // logout(), which enforces its own connectivity gate for user-
+        // initiated logouts and isn't needed for this forced cleanup.
+        await _clearSession();
         return null;
       }
 
@@ -172,6 +198,11 @@ class AuthRepository {
   }
 
   Future<void> logout() async {
+    await _requireCloud('log out');
+    await _clearSession();
+  }
+
+  Future<void> _clearSession() async {
     _remote.setAuthToken(null);
     _currentUser = null;
     await _storage.clearAuthSession();

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app/router.dart';
 import '../../app/theme.dart';
 import '../../core/di/injection.dart';
+import '../../data/repositories/auth_repository.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -102,7 +103,15 @@ class ProfileScreen extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 13),
             ),
             onPressed: () async {
-              await deps.authRepository.logout();
+              try {
+                await deps.authRepository.logout();
+              } on AuthException catch (error) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(error.message)));
+                return;
+              }
               if (!context.mounted) return;
               Navigator.of(context).pushNamedAndRemoveUntil(
                 AppRouter.login,

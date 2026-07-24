@@ -26,6 +26,7 @@ import '../services/location_service.dart';
 import '../services/lora/lora_service.dart';
 import '../services/map_service.dart';
 import '../services/notification_service.dart';
+import '../services/offline/offline_3d_pack_service.dart';
 import '../services/offline/offline_data_cache.dart';
 import '../services/offline/offline_map_cache.dart';
 import '../services/offline/sync_queue.dart';
@@ -68,6 +69,7 @@ class AppDependencies {
     notificationService = NotificationService();
     loraService = OfflineLoRaService();
     offlineMapCache = OfflineMapCache(storage: localStorage);
+    offline3DPackService = Offline3DPackService(storage: localStorage);
     offlineDataCache = OfflineDataCache(storage: localStorage);
     syncQueue = SyncQueue(storage: localStorage);
     mapService = MapService(offlineMapCache: offlineMapCache);
@@ -81,13 +83,18 @@ class AppDependencies {
     predictionApi = PredictionApi(apiClient);
     teamsApi = TeamsApi(apiClient);
 
-    authRepository = AuthRepository(remote: authApi, storage: storageService);
+    authRepository = AuthRepository(
+      remote: authApi,
+      storage: storageService,
+      connectivity: connectivityService,
+    );
     alertRepository = AlertRepository(
       remote: alertsApi,
       connectivityService: connectivityService,
       offlineDataCache: offlineDataCache,
+      syncQueue: syncQueue,
     );
-    mapRepository = MapRepository(remote: mapApi);
+    mapRepository = MapRepository(remote: mapApi, mapService: mapService);
     rescueRepository = RescueRepository(
       remote: rescueApi,
       loraService: loraService,
@@ -96,12 +103,18 @@ class AppDependencies {
       offlineDataCache: offlineDataCache,
       syncQueue: syncQueue,
     );
-    familyRepository = FamilyRepository(remote: familyApi);
+    familyRepository = FamilyRepository(
+      remote: familyApi,
+      connectivityService: connectivityService,
+      offlineDataCache: offlineDataCache,
+      syncQueue: syncQueue,
+    );
     predictionRepository = PredictionRepository(remote: predictionApi);
     teamRepository = TeamRepository(
       remote: teamsApi,
       connectivityService: connectivityService,
       offlineDataCache: offlineDataCache,
+      syncQueue: syncQueue,
     );
     dashboardRepository = DashboardRepository(alertRepository: alertRepository);
   }
@@ -118,6 +131,7 @@ class AppDependencies {
   late final NotificationService notificationService;
   late final LoRaService loraService;
   late final OfflineMapCache offlineMapCache;
+  late final Offline3DPackService offline3DPackService;
   late final OfflineDataCache offlineDataCache;
   late final SyncQueue syncQueue;
   late final MapService mapService;

@@ -3,6 +3,23 @@ import 'dart:convert';
 import '../../../data/sources/local/local_storage.dart';
 import '../../network/api_client.dart';
 
+/// Thrown by repository writes when a change was queued locally for later
+/// delivery (offline, or the live request failed) instead of actually
+/// reaching the backend. Callers must catch this separately from a real
+/// failure — showing a plain "success" message here would tell the user
+/// something happened (a family member was alerted, a status changed) when
+/// nothing has actually left the device yet.
+class QueuedForSyncException implements Exception {
+  const QueuedForSyncException([
+    this.message = 'Saved locally — will sync once back online.',
+  ]);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class SyncOperation {
   const SyncOperation({
     required this.id,
@@ -100,6 +117,8 @@ class SyncQueue {
             await client.post(op.endpoint, body: op.body);
           case 'PATCH':
             await client.patch(op.endpoint, body: op.body);
+          case 'DELETE':
+            await client.delete(op.endpoint, body: op.body);
           default:
             await client.post(op.endpoint, body: op.body);
         }

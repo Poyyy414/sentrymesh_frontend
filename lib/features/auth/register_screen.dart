@@ -61,7 +61,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
 
       final deps = AppDependenciesScope.of(context);
-      deps.towerSocket.connect(role: user.role, userId: user.id);
+      deps.towerSocket.connect(
+        role: user.role,
+        userId: user.id,
+        token: deps.storageService.readAuthToken(),
+      );
 
       final route = user.role == 'responder'
           ? AppRouter.responderShell

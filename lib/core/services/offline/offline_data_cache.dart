@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import '../../../data/models/alert_model.dart';
 import '../../../data/models/evacuation_center_model.dart';
+import '../../../data/models/family_member_model.dart';
+import '../../../data/models/rescue_request_model.dart';
 import '../../../data/models/team_model.dart';
 import '../../../data/sources/local/local_storage.dart';
 
@@ -52,6 +54,32 @@ class OfflineDataCache {
 
   Future<List<AlertModel>> getCachedAlerts() async {
     return _readList('cached_alerts', AlertModel.fromJson);
+  }
+
+  // --- Family members ---
+
+  Future<void> cacheFamilyMembers(List<FamilyMemberModel> members) async {
+    await _storage.write(
+      'cached_family_members',
+      jsonEncode(members.map((m) => m.toJson()).toList()),
+    );
+  }
+
+  Future<List<FamilyMemberModel>> getCachedFamilyMembers() async {
+    return _readList('cached_family_members', FamilyMemberModel.fromJson);
+  }
+
+  // --- Rescue requests (SOS history) ---
+
+  Future<void> cacheRescueRequests(List<RescueRequestModel> requests) async {
+    await _storage.write(
+      'cached_rescue_requests',
+      jsonEncode(requests.map((r) => r.toJson()).toList()),
+    );
+  }
+
+  Future<List<RescueRequestModel>> getCachedRescueRequests() async {
+    return _readList('cached_rescue_requests', RescueRequestModel.fromJson);
   }
 
   // --- Helpers ---

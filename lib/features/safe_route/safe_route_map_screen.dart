@@ -7,6 +7,7 @@ import '../../app/theme.dart';
 import '../../core/di/injection.dart';
 import '../../core/network/api_endpoints.dart';
 import '../../core/services/location_service.dart';
+import '../../core/widgets/offline_map_download_button.dart';
 import '../../data/models/evacuation_center_model.dart';
 import '../../data/models/route_model.dart';
 import '../../data/models/team_model.dart';
@@ -352,6 +353,20 @@ class _SafeRouteMapScreenState extends State<SafeRouteMapScreen> {
               guidanceActive: _guidanceActive,
               onPressed: _locateUser,
               onToggleGuidance: _toggleGuidance,
+            ),
+          ),
+
+          // ── Download offline maps FAB ────────────────────────────────
+          Positioned(
+            left: 14,
+            bottom: MediaQuery.paddingOf(context).bottom + 24,
+            child: OfflineMapDownloadButton(
+              center:
+                  _userLocation ??
+                  GeoPoint(
+                    latitude: _selectedCountry.latitude,
+                    longitude: _selectedCountry.longitude,
+                  ),
             ),
           ),
 

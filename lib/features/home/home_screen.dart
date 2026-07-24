@@ -9,6 +9,7 @@ import '../../app/theme.dart';
 import '../../core/config/map_tile_config.dart';
 import '../../core/di/injection.dart';
 import '../../core/services/connectivity_service.dart';
+import '../../core/services/geo_bounds.dart';
 import '../../core/services/location_service.dart';
 import '../../core/services/tower_socket_service.dart';
 import '../../data/models/alert_model.dart';
@@ -18,7 +19,6 @@ import '../../data/models/prediction_model.dart';
 import '../../data/models/rescue_location_model.dart';
 import '../../data/models/rescue_request_model.dart';
 import '../../data/repositories/prediction_repository.dart';
-import '../../shared/demo/demo_scenario.dart';
 import '../../shared/enums/alert_severity.dart';
 import '../../shared/enums/hazard_type.dart';
 import '../../shared/enums/rescue_status.dart';
@@ -31,7 +31,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  bool _distressSent = DemoScenario.instance.residentSosSent;
+  bool _distressSent = false;
   Future<PredictionBundle>? _predictionFuture;
   Future<List<AlertModel>>? _alertsFuture;
   Future<List<FamilyMemberModel>>? _familyFuture;
@@ -234,10 +234,27 @@ class _HomeScreenState extends State<HomeScreen> {
   void _loadAllData() {
     final deps = AppDependenciesScope.of(context);
     setState(() {
-      _predictionFuture = deps.predictionRepository.fetchHomePredictions();
+      _predictionFuture = _loadHomePredictions(deps);
       _alertsFuture = deps.alertRepository.fetchAlerts();
       _familyFuture = deps.familyRepository.fetchMembers();
     });
+  }
+
+  Future<PredictionBundle> _loadHomePredictions(
+    AppDependencies deps,
+  ) async {
+    try {
+      final location = await deps.locationService.currentLocation();
+      return deps.predictionRepository.fetchHomePredictions(
+        latitude: location.latitude,
+        longitude: location.longitude,
+        locationLabel: 'Current location',
+      );
+    } catch (_) {
+      // Location permission denied / GPS unavailable — the repository falls
+      // back to a fixed reference location rather than showing nothing.
+      return deps.predictionRepository.fetchHomePredictions();
+    }
   }
 
   void _refreshData() => _loadAllData();
@@ -304,7 +321,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     if (sent == true && mounted) {
-      DemoScenario.instance.sendResidentSos();
       setState(() => _distressSent = true);
     }
   }
@@ -320,7 +336,11 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final location = await dependencies.locationService.currentLocation();
       final request = RescueRequestModel(
-        id: 'resident-sos-john-paul',
+        // Server assigns the real id on create (toCreateJson omits this) —
+        // this is only a local key for the offline sync queue / LoRa ping
+        // list, so it must be unique per submission, not a fixed constant.
+        id: 'local-sos-${DateTime.now().microsecondsSinceEpoch}',
+        userId: dependencies.authRepository.currentUser?.id,
         emergencyType: HazardType.distress,
         peopleNeedingHelp: 1,
         description: 'Emergency SOS from resident app with live GPS tracking.',
@@ -1492,7 +1512,7 @@ class _MiniMapPreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final center = userLocation != null
         ? LatLng(userLocation!.latitude, userLocation!.longitude)
-        : const LatLng(13.6218, 123.1948);
+        : const LatLng(kDefaultLatitude, kDefaultLongitude);
 
     return AbsorbPointer(
       child: FlutterMap(

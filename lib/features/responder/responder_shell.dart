@@ -11,9 +11,14 @@ import '../../app/theme.dart';
 import '../../core/config/map_tile_config.dart';
 import '../../core/di/injection.dart';
 import '../../core/services/connectivity_service.dart';
+import '../../core/services/geo_bounds.dart';
 import '../../core/services/location_service.dart';
 import '../../core/services/tower_socket_service.dart';
 import '../../core/widgets/custom_button.dart';
+import '../../core/services/offline/sync_queue.dart';
+import '../../core/widgets/offline_map_download_button.dart';
+import 'widgets/auto_3d_pack_download.dart';
+import 'widgets/responder_map_3d_view.dart';
 import '../../data/models/evacuation_center_model.dart';
 import '../../data/models/prediction_model.dart';
 import '../../data/repositories/prediction_repository.dart';
@@ -22,11 +27,21 @@ import '../../data/models/rescue_navigation_model.dart';
 import '../../data/models/rescue_request_model.dart';
 import '../../data/models/route_model.dart';
 import '../../data/models/team_model.dart';
+import '../../data/repositories/auth_repository.dart';
 import '../../shared/enums/hazard_type.dart';
 import '../../shared/enums/rescue_status.dart';
+import '../../shared/severity_colors.dart';
 
 Future<void> _logout(BuildContext context) async {
-  await AppDependenciesScope.of(context).authRepository.logout();
+  try {
+    await AppDependenciesScope.of(context).authRepository.logout();
+  } on AuthException catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(error.message)));
+    return;
+  }
   if (!context.mounted) {
     return;
   }
@@ -44,7 +59,6 @@ IconData _incidentIcon(HazardType type) {
     HazardType.infrastructure => Icons.car_crash,
   };
 }
-
 
 String _hazardTitle(HazardType type) {
   return switch (type) {
@@ -67,38 +81,6 @@ String _rescueStatusLabel(RescueStatus status) {
   };
 }
 
-Color _severityFromPeople(int people) {
-  if (people >= 5) {
-    return AppTheme.dangerRed;
-  }
-  if (people >= 2) {
-    return AppTheme.warningAmber;
-  }
-  return AppTheme.safeGreen;
-}
-
-/// Maps an AI alert level (CRITICAL/HIGH/MODERATE/LOW/SAFE/WATCH) to the
-/// three-tier Low/Medium/High legend shown on risk map previews.
-Color _riskTierColor(Object? alertLevel) {
-  final level = alertLevel?.toString().toLowerCase() ?? '';
-  if (level.contains('critical') || level.contains('high')) {
-    return AppTheme.dangerRed;
-  }
-  if (level.contains('moderate') || level.contains('medium')) {
-    return AppTheme.warningAmber;
-  }
-  return AppTheme.safeGreen;
-}
-
-String _severityLabelFromPeople(int people) {
-  if (people >= 5) {
-    return 'High';
-  }
-  if (people >= 2) {
-    return 'Medium';
-  }
-  return 'Low';
-}
 
 String _timeAgoLabel(DateTime createdAt) {
   final diff = DateTime.now().difference(createdAt);
@@ -114,7 +96,6 @@ String _timeAgoLabel(DateTime createdAt) {
   return '${diff.inDays} d ago';
 }
 
-
 class ResponderShell extends StatefulWidget {
   const ResponderShell({super.key});
 
@@ -125,6 +106,7 @@ class ResponderShell extends StatefulWidget {
 class _ResponderShellState extends State<ResponderShell> {
   int _currentIndex = 0;
   ConnectivityStatus _connectivity = ConnectivityStatus.online;
+  ActiveBackend? _lastActiveBackend;
   int _pendingQueueCount = 0;
   StreamSubscription<ConnectivityStatus>? _connectivitySub;
 
@@ -152,7 +134,7 @@ class _ResponderShellState extends State<ResponderShell> {
 
   void _setupConnectivityMonitor() {
     final deps = AppDependenciesScope.of(context);
-    deps.connectivityService.currentStatus().then((status) {
+    deps.connectivityService.currentStatus().then((status) async {
       if (!mounted) return;
       setState(() => _connectivity = status);
       // The service may have already resolved tower-vs-cloud and fired its
@@ -161,20 +143,35 @@ class _ResponderShellState extends State<ResponderShell> {
       // instead of waiting for a future change that may never come.
       _switchBackendIfNeeded();
       _reconnectSocket();
+      if (status == ConnectivityStatus.online) {
+        await _syncQueuedOperations();
+      }
+      _lastActiveBackend = deps.connectivityService.activeBackend;
     });
     _updatePendingCount();
 
-    _connectivitySub =
-        deps.connectivityService.onStatusChanged.listen((status) {
+    _connectivitySub = deps.connectivityService.onStatusChanged.listen((
+      status,
+    ) {
       if (!mounted) return;
       final wasOffline = _connectivity != ConnectivityStatus.online;
+      // Tower and cloud both count as ConnectivityStatus.online, so
+      // wasOffline alone misses the tower -> cloud handover — the exact
+      // moment queued writes actually need to reach the real backend.
+      // Track the active backend directly so that flip triggers a sync too.
+      final newBackend = deps.connectivityService.activeBackend;
+      final backendFlippedToCloud =
+          _lastActiveBackend == ActiveBackend.tower &&
+          newBackend == ActiveBackend.cloud;
       setState(() => _connectivity = status);
 
       _switchBackendIfNeeded();
-      if (wasOffline && status == ConnectivityStatus.online) {
+      if ((wasOffline || backendFlippedToCloud) &&
+          status == ConnectivityStatus.online) {
         _syncQueuedOperations();
         _reconnectSocket();
       }
+      _lastActiveBackend = newBackend;
       _updatePendingCount();
     });
   }
@@ -186,7 +183,23 @@ class _ResponderShellState extends State<ResponderShell> {
     deps.aiClient.updateBaseUrl(cs.activeAiUrl);
   }
 
+  bool _isSyncing = false;
+
+  // The initial currentStatus() check and the onStatusChanged stream can
+  // both resolve "online" close together at startup — without this guard
+  // that would fire processAll() twice concurrently and could resend the
+  // same queued operation before either call persists the emptied queue.
   Future<void> _syncQueuedOperations() async {
+    if (_isSyncing) return;
+    _isSyncing = true;
+    try {
+      await _doSyncQueuedOperations();
+    } finally {
+      _isSyncing = false;
+    }
+  }
+
+  Future<void> _doSyncQueuedOperations() async {
     final deps = AppDependenciesScope.of(context);
     final count = await deps.syncQueue.pendingCount;
     if (count == 0) return;
@@ -228,6 +241,7 @@ class _ResponderShellState extends State<ResponderShell> {
       deps.towerSocket.reconnect(
         role: user.role,
         userId: user.id,
+        token: deps.storageService.readAuthToken(),
         baseUrl: deps.connectivityService.activeApiUrl,
       );
     }
@@ -250,8 +264,7 @@ class _ResponderShellState extends State<ResponderShell> {
               pendingCount: _pendingQueueCount,
             ),
           Expanded(
-            child:
-                IndexedStack(index: _currentIndex, children: _screens),
+            child: IndexedStack(index: _currentIndex, children: _screens),
           ),
         ],
       ),
@@ -311,8 +324,9 @@ class _ResponderConnectivityBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final isOffline = status == ConnectivityStatus.offline;
     final color = isOffline ? AppTheme.dangerRed : const Color(0xFFE8A317);
-    final icon =
-        isOffline ? Icons.cloud_off_rounded : Icons.cloud_queue_rounded;
+    final icon = isOffline
+        ? Icons.cloud_off_rounded
+        : Icons.cloud_queue_rounded;
     final label = isOffline ? 'Offline' : 'Limited connection';
     final queueLabel = pendingCount > 0 ? ' - $pendingCount queued' : '';
 
@@ -371,8 +385,13 @@ class ResponderDashboardScreen extends StatefulWidget {
 class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
   _DashboardStats? _stats;
   bool _isLoading = true;
+  RescueRequestModel? _myAssignment;
   StreamSubscription<JsonMap>? _sosNewSub;
   StreamSubscription<JsonMap>? _teamAssignmentSub;
+  StreamSubscription<JsonMap>? _sosAssignedSub;
+
+  String? get _userId =>
+      AppDependenciesScope.of(context).authRepository.currentUser?.id;
 
   @override
   void initState() {
@@ -382,6 +401,7 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
         _load();
         _subscribeToSosNew();
         _subscribeToTeamAssignment();
+        _subscribeToSosAssigned();
       }
     });
   }
@@ -390,6 +410,7 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
   void dispose() {
     _sosNewSub?.cancel();
     _teamAssignmentSub?.cancel();
+    _sosAssignedSub?.cancel();
     super.dispose();
   }
 
@@ -419,6 +440,71 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
         _load();
       }
     });
+  }
+
+  /// Fires for every dispatch, regardless of team — the auto-dispatcher just
+  /// assigned a rescue request to a team, and this is the reliable path to
+  /// find out (see TowerSocketService.onSosAssigned for why team:assignment
+  /// alone isn't enough). Reloading re-derives whether it's actually *my*
+  /// team, and if so surfaces it as the "My Assignment" card + an alert.
+  void _subscribeToSosAssigned() {
+    _sosAssignedSub?.cancel();
+    final socket = AppDependenciesScope.of(context).towerSocket;
+    _sosAssignedSub = socket.onSosAssigned.listen((data) async {
+      if (!mounted) return;
+      final previousAssignmentId = _myAssignment?.id;
+      await _load();
+      if (!mounted) return;
+      if (_myAssignment != null && _myAssignment!.id != previousAssignmentId) {
+        _showMyAssignmentDialog(_myAssignment!);
+      }
+    });
+  }
+
+  void _showMyAssignmentDialog(RescueRequestModel request) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        icon: const Icon(
+          Icons.shield_rounded,
+          color: Color(0xFF7B1FA2),
+          size: 32,
+        ),
+        title: const Text('Your team was dispatched'),
+        content: Text(
+          '${_hazardTitle(request.emergencyType)} - ${request.locationLabel ?? request.description}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Later'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              _openAssignment(request);
+            },
+            icon: const Icon(Icons.directions_run, size: 18),
+            label: const Text('Go to Rescue'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF7B1FA2),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openAssignment(RescueRequestModel request) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _ResponderIncidentDetailScreen(
+          incident: _Incident.fromRescueRequest(request),
+        ),
+      ),
+    );
+    if (mounted) _load();
   }
 
   void _showNewSosDialog(JsonMap data) {
@@ -479,8 +565,10 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
             Row(
               children: [
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
                     color: AppTheme.dangerRed.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
@@ -496,8 +584,10 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
                 ),
                 const SizedBox(width: 10),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
                     color: AppTheme.warningAmber.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
@@ -532,14 +622,17 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
               // reachable via the NavigationBar. Since this widget lives
               // inside an IndexedStack, post a rebuild that switches to
               // index 1 (Incidents).
-              final shell = context.findAncestorStateOfType<_ResponderShellState>();
+              final shell = context
+                  .findAncestorStateOfType<_ResponderShellState>();
               if (shell != null && shell.mounted) {
                 shell.setState(() => shell._currentIndex = 1);
               }
             },
             icon: const Icon(Icons.notification_important, size: 18),
             label: const Text('View Incidents'),
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.dangerRed),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.dangerRed,
+            ),
           ),
         ],
       ),
@@ -554,12 +647,14 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
       final results = await Future.wait([
         deps.rescueRepository.fetchRequests(),
         deps.alertRepository.fetchAlerts(),
+        deps.teamRepository.fetchTeams(),
       ]);
 
       if (!mounted) return;
 
       final requests = results[0] as List<RescueRequestModel>;
       final alerts = results[1];
+      final teams = results[2] as List<TeamModel>;
 
       final active = requests
           .where(
@@ -569,6 +664,27 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
                 r.status == RescueStatus.inProgress,
           )
           .toList();
+
+      final userId = _userId;
+      TeamModel? myTeam;
+      if (userId != null) {
+        for (final team in teams) {
+          if (team.members.any((m) => m.userId == userId)) {
+            myTeam = team;
+            break;
+          }
+        }
+      }
+
+      RescueRequestModel? myAssignment;
+      if (myTeam != null) {
+        for (final request in active) {
+          if (request.assignedTeamId == myTeam.id) {
+            myAssignment = request;
+            break;
+          }
+        }
+      }
 
       setState(() {
         _stats = _DashboardStats(
@@ -584,6 +700,7 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
           activeAlerts: alerts.length,
           recentRequests: requests.take(3).toList(),
         );
+        _myAssignment = myAssignment;
         _isLoading = false;
       });
     } catch (_) {
@@ -596,6 +713,7 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
           activeAlerts: 0,
           recentRequests: [],
         );
+        _myAssignment = null;
         _isLoading = false;
       });
     }
@@ -665,6 +783,13 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
         ),
       ),
       children: [
+        if (_myAssignment != null) ...[
+          _MyAssignmentCard(
+            incident: _Incident.fromRescueRequest(_myAssignment!),
+            onGoToRescue: () => _openAssignment(_myAssignment!),
+          ),
+          const SizedBox(height: 14),
+        ],
         _LiveStatusBanner(
           activeIncidents: stats?.activeIncidents ?? 0,
           isLoading: _isLoading,
@@ -691,6 +816,94 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
           isLoading: _isLoading,
         ),
       ],
+    );
+  }
+}
+
+/// Shown at the top of the responder Dashboard whenever the auto-dispatcher
+/// has assigned the logged-in responder's team an active rescue — the
+/// "what am I supposed to do right now" answer, one tap away from guidance.
+class _MyAssignmentCard extends StatelessWidget {
+  const _MyAssignmentCard({required this.incident, required this.onGoToRescue});
+
+  final _Incident incident;
+  final VoidCallback onGoToRescue;
+
+  @override
+  Widget build(BuildContext context) {
+    const accent = Color(0xFF7B1FA2);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: accent.withValues(alpha: 0.4)),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.shield_rounded, color: accent, size: 18),
+              const SizedBox(width: 6),
+              const Text(
+                'YOUR TEAM IS ASSIGNED',
+                style: TextStyle(
+                  color: accent,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.6,
+                ),
+              ),
+              if (incident.priorityRank != null) ...[
+                const Spacer(),
+                _SeverityPill(
+                  label: '#${incident.priorityRank}',
+                  color: riskTierColor(incident.riskLevel),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              _IconBubble(icon: incident.icon, color: incident.color),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      incident.title,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      incident.location,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    Text(
+                      incident.meta,
+                      style: Theme.of(context).textTheme.labelSmall,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: onGoToRescue,
+              icon: const Icon(Icons.directions_run, size: 18),
+              label: const Text('Go to Rescue'),
+              style: ElevatedButton.styleFrom(backgroundColor: accent),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -843,6 +1056,14 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(confirmation)));
+      } on QueuedForSyncException catch (error) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$error'),
+            backgroundColor: AppTheme.warningAmber,
+          ),
+        );
       } catch (error) {
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -864,7 +1085,9 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
                   Clipboard.setData(ClipboardData(text: incident.id));
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Incident ID copied to clipboard')),
+                      const SnackBar(
+                        content: Text('Incident ID copied to clipboard'),
+                      ),
                     );
                   }
                 case 'share_location':
@@ -876,7 +1099,9 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
                   Clipboard.setData(ClipboardData(text: locationText));
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Location copied to clipboard')),
+                      const SnackBar(
+                        content: Text('Location copied to clipboard'),
+                      ),
                     );
                   }
               }
@@ -939,11 +1164,11 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
             height: 170,
             residentLocation:
                 incident.latitude != null && incident.longitude != null
-                    ? GeoPoint(
-                        latitude: incident.latitude!,
-                        longitude: incident.longitude!,
-                      )
-                    : null,
+                ? GeoPoint(
+                    latitude: incident.latitude!,
+                    longitude: incident.longitude!,
+                  )
+                : null,
           ),
           const SizedBox(height: 14),
           Card(
@@ -963,11 +1188,6 @@ class _ResponderIncidentDetailScreen extends StatelessWidget {
                   icon: Icons.schedule,
                   label: 'Status',
                   value: incident.status,
-                ),
-                const _InfoRow(
-                  icon: Icons.signal_cellular_alt,
-                  label: 'Signal Quality',
-                  value: 'Good',
                 ),
               ],
             ),
@@ -1052,6 +1272,10 @@ class _ResponderNavigationScreenState
   RouteModel? _route;
   bool _isLoading = true;
   String? _message;
+  bool _use3D = false;
+  bool _has3DPackReady = false;
+  Timer? _connectivityTimer;
+  StreamSubscription<GeoPoint>? _locationSubscription;
 
   @override
   void initState() {
@@ -1059,8 +1283,64 @@ class _ResponderNavigationScreenState
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _loadNavigation();
+        _check3DPackReady();
+        _refreshMapConnectivity();
+        _startLiveTracking();
       }
     });
+    _connectivityTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) _refreshMapConnectivity();
+    });
+  }
+
+  @override
+  void dispose() {
+    _connectivityTimer?.cancel();
+    _locationSubscription?.cancel();
+    super.dispose();
+  }
+
+  // Keeps the responder's own marker moving live while en route, instead of
+  // freezing at wherever they were when the screen first loaded or the user
+  // last hit refresh — the whole point of navigating to someone in distress.
+  void _startLiveTracking() {
+    final locationService = AppDependenciesScope.of(context).locationService;
+    _locationSubscription?.cancel();
+    _locationSubscription = locationService.watchLocation().listen((
+      location,
+    ) {
+      if (mounted) setState(() => _responderLocation = location);
+    });
+  }
+
+  bool get _can3D => MapTileConfig.isOnline || _has3DPackReady;
+
+  GeoPoint? get _location3DReference =>
+      _responderLocation ?? _residentLocation?.point;
+
+  Future<void> _check3DPackReady() async {
+    final location = _location3DReference;
+    if (location == null) return;
+    final ready = await AppDependenciesScope.of(
+      context,
+    ).offline3DPackService.hasPackReady(location);
+    if (mounted) setState(() => _has3DPackReady = ready);
+  }
+
+  // See the same fix in _ResponderLiveMapScreenState: MapTileConfig only
+  // checks connectivity once at app startup, so it needs re-checking here
+  // too or this screen's 3D toggle would stay stuck at launch-time state.
+  // Also silently extends 3D offline coverage to wherever the responder
+  // currently is, Wi-Fi only, instead of requiring a manual download.
+  Future<void> _refreshMapConnectivity() async {
+    await MapTileConfig.checkConnectivity();
+    if (!mounted) return;
+    await maybeAutoDownload3DPack(
+      context: context,
+      location: _location3DReference,
+    );
+    await _check3DPackReady();
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadNavigation() async {
@@ -1149,10 +1429,14 @@ class _ResponderNavigationScreenState
       points.addAll(waypoints.map((p) => LatLng(p.latitude, p.longitude)));
     }
     if (_responderLocation != null) {
-      points.add(LatLng(_responderLocation!.latitude, _responderLocation!.longitude));
+      points.add(
+        LatLng(_responderLocation!.latitude, _responderLocation!.longitude),
+      );
     }
     if (_residentLocation != null) {
-      points.add(LatLng(_residentLocation!.latitude, _residentLocation!.longitude));
+      points.add(
+        LatLng(_residentLocation!.latitude, _residentLocation!.longitude),
+      );
     }
     if (points.length < 2) return;
 
@@ -1172,6 +1456,18 @@ class _ResponderNavigationScreenState
         title: const Text('Navigate to Resident'),
         actions: [
           IconButton(
+            tooltip: _can3D
+                ? (_use3D ? 'Switch to 2D map' : 'Switch to 3D map')
+                : '3D view needs a connection or an offline 3D map',
+            onPressed: _can3D
+                ? () => setState(() => _use3D = !_use3D)
+                : null,
+            icon: Icon(
+              _use3D ? Icons.map_rounded : Icons.view_in_ar_rounded,
+              color: _can3D ? null : Theme.of(context).disabledColor,
+            ),
+          ),
+          IconButton(
             tooltip: 'Refresh route',
             onPressed: _isLoading ? null : _loadNavigation,
             icon: const Icon(Icons.refresh),
@@ -1180,13 +1476,20 @@ class _ResponderNavigationScreenState
       ),
       body: Stack(
         children: [
-          _ResponderMapPreview(
-            height: double.infinity,
-            mapController: _mapController,
-            responderLocation: _responderLocation,
-            residentLocation: _residentLocation?.point,
-            route: _route,
-          ),
+          if (_use3D && _can3D)
+            ResponderMap3DView(
+              responderLocation: _responderLocation,
+              residentLocation: _residentLocation?.point,
+              route: _route,
+            )
+          else
+            _ResponderMapPreview(
+              height: double.infinity,
+              mapController: _mapController,
+              responderLocation: _responderLocation,
+              residentLocation: _residentLocation?.point,
+              route: _route,
+            ),
           Positioned(
             left: 16,
             right: 16,
@@ -1236,6 +1539,7 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
   GeoPoint? _responderLocation;
   bool _isLocating = false;
   bool _isTracking = false;
+  bool _use3D = false;
 
   List<RescueRequestModel> _sosRequests = const [];
   List<EvacuationCenterModel> _shelters = const [];
@@ -1247,6 +1551,7 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
   bool _showTeamsLayer = true;
   bool _showSheltersLayer = true;
   bool _showHazardZonesLayer = true;
+  bool _has3DPackReady = false;
 
   @override
   void initState() {
@@ -1256,12 +1561,60 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
         _loadMapData();
         _listenToTeamLocations();
         _listenToHazardWarnings();
+        _check3DPackReady();
+        _refreshMapConnectivity();
       }
     });
-    _refreshTimer = Timer.periodic(
-      const Duration(seconds: 30),
-      (_) { if (mounted) _loadMapData(); },
-    );
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) {
+        _loadMapData();
+        _refreshMapConnectivity();
+      }
+    });
+  }
+
+  // MapTileConfig.checkConnectivity() only runs once at app startup
+  // (main.dart) — if that single check happened to fail (e.g. ran before
+  // Wi-Fi was fully up), the 3D toggle would stay disabled for the rest of
+  // the session even after real internet becomes available. Re-check on
+  // the same cadence this screen already refreshes map data, so isOnline
+  // reflects current reality. Also silently extends 3D offline coverage to
+  // wherever the responder currently is, Wi-Fi only.
+  Future<void> _refreshMapConnectivity() async {
+    await MapTileConfig.checkConnectivity();
+    if (!mounted) return;
+    final location = await _location3DReference();
+    if (!mounted) return;
+    await maybeAutoDownload3DPack(context: context, location: location);
+    await _check3DPackReady(location);
+    if (mounted) setState(() {});
+  }
+
+  bool get _can3D => MapTileConfig.isOnline || _has3DPackReady;
+
+  // This screen only tracks live GPS after the responder taps "Locate" — so
+  // _responderLocation is null by default. Without a fallback here, the 3D
+  // readiness check would silently never run for anyone who hasn't tapped
+  // that button, leaving the toggle looking permanently disabled. A one-shot
+  // fetch (not continuous tracking) is enough just to evaluate coverage.
+  Future<GeoPoint?> _location3DReference() async {
+    if (_responderLocation != null) return _responderLocation;
+    try {
+      return await AppDependenciesScope.of(
+        context,
+      ).locationService.currentLocation();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _check3DPackReady([GeoPoint? location]) async {
+    final resolvedLocation = location ?? await _location3DReference();
+    if (resolvedLocation == null || !mounted) return;
+    final ready = await AppDependenciesScope.of(
+      context,
+    ).offline3DPackService.hasPackReady(resolvedLocation);
+    if (mounted) setState(() => _has3DPackReady = ready);
   }
 
   @override
@@ -1352,15 +1705,30 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
         shelters: _shelters,
         onShelterAssigned: (shelterId, shelterName, shelterAddress) async {
           final repo = AppDependenciesScope.of(context).rescueRepository;
-          await repo.assignShelter(
-            requestId: request.id,
-            shelterId: shelterId,
-            shelterName: shelterName,
-            shelterAddress: shelterAddress,
-          );
-          if (context.mounted) {
+          try {
+            await repo.assignShelter(
+              requestId: request.id,
+              shelterId: shelterId,
+              shelterName: shelterName,
+              shelterAddress: shelterAddress,
+            );
+            if (!context.mounted) return;
             Navigator.of(context).pop();
             _loadMapData();
+          } on QueuedForSyncException catch (error) {
+            if (!context.mounted) return;
+            Navigator.of(context).pop();
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('$error'),
+                backgroundColor: AppTheme.warningAmber,
+              ),
+            );
+          } catch (error) {
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Could not assign shelter: $error')),
+            );
           }
         },
         onNavigate: () {
@@ -1378,7 +1746,9 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
   }
 
   void _showShelterInfoSheet(
-      BuildContext context, EvacuationCenterModel shelter) {
+    BuildContext context,
+    EvacuationCenterModel shelter,
+  ) {
     showModalBottomSheet<void>(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -1536,8 +1906,21 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
                   ),
                 ),
                 IconButton(
+                  tooltip: _can3D
+                      ? (_use3D ? 'Switch to 2D map' : 'Switch to 3D map')
+                      : '3D view needs a connection or an offline 3D map',
+                  onPressed: _can3D
+                      ? () => setState(() => _use3D = !_use3D)
+                      : null,
+                  icon: Icon(
+                    _use3D ? Icons.map_rounded : Icons.view_in_ar_rounded,
+                    color: _can3D ? Colors.white : Colors.white38,
+                  ),
+                ),
+                IconButton(
                   tooltip: 'Layers',
-                  onPressed: () => setState(() => _showLayerMenu = !_showLayerMenu),
+                  onPressed: () =>
+                      setState(() => _showLayerMenu = !_showLayerMenu),
                   icon: const Icon(Icons.layers, color: Colors.white),
                 ),
               ],
@@ -1546,14 +1929,35 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
           Expanded(
             child: Stack(
               children: [
-                _ResponderMapPreview(
+                if (_use3D && _can3D)
+                  ResponderMap3DView(
+                    responderLocation: _responderLocation,
+                    sosRequests: _showIncidentsLayer ? _sosRequests : const [],
+                    shelters: _showSheltersLayer ? _shelters : const [],
+                    teamMembers: _showTeamsLayer
+                        ? _teamMembers.values.toList()
+                        : const [],
+                    hazardZones: _showHazardZonesLayer
+                        ? _hazardWarningNodes
+                        : const [],
+                    onSosRequestTap: (request) =>
+                        _showSosBottomSheet(context, request),
+                    onShelterTap: (shelter) =>
+                        _showShelterInfoSheet(context, shelter),
+                  )
+                else
+                  _ResponderMapPreview(
                   height: double.infinity,
                   mapController: _mapController,
                   responderLocation: _responderLocation,
                   sosRequests: _showIncidentsLayer ? _sosRequests : const [],
                   shelters: _showSheltersLayer ? _shelters : const [],
-                  teamMembers: _showTeamsLayer ? _teamMembers.values.toList() : const [],
-                  hazardZones: _showHazardZonesLayer ? _hazardWarningNodes : const [],
+                  teamMembers: _showTeamsLayer
+                      ? _teamMembers.values.toList()
+                      : const [],
+                  hazardZones: _showHazardZonesLayer
+                      ? _hazardWarningNodes
+                      : const [],
                   onSosRequestTap: (request) =>
                       _showSosBottomSheet(context, request),
                   onShelterTap: (shelter) =>
@@ -1568,10 +1972,17 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
                       showTeams: _showTeamsLayer,
                       showShelters: _showSheltersLayer,
                       showHazardZones: _showHazardZonesLayer,
-                      onToggleIncidents: () => setState(() => _showIncidentsLayer = !_showIncidentsLayer),
-                      onToggleTeams: () => setState(() => _showTeamsLayer = !_showTeamsLayer),
-                      onToggleShelters: () => setState(() => _showSheltersLayer = !_showSheltersLayer),
-                      onToggleHazardZones: () => setState(() => _showHazardZonesLayer = !_showHazardZonesLayer),
+                      onToggleIncidents: () => setState(
+                        () => _showIncidentsLayer = !_showIncidentsLayer,
+                      ),
+                      onToggleTeams: () =>
+                          setState(() => _showTeamsLayer = !_showTeamsLayer),
+                      onToggleShelters: () => setState(
+                        () => _showSheltersLayer = !_showSheltersLayer,
+                      ),
+                      onToggleHazardZones: () => setState(
+                        () => _showHazardZonesLayer = !_showHazardZonesLayer,
+                      ),
                     ),
                   ),
                 Positioned(
@@ -1589,6 +2000,14 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
                     isLoading: _isLocating,
                     hasLocation: _responderLocation != null,
                     onPressed: _locateResponder,
+                  ),
+                ),
+                Positioned(
+                  left: 16,
+                  bottom: 168,
+                  child: OfflineMapDownloadButton(
+                    heroTag: 'responder_offline_map_fab',
+                    center: _responderLocation ?? kDefaultMapCenter,
                   ),
                 ),
                 Positioned(
@@ -1619,11 +2038,32 @@ class ResponderTeamsScreen extends StatefulWidget {
 
 class _ResponderTeamsScreenState extends State<ResponderTeamsScreen> {
   static const _natoAlphabet = [
-    'Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot',
-    'Golf', 'Hotel', 'India', 'Juliet', 'Kilo', 'Lima',
-    'Mike', 'November', 'Oscar', 'Papa', 'Quebec', 'Romeo',
-    'Sierra', 'Tango', 'Uniform', 'Victor', 'Whiskey', 'X-ray',
-    'Yankee', 'Zulu',
+    'Alpha',
+    'Bravo',
+    'Charlie',
+    'Delta',
+    'Echo',
+    'Foxtrot',
+    'Golf',
+    'Hotel',
+    'India',
+    'Juliet',
+    'Kilo',
+    'Lima',
+    'Mike',
+    'November',
+    'Oscar',
+    'Papa',
+    'Quebec',
+    'Romeo',
+    'Sierra',
+    'Tango',
+    'Uniform',
+    'Victor',
+    'Whiskey',
+    'X-ray',
+    'Yankee',
+    'Zulu',
   ];
 
   List<TeamModel> _teams = [];
@@ -1734,9 +2174,9 @@ class _ResponderTeamsScreenState extends State<ResponderTeamsScreen> {
       await _load();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not create team: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not create team: $e')));
     } finally {
       if (mounted) setState(() => _isActing = false);
     }
@@ -1751,11 +2191,16 @@ class _ResponderTeamsScreenState extends State<ResponderTeamsScreen> {
       await deps.teamRepository.joinTeam(team.id, userId);
       if (!mounted) return;
       await _load();
-    } catch (e) {
+    } on QueuedForSyncException catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not join team: $e')),
+        SnackBar(content: Text('$error'), backgroundColor: AppTheme.warningAmber),
       );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not join team: $e')));
     } finally {
       if (mounted) setState(() => _isActing = false);
     }
@@ -1773,11 +2218,19 @@ class _ResponderTeamsScreenState extends State<ResponderTeamsScreen> {
       if (!mounted) return;
       setState(() => _currentTeam = null);
       await _load();
+    } on QueuedForSyncException catch (error) {
+      if (!mounted) return;
+      // The leave request is queued but not yet confirmed by the server —
+      // don't clear _currentTeam locally until it actually is, or the UI
+      // would claim they left a team the backend still has them on.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$error'), backgroundColor: AppTheme.warningAmber),
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not leave team: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not leave team: $e')));
     } finally {
       if (mounted) setState(() => _isActing = false);
     }
@@ -1965,8 +2418,9 @@ class _ResponderTeamsScreenState extends State<ResponderTeamsScreen> {
                     children: [
                       Text(
                         'Team ${team.name}',
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(color: Colors.white),
+                        style: Theme.of(
+                          context,
+                        ).textTheme.titleMedium?.copyWith(color: Colors.white),
                       ),
                       const SizedBox(height: 3),
                       Text(
@@ -2026,9 +2480,7 @@ class _ResponderTeamsScreenState extends State<ResponderTeamsScreen> {
           ),
         ),
         const SizedBox(height: 18),
-        _SectionTitle(
-          title: 'Team Members (${team.members.length})',
-        ),
+        _SectionTitle(title: 'Team Members (${team.members.length})'),
         const SizedBox(height: 10),
         if (team.members.isEmpty)
           const Padding(
@@ -2066,9 +2518,7 @@ class _ResponderTeamsScreenState extends State<ResponderTeamsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _SectionTitle(
-          title: 'Available Teams (${_teams.length})',
-        ),
+        _SectionTitle(title: 'Available Teams (${_teams.length})'),
         const SizedBox(height: 10),
         if (_teams.isEmpty)
           Padding(
@@ -2121,11 +2571,7 @@ class _ResponderTeamsScreenState extends State<ResponderTeamsScreen> {
 }
 
 class _TeamCard extends StatelessWidget {
-  const _TeamCard({
-    required this.team,
-    required this.statusColor,
-    this.onJoin,
-  });
+  const _TeamCard({required this.team, required this.statusColor, this.onJoin});
 
   final TeamModel team;
   final Color statusColor;
@@ -2141,10 +2587,7 @@ class _TeamCard extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           child: Row(
             children: [
-              _IconBubble(
-                icon: Icons.groups,
-                color: statusColor,
-              ),
+              _IconBubble(icon: Icons.groups, color: statusColor),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -2189,10 +2632,7 @@ class _TeamCard extends StatelessWidget {
 }
 
 class _TeamMemberTile extends StatelessWidget {
-  const _TeamMemberTile({
-    required this.member,
-    required this.isCurrentUser,
-  });
+  const _TeamMemberTile({required this.member, required this.isCurrentUser});
 
   final TeamMemberModel member;
   final bool isCurrentUser;
@@ -2293,6 +2733,7 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
   int _dispatched = 0;
   int _activeAlerts = 0;
   bool _isLoading = true;
+  ConnectivityStatus _connectivity = ConnectivityStatus.online;
 
   @override
   void initState() {
@@ -2306,6 +2747,7 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
     setState(() => _isLoading = true);
     try {
       final deps = AppDependenciesScope.of(context);
+      final connectivity = await deps.connectivityService.currentStatus();
       final results = await Future.wait([
         deps.rescueRepository.fetchRequests(),
         deps.alertRepository.fetchAlerts(),
@@ -2318,6 +2760,7 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
       final today = DateTime.now();
 
       setState(() {
+        _connectivity = connectivity;
         _activeIncidents = requests
             .where(
               (r) =>
@@ -2374,7 +2817,7 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
           title: 'Team Status',
           subtitle: _isLoading
               ? 'Loading…'
-              : '$_dispatched dispatched · network healthy',
+              : '$_dispatched dispatched · ${_networkStatusLabel(_connectivity)}',
           icon: Icons.inventory_2,
         ),
         _ReportTile(
@@ -2389,6 +2832,14 @@ class _ResponderReportsScreenState extends State<ResponderReportsScreen> {
   }
 }
 
+String _networkStatusLabel(ConnectivityStatus status) {
+  return switch (status) {
+    ConnectivityStatus.online => 'network healthy',
+    ConnectivityStatus.limited => 'limited connection',
+    ConnectivityStatus.offline => 'offline',
+  };
+}
+
 String _formatTime(DateTime dt) {
   final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
   final m = dt.minute.toString().padLeft(2, '0');
@@ -2397,7 +2848,11 @@ String _formatTime(DateTime dt) {
 }
 
 class _ResponderPage extends StatelessWidget {
-  const _ResponderPage({required this.header, required this.children, this.onRefresh});
+  const _ResponderPage({
+    required this.header,
+    required this.children,
+    this.onRefresh,
+  });
 
   final Widget header;
   final List<Widget> children;
@@ -2411,10 +2866,7 @@ class _ResponderPage extends StatelessWidget {
     );
 
     if (onRefresh != null) {
-      listView = RefreshIndicator(
-        onRefresh: onRefresh!,
-        child: listView,
-      );
+      listView = RefreshIndicator(onRefresh: onRefresh!, child: listView);
     }
 
     return ColoredBox(
@@ -2587,9 +3039,9 @@ class _LiveStatusBanner extends StatelessWidget {
                   const SizedBox(height: 3),
                   Text(
                     subtitle,
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: Colors.white70,
-                    ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.labelMedium?.copyWith(color: Colors.white70),
                   ),
                 ],
               ),
@@ -2631,14 +3083,17 @@ class _AiReasoningCardState extends State<_AiReasoningCard> {
       return;
     }
     try {
-      final node = await AppDependenciesScope.of(
-        context,
-      ).predictionRepository.fetchIncidentPrediction(
-        latitude: lat,
-        longitude: lon,
-        hazardType: widget.incident.hazardType,
-      );
-      if (mounted) setState(() { _node = node; _loading = false; });
+      final node = await AppDependenciesScope.of(context).predictionRepository
+          .fetchIncidentPrediction(
+            latitude: lat,
+            longitude: lon,
+            hazardType: widget.incident.hazardType,
+          );
+      if (mounted)
+        setState(() {
+          _node = node;
+          _loading = false;
+        });
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -2669,7 +3124,10 @@ class _AiReasoningCardState extends State<_AiReasoningCard> {
                     color: AppTheme.signalBlue.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(Icons.psychology, color: AppTheme.signalBlue),
+                  child: const Icon(
+                    Icons.psychology,
+                    color: AppTheme.signalBlue,
+                  ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -2697,7 +3155,8 @@ class _AiReasoningCardState extends State<_AiReasoningCard> {
             else if (node == null)
               const _ReasonLine(
                 label: 'Status',
-                value: 'AI assessment unavailable — incident location not pinned yet.',
+                value:
+                    'AI assessment unavailable — incident location not pinned yet.',
               )
             else ...[
               _ReasonLine(label: 'Risk', value: node.probabilityLabel),
@@ -2838,10 +3297,7 @@ class _StatTile extends StatelessWidget {
 }
 
 class _LiveRecentIncidents extends StatelessWidget {
-  const _LiveRecentIncidents({
-    required this.requests,
-    required this.isLoading,
-  });
+  const _LiveRecentIncidents({required this.requests, required this.isLoading});
 
   final List<RescueRequestModel> requests;
   final bool isLoading;
@@ -2878,8 +3334,8 @@ class _LiveRecentIncidents extends StatelessWidget {
                 '${_hazardTitle(requests[i].emergencyType)} — ${requests[i].locationLabel ?? 'Unknown location'}',
             subtitle:
                 '${_timeAgoLabel(requests[i].createdAt)} · ${requests[i].peopleNeedingHelp} people · ${_rescueStatusLabel(requests[i].status)}',
-            severity: _severityLabelFromPeople(requests[i].peopleNeedingHelp),
-            severityColor: _severityFromPeople(requests[i].peopleNeedingHelp),
+            severity: severityLabelFromPeopleCount(requests[i].peopleNeedingHelp),
+            severityColor: severityColorFromPeopleCount(requests[i].peopleNeedingHelp),
           ),
           if (i != requests.length - 1) const SizedBox(height: 8),
         ],
@@ -3014,9 +3470,11 @@ class _HeatmapPreviewState extends State<_HeatmapPreview> {
       title = 'No prediction data';
       subtitle = 'Backend has not returned risk data yet.';
     } else {
-      title = '$activeAlerts active alert${activeAlerts == 1 ? '' : 's'}, '
+      title =
+          '$activeAlerts active alert${activeAlerts == 1 ? '' : 's'}, '
           '$highRiskAreas high-risk area${highRiskAreas == 1 ? '' : 's'}';
-      subtitle = 'Flood: $floodStatus  |  Landslide: $landslideStatus  |  '
+      subtitle =
+          'Flood: $floodStatus  |  Landslide: $landslideStatus  |  '
           'Rainfall: ${bundle.rainfallMm.toStringAsFixed(0)} mm';
     }
 
@@ -3034,9 +3492,15 @@ class _HeatmapPreviewState extends State<_HeatmapPreview> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(title, style: Theme.of(context).textTheme.titleSmall),
+                      Text(
+                        title,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
                       const SizedBox(height: 2),
-                      Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+                      Text(
+                        subtitle,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                     ],
                   ),
                 ),
@@ -3135,7 +3599,7 @@ class _ResponderMapPreview extends StatelessWidget {
   final void Function(RescueRequestModel)? onSosRequestTap;
   final void Function(EvacuationCenterModel)? onShelterTap;
 
-  static const _center = LatLng(13.6218, 123.1948);
+  static const _center = LatLng(kDefaultLatitude, kDefaultLongitude);
 
   static double? _parseDouble(Object? value) {
     if (value is num) return value.toDouble();
@@ -3203,10 +3667,10 @@ class _ResponderMapPreview extends StatelessWidget {
                       ),
                       radius: 500,
                       useRadiusInMeter: true,
-                      color: _riskTierColor(
+                      color: riskTierColor(
                         zone['alert_level'] ?? zone['alertLevel'],
                       ).withValues(alpha: 0.2),
-                      borderColor: _riskTierColor(
+                      borderColor: riskTierColor(
                         zone['alert_level'] ?? zone['alertLevel'],
                       ).withValues(alpha: 0.6),
                       borderStrokeWidth: 2,
@@ -3504,7 +3968,9 @@ class _IncidentCard extends StatelessWidget {
                           vertical: 2,
                         ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF7B1FA2).withValues(alpha: 0.12),
+                          color: const Color(
+                            0xFF7B1FA2,
+                          ).withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Row(
@@ -3534,7 +4000,7 @@ class _IncidentCard extends StatelessWidget {
               if (incident.priorityRank != null)
                 _SeverityPill(
                   label: '#${incident.priorityRank}',
-                  color: _riskTierColor(incident.riskLevel),
+                  color: riskTierColor(incident.riskLevel),
                 )
               else
                 _SeverityPill(label: incident.severity, color: incident.color),
@@ -3567,7 +4033,7 @@ class _Incident {
   });
 
   factory _Incident.fromRescueRequest(RescueRequestModel request) {
-    final severityLabel = _severityLabelFromPeople(request.peopleNeedingHelp);
+    final severityLabel = severityLabelFromPeopleCount(request.peopleNeedingHelp);
     final riskLevel = request.riskLevel;
     final metaParts = [
       '${request.peopleNeedingHelp} people',
@@ -3583,7 +4049,7 @@ class _Incident {
       location: request.locationLabel ?? request.description,
       meta: metaParts.join(' - '),
       severity: severityLabel,
-      color: _severityFromPeople(request.peopleNeedingHelp),
+      color: severityColorFromPeopleCount(request.peopleNeedingHelp),
       people: request.peopleNeedingHelp,
       status: _rescueStatusLabel(request.status),
       rawStatus: request.status,
@@ -4002,7 +4468,10 @@ class _LayerButton extends StatelessWidget {
           color: active ? Colors.white : Colors.white.withValues(alpha: 0.5),
           borderRadius: BorderRadius.circular(6),
           boxShadow: [
-            BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 8),
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.12),
+              blurRadius: 8,
+            ),
           ],
         ),
         child: Row(
@@ -4187,7 +4656,9 @@ class _NavigationPanel extends StatelessWidget {
                 const Icon(Icons.chevron_right, color: AppTheme.textMuted),
                 Expanded(
                   child: Text(
-                    hasLiveLocation ? 'Responder position active' : 'No route selected',
+                    hasLiveLocation
+                        ? 'Responder position active'
+                        : 'No route selected',
                   ),
                 ),
                 Text('—', style: Theme.of(context).textTheme.titleSmall),
@@ -4196,8 +4667,12 @@ class _NavigationPanel extends StatelessWidget {
             const Divider(height: 20),
             Row(
               children: [
-                const Expanded(child: _MiniMetric(value: '—', label: 'Est. time')),
-                const Expanded(child: _MiniMetric(value: '—', label: 'Distance')),
+                const Expanded(
+                  child: _MiniMetric(value: '—', label: 'Est. time'),
+                ),
+                const Expanded(
+                  child: _MiniMetric(value: '—', label: 'Distance'),
+                ),
                 SizedBox(
                   width: 126,
                   child: SentryButton(
@@ -4408,8 +4883,11 @@ class _SosRequestMarker extends StatelessWidget {
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2.5),
             ),
-            child: const Icon(Icons.person_pin_rounded,
-                color: Colors.white, size: 20),
+            child: const Icon(
+              Icons.person_pin_rounded,
+              color: Colors.white,
+              size: 20,
+            ),
           ),
         ),
       ],
@@ -4457,7 +4935,11 @@ class _ShelterMarker extends StatelessWidget {
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2),
             ),
-            child: const Icon(Icons.home_rounded, color: Colors.white, size: 18),
+            child: const Icon(
+              Icons.home_rounded,
+              color: Colors.white,
+              size: 18,
+            ),
           ),
         ),
       ],
@@ -4520,9 +5002,7 @@ class _TeamMemberMarker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = member.firstName.isNotEmpty
-        ? member.firstName
-        : 'Member';
+    final label = member.firstName.isNotEmpty ? member.firstName : 'Member';
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -4565,11 +5045,7 @@ class _TeamMemberMarker extends StatelessWidget {
                   ),
                 ],
               ),
-              child: const Icon(
-                Icons.person,
-                color: Colors.white,
-                size: 12,
-              ),
+              child: const Icon(Icons.person, color: Colors.white, size: 12),
             ),
           ),
         ),
@@ -4591,7 +5067,7 @@ class _SosRequestSheet extends StatefulWidget {
   final RescueRequestModel request;
   final List<EvacuationCenterModel> shelters;
   final Future<void> Function(String id, String name, String? address)
-      onShelterAssigned;
+  onShelterAssigned;
   final VoidCallback onNavigate;
 
   @override
@@ -4611,9 +5087,18 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
         onBack: () => setState(() => _showPicker = false),
         onSelect: (shelter) async {
           setState(() => _isAssigning = true);
-          await widget.onShelterAssigned(
-              shelter.id, shelter.name, shelter.address);
-          if (mounted) setState(() => _isAssigning = false);
+          try {
+            await widget.onShelterAssigned(
+              shelter.id,
+              shelter.name,
+              shelter.address,
+            );
+          } finally {
+            // Always reset regardless of how onShelterAssigned resolves —
+            // it currently handles its own errors internally, but this
+            // guards against a stuck spinner if that ever changes.
+            if (mounted) setState(() => _isAssigning = false);
+          }
         },
       );
     }
@@ -4623,7 +5108,11 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
-          20, 12, 20, 20 + MediaQuery.of(context).viewInsets.bottom),
+        20,
+        12,
+        20,
+        20 + MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4647,8 +5136,10 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(incident.title,
-                        style: Theme.of(context).textTheme.titleMedium),
+                    Text(
+                      incident.title,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                     Text(
                       '${request.peopleNeedingHelp} people · ${request.status.name}',
                       style: Theme.of(context).textTheme.bodySmall,
@@ -4661,10 +5152,12 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
           ),
           if (request.description.isNotEmpty) ...[
             const SizedBox(height: 10),
-            Text(request.description,
-                style: Theme.of(context).textTheme.bodySmall,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis),
+            Text(
+              request.description,
+              style: Theme.of(context).textTheme.bodySmall,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
           ],
           if (request.assignedShelterName != null) ...[
             const SizedBox(height: 10),
@@ -4674,12 +5167,16 @@ class _SosRequestSheetState extends State<_SosRequestSheet> {
                 color: AppTheme.safeGreen.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                    color: AppTheme.safeGreen.withValues(alpha: 0.3)),
+                  color: AppTheme.safeGreen.withValues(alpha: 0.3),
+                ),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.home_rounded,
-                      color: AppTheme.safeGreen, size: 16),
+                  const Icon(
+                    Icons.home_rounded,
+                    color: AppTheme.safeGreen,
+                    size: 16,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -4754,8 +5251,10 @@ class _ShelterPickerView extends StatelessWidget {
                 constraints: const BoxConstraints(),
               ),
               const SizedBox(width: 8),
-              Text('Assign Shelter',
-                  style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                'Assign Shelter',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -4780,19 +5279,26 @@ class _ShelterPickerView extends StatelessWidget {
                       ? const Color(0xFFE65100)
                       : const Color(0xFF2E7D32);
                   return ListTile(
-                    leading:
-                        Icon(Icons.home_rounded, color: color),
-                    title: Text(shelter.name,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w700, fontSize: 14)),
+                    leading: Icon(Icons.home_rounded, color: color),
+                    title: Text(
+                      shelter.name,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                      ),
+                    ),
                     subtitle: Text(
-                        '${shelter.address} · ${shelter.availableSlots} slots available'),
+                      '${shelter.address} · ${shelter.availableSlots} slots available',
+                    ),
                     trailing: isFull
-                        ? const Text('FULL',
+                        ? const Text(
+                            'FULL',
                             style: TextStyle(
-                                color: Color(0xFFE65100),
-                                fontSize: 11,
-                                fontWeight: FontWeight.w800))
+                              color: Color(0xFFE65100),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          )
                         : const Icon(Icons.chevron_right),
                     onTap: isFull ? null : () => onSelect(shelter),
                   );
@@ -4815,8 +5321,7 @@ class _ShelterInfoSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isFull = shelter.availableSlots <= 0;
-    final color =
-        isFull ? const Color(0xFFE65100) : const Color(0xFF2E7D32);
+    final color = isFull ? const Color(0xFFE65100) : const Color(0xFF2E7D32);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
@@ -4843,10 +5348,14 @@ class _ShelterInfoSheet extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(shelter.name,
-                        style: Theme.of(context).textTheme.titleMedium),
-                    Text(shelter.address,
-                        style: Theme.of(context).textTheme.bodySmall),
+                    Text(
+                      shelter.name,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    Text(
+                      shelter.address,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                   ],
                 ),
               ),
@@ -4856,33 +5365,40 @@ class _ShelterInfoSheet extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                  child: _ShelterStat(
-                      label: 'Capacity',
-                      value: '${shelter.capacity}')),
+                child: _ShelterStat(
+                  label: 'Capacity',
+                  value: '${shelter.capacity}',
+                ),
+              ),
               Expanded(
-                  child: _ShelterStat(
-                      label: 'Occupied',
-                      value: '${shelter.currentOccupancy}')),
+                child: _ShelterStat(
+                  label: 'Occupied',
+                  value: '${shelter.currentOccupancy}',
+                ),
+              ),
               Expanded(
-                  child: _ShelterStat(
-                      label: 'Available',
-                      value: '${shelter.availableSlots}',
-                      color: color)),
+                child: _ShelterStat(
+                  label: 'Available',
+                  value: '${shelter.availableSlots}',
+                  color: color,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 14),
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(8)),
+              color: color,
+              borderRadius: BorderRadius.circular(8),
+            ),
             child: Text(
               shelter.status.toUpperCase(),
               style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800),
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
         ],
@@ -4892,8 +5408,7 @@ class _ShelterInfoSheet extends StatelessWidget {
 }
 
 class _ShelterStat extends StatelessWidget {
-  const _ShelterStat(
-      {required this.label, required this.value, this.color});
+  const _ShelterStat({required this.label, required this.value, this.color});
 
   final String label;
   final String value;
@@ -4913,8 +5428,7 @@ class _ShelterStat extends StatelessWidget {
         ),
         Text(
           label,
-          style: const TextStyle(
-              fontSize: 11, color: Color(0xFF607895)),
+          style: const TextStyle(fontSize: 11, color: Color(0xFF607895)),
         ),
       ],
     );

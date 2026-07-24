@@ -4,9 +4,12 @@ import 'package:flutter/material.dart';
 
 import '../../app/router.dart';
 import '../../app/theme.dart';
+import '../../core/config/map_tile_config.dart';
 import '../../core/di/injection.dart';
 import '../../core/services/connectivity_service.dart';
 import '../../core/widgets/bottom_nav_bar.dart';
+import '../../core/widgets/connectivity_banner.dart';
+import '../../data/repositories/auth_repository.dart';
 import '../alerts/alerts_screen.dart';
 import '../family_safety/family_safety_screen.dart';
 import '../home/home_screen.dart';
@@ -24,26 +27,45 @@ class _SentryMeshShellState extends State<SentryMeshShell> {
   int _currentIndex = 0;
   bool _mapTabCreated = false;
   ConnectivityStatus _connectivity = ConnectivityStatus.online;
+  ActiveBackend? _lastActiveBackend;
   int _pendingQueueCount = 0;
   StreamSubscription<ConnectivityStatus>? _connectivitySub;
+  Timer? _mapConnectivityTimer;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _setupConnectivityMonitor();
+      if (mounted) {
+        _setupConnectivityMonitor();
+        _refreshMapConnectivity();
+      }
     });
+    // MapTileConfig.checkConnectivity() only ran once at app startup
+    // (main.dart) — a resident who joins/leaves the tower hotspot mid-session
+    // otherwise gets the wrong tile source (or a responder-side bug already
+    // fixed for this exact reason) until the app restarts. Re-check
+    // periodically here so it reflects current reality across every tab.
+    _mapConnectivityTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) _refreshMapConnectivity();
+    });
+  }
+
+  Future<void> _refreshMapConnectivity() async {
+    await MapTileConfig.checkConnectivity();
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
     _connectivitySub?.cancel();
+    _mapConnectivityTimer?.cancel();
     super.dispose();
   }
 
   void _setupConnectivityMonitor() {
     final deps = AppDependenciesScope.of(context);
-    deps.connectivityService.currentStatus().then((status) {
+    deps.connectivityService.currentStatus().then((status) async {
       if (!mounted) return;
       setState(() => _connectivity = status);
       // The service may have already resolved tower-vs-cloud and fired its
@@ -52,24 +74,56 @@ class _SentryMeshShellState extends State<SentryMeshShell> {
       // instead of waiting for a future change that may never come.
       _switchBackendIfNeeded();
       _reconnectSocket();
+      if (status == ConnectivityStatus.online) {
+        await _syncQueuedOperations();
+      }
+      _lastActiveBackend = deps.connectivityService.activeBackend;
     });
     _updatePendingCount();
 
-    _connectivitySub = deps.connectivityService.onStatusChanged.listen((status) {
+    _connectivitySub = deps.connectivityService.onStatusChanged.listen((
+      status,
+    ) {
       if (!mounted) return;
       final wasOffline = _connectivity != ConnectivityStatus.online;
+      // Tower and cloud both count as ConnectivityStatus.online, so
+      // wasOffline alone misses the tower -> cloud handover — the exact
+      // moment queued writes actually need to reach the real backend.
+      // Track the active backend directly so that flip triggers a sync too.
+      final newBackend = deps.connectivityService.activeBackend;
+      final backendFlippedToCloud =
+          _lastActiveBackend == ActiveBackend.tower &&
+          newBackend == ActiveBackend.cloud;
       setState(() => _connectivity = status);
 
       _switchBackendIfNeeded();
-      if (wasOffline && status == ConnectivityStatus.online) {
+      if ((wasOffline || backendFlippedToCloud) &&
+          status == ConnectivityStatus.online) {
         _syncQueuedOperations();
         _reconnectSocket();
       }
+      _lastActiveBackend = newBackend;
       _updatePendingCount();
     });
   }
 
+  bool _isSyncing = false;
+
+  // The initial currentStatus() check and the onStatusChanged stream can
+  // both resolve "online" close together at startup — without this guard
+  // that would fire processAll() twice concurrently and could resend the
+  // same queued operation before either call persists the emptied queue.
   Future<void> _syncQueuedOperations() async {
+    if (_isSyncing) return;
+    _isSyncing = true;
+    try {
+      await _doSyncQueuedOperations();
+    } finally {
+      _isSyncing = false;
+    }
+  }
+
+  Future<void> _doSyncQueuedOperations() async {
     final deps = AppDependenciesScope.of(context);
     final count = await deps.syncQueue.pendingCount;
     if (count == 0) return;
@@ -92,6 +146,7 @@ class _SentryMeshShellState extends State<SentryMeshShell> {
         deps.rescueRepository.fetchEvacuationCenters(),
         deps.alertRepository.fetchAlerts(),
         deps.teamRepository.fetchTeams(),
+        deps.familyRepository.fetchMembers(),
       ]);
     } catch (_) {}
 
@@ -119,6 +174,7 @@ class _SentryMeshShellState extends State<SentryMeshShell> {
       deps.towerSocket.reconnect(
         role: user.role,
         userId: user.id,
+        token: deps.storageService.readAuthToken(),
         baseUrl: deps.connectivityService.activeApiUrl,
       );
     }
@@ -131,7 +187,15 @@ class _SentryMeshShellState extends State<SentryMeshShell> {
   }
 
   Future<void> _logout() async {
-    await AppDependenciesScope.of(context).authRepository.logout();
+    try {
+      await AppDependenciesScope.of(context).authRepository.logout();
+    } on AuthException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+      return;
+    }
     if (!mounted) {
       return;
     }
@@ -164,7 +228,7 @@ class _SentryMeshShellState extends State<SentryMeshShell> {
       body: Column(
         children: [
           if (_connectivity != ConnectivityStatus.online)
-            _ConnectivityBanner(
+            ConnectivityBanner(
               status: _connectivity,
               pendingCount: _pendingQueueCount,
             ),
@@ -184,53 +248,6 @@ class _SentryMeshShellState extends State<SentryMeshShell> {
   }
 }
 
-class _ConnectivityBanner extends StatelessWidget {
-  const _ConnectivityBanner({
-    required this.status,
-    required this.pendingCount,
-  });
-
-  final ConnectivityStatus status;
-  final int pendingCount;
-
-  @override
-  Widget build(BuildContext context) {
-    final isOffline = status == ConnectivityStatus.offline;
-    final color = isOffline ? AppTheme.dangerRed : const Color(0xFFE8A317);
-    final icon = isOffline
-        ? Icons.cloud_off_rounded
-        : Icons.cloud_queue_rounded;
-    final label = isOffline ? 'Offline' : 'Limited connection';
-    final queueLabel =
-        pendingCount > 0 ? ' - $pendingCount queued' : '';
-
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.only(
-        top: MediaQuery.paddingOf(context).top + 4,
-        bottom: 4,
-        left: 16,
-        right: 16,
-      ),
-      color: color,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 14, color: Colors.white),
-          const SizedBox(width: 6),
-          Text(
-            '$label$queueLabel',
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: Colors.white,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _ResidentLogoutButton extends StatelessWidget {
   const _ResidentLogoutButton({required this.onPressed});

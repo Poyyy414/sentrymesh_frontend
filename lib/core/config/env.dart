@@ -13,20 +13,42 @@ class Env {
     defaultValue: 'https://sentrymesh-vigilantpath-api.onrender.com',
   );
 
-  static const towerApiUrl = String.fromEnvironment(
+  // Explicit --dart-define overrides always win, for setups where the
+  // tower isn't reachable at its usual hotspot gateway address (e.g.
+  // routed networks). Otherwise the host is discovered at runtime — see
+  // [setDiscoveredTowerHost] — since a single hardcoded IP only matches
+  // one specific hotspot configuration (NetworkManager's default).
+  static const _towerApiUrlOverride = String.fromEnvironment(
     'SENTRYMESH_TOWER_API_URL',
-    defaultValue: 'http://10.42.0.1:3000',
   );
-
-  static const towerAiUrl = String.fromEnvironment(
+  static const _towerAiUrlOverride = String.fromEnvironment(
     'SENTRYMESH_TOWER_AI_URL',
-    defaultValue: 'http://10.42.0.1:8000',
+  );
+  static const _towerTileUrlOverride = String.fromEnvironment(
+    'SENTRYMESH_TOWER_TILE_URL',
   );
 
-  static const towerTileUrl = String.fromEnvironment(
-    'SENTRYMESH_TOWER_TILE_URL',
-    defaultValue: 'http://10.42.0.1:8085',
-  );
+  static const _defaultTowerHost = '10.42.0.1';
+  static String _discoveredTowerHost = _defaultTowerHost;
+
+  static String get towerApiUrl => _towerApiUrlOverride.isNotEmpty
+      ? _towerApiUrlOverride
+      : 'http://$_discoveredTowerHost:3000';
+
+  static String get towerAiUrl => _towerAiUrlOverride.isNotEmpty
+      ? _towerAiUrlOverride
+      : 'http://$_discoveredTowerHost:8000';
+
+  static String get towerTileUrl => _towerTileUrlOverride.isNotEmpty
+      ? _towerTileUrlOverride
+      : 'http://$_discoveredTowerHost:8085';
+
+  /// Called once [TowerDiscovery] confirms a live tower host on the local
+  /// network, so subsequent reads of [towerApiUrl]/[towerAiUrl]/
+  /// [towerTileUrl] point at the address that's actually reachable.
+  static void setDiscoveredTowerHost(String host) {
+    _discoveredTowerHost = host;
+  }
 
   static const cloudApiUrl = apiBaseUrl;
   static const cloudAiUrl = aiBaseUrl;

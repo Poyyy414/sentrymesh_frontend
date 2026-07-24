@@ -41,6 +41,8 @@ dependencies:
   web_socket_channel: ^3.0.2
   socket_io_client: ^3.0.2
   flutter_map_tile_caching: ^10.1.1
+  mapbox_maps_flutter: ^2.26.0
+  connectivity_plus: ^6.1.5
 
 dev_dependencies:
   flutter_test:

@@ -5,12 +5,17 @@ import 'package:flutter/material.dart';
 import '../../app/router.dart';
 import '../../app/theme.dart';
 import '../../core/di/injection.dart';
+import '../../core/services/connectivity_aware_shell_mixin.dart';
 import '../../core/services/connectivity_service.dart';
+import '../../core/services/offline/sync_queue.dart';
+import '../../core/widgets/connectivity_banner.dart';
 import '../../core/widgets/custom_button.dart';
 import '../../data/models/evacuation_center_model.dart';
 import '../../data/models/rescue_request_model.dart';
+import '../../data/repositories/auth_repository.dart';
 import '../../shared/enums/hazard_type.dart';
 import '../../shared/enums/rescue_status.dart';
+import '../../shared/severity_colors.dart';
 import '../responder/responder_shell.dart' show ResponderLiveMapScreen;
 
 /// Super-admin console. The super admin has the widest view of the platform:
@@ -23,9 +28,9 @@ class AdminShell extends StatefulWidget {
   State<AdminShell> createState() => _AdminShellState();
 }
 
-class _AdminShellState extends State<AdminShell> {
+class _AdminShellState extends State<AdminShell>
+    with ConnectivityAwareShellMixin {
   int _currentIndex = 0;
-  StreamSubscription<ConnectivityStatus>? _connectivitySub;
 
   static const _screens = [
     _AdminOverviewScreen(),
@@ -38,59 +43,40 @@ class _AdminShellState extends State<AdminShell> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _setupConnectivityMonitor();
+      if (mounted) setupConnectivityMonitor();
     });
   }
 
   @override
   void dispose() {
-    _connectivitySub?.cancel();
+    disposeConnectivityMonitor();
     super.dispose();
   }
 
-  void _setupConnectivityMonitor() {
+  @override
+  Future<void> onSyncCompleted() async {
     final deps = AppDependenciesScope.of(context);
-    deps.connectivityService.currentStatus().then((status) {
-      if (!mounted) return;
-      // The service may have already resolved tower-vs-cloud and fired its
-      // one status-change event before this listener subscribed (broadcast
-      // streams don't replay), so apply the resolved backend explicitly here
-      // instead of waiting for a future change that may never come.
-      _switchBackendIfNeeded();
-      _reconnectSocket();
-    });
-
-    _connectivitySub =
-        deps.connectivityService.onStatusChanged.listen((status) {
-      if (!mounted) return;
-      _switchBackendIfNeeded();
-      _reconnectSocket();
-    });
-  }
-
-  void _switchBackendIfNeeded() {
-    final deps = AppDependenciesScope.of(context);
-    final cs = deps.connectivityService;
-    deps.apiClient.updateBaseUrl(cs.activeApiUrl);
-    deps.aiClient.updateBaseUrl(cs.activeAiUrl);
-  }
-
-  void _reconnectSocket() {
-    final deps = AppDependenciesScope.of(context);
-    final user = deps.initialUser;
-    if (user != null) {
-      deps.towerSocket.reconnect(
-        role: user.role,
-        userId: user.id,
-        baseUrl: deps.connectivityService.activeApiUrl,
-      );
-    }
+    await Future.wait([
+      deps.rescueRepository.fetchRequests(),
+      deps.rescueRepository.fetchEvacuationCenters(),
+    ]);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(index: _currentIndex, children: _screens),
+      body: Column(
+        children: [
+          if (connectivity != ConnectivityStatus.online)
+            ConnectivityBanner(
+              status: connectivity,
+              pendingCount: pendingQueueCount,
+            ),
+          Expanded(
+            child: IndexedStack(index: _currentIndex, children: _screens),
+          ),
+        ],
+      ),
       bottomNavigationBar: DecoratedBox(
         decoration: const BoxDecoration(
           color: Colors.white,
@@ -209,6 +195,7 @@ class _AdminOverviewScreenState extends State<_AdminOverviewScreen> {
   _AdminStats? _stats;
   bool _isLoading = true;
   String? _error;
+  bool _isStale = false;
 
   @override
   void initState() {
@@ -225,9 +212,16 @@ class _AdminOverviewScreenState extends State<_AdminOverviewScreen> {
     });
 
     try {
-      final rescueRepository = AppDependenciesScope.of(
-        context,
-      ).rescueRepository;
+      final deps = AppDependenciesScope.of(context);
+      // fetchRequests()/fetchEvacuationCenters() never throw — they fall
+      // back to cache (possibly empty) on any failure, including no
+      // connectivity at all. Without checking this separately, a genuinely
+      // offline/backend-down admin device would show "0 incidents" as if
+      // that were verified current truth instead of a fetch that never
+      // actually happened — a dangerous false "all clear" during a real
+      // outage.
+      final status = await deps.connectivityService.currentStatus();
+      final rescueRepository = deps.rescueRepository;
       final results = await Future.wait([
         rescueRepository.fetchRequests(),
         rescueRepository.fetchEvacuationCenters(),
@@ -253,6 +247,7 @@ class _AdminOverviewScreenState extends State<_AdminOverviewScreen> {
           barangays: _buildBarangayOpsSummaries(requests, shelters),
           recent: requests.take(5).toList(),
         );
+        _isStale = status != ConnectivityStatus.online;
         _isLoading = false;
       });
     } catch (error) {
@@ -293,6 +288,7 @@ class _AdminOverviewScreenState extends State<_AdminOverviewScreen> {
             if (_error != null)
               _ErrorBanner(message: _error!, onRetry: _load)
             else ...[
+              if (_isStale) const _StaleDataBanner(),
               GridView.count(
                 crossAxisCount: 2,
                 shrinkWrap: true,
@@ -498,11 +494,18 @@ class _AdminReportDetailScreenState extends State<_AdminReportDetailScreen> {
       ).rescueRepository.updateRequestStatus(id: _request.id, status: status);
       if (!mounted) return;
       setState(() {
-        _request = updated ?? _request;
+        _request = updated;
         _didChange = true;
         _isBusy = false;
       });
       _showSnack(message);
+    } on QueuedForSyncException catch (error) {
+      // The write was only queued locally, not actually delivered — don't
+      // mark _didChange or show the caller's "success" message, since the
+      // status hasn't really changed on the server yet.
+      if (!mounted) return;
+      setState(() => _isBusy = false);
+      _showSnack('$error', color: AppTheme.warningAmber);
     } catch (error) {
       if (!mounted) return;
       setState(() => _isBusy = false);
@@ -510,11 +513,11 @@ class _AdminReportDetailScreenState extends State<_AdminReportDetailScreen> {
     }
   }
 
-  void _showSnack(String message) {
+  void _showSnack(String message, {Color? color}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: color),
+    );
   }
 
   @override
@@ -543,12 +546,12 @@ class _AdminReportDetailScreenState extends State<_AdminReportDetailScreen> {
                     Row(
                       children: [
                         CircleAvatar(
-                          backgroundColor: _severityColor(
+                          backgroundColor: severityColorFromPeopleCount(
                             request.peopleNeedingHelp,
                           ).withValues(alpha: 0.14),
                           child: Icon(
                             _hazardIcon(request.emergencyType),
-                            color: _severityColor(request.peopleNeedingHelp),
+                            color: severityColorFromPeopleCount(request.peopleNeedingHelp),
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -932,7 +935,7 @@ class _ReportCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = _severityColor(request.peopleNeedingHelp);
+    final color = severityColorFromPeopleCount(request.peopleNeedingHelp);
 
     return Card(
       child: InkWell(
@@ -1038,6 +1041,39 @@ class _DetailRow extends StatelessWidget {
               value,
               textAlign: TextAlign.right,
               style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StaleDataBanner extends StatelessWidget {
+  const _StaleDataBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppTheme.warningAmber.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.warningAmber.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.warning_amber_rounded,
+            size: 18,
+            color: AppTheme.warningAmber,
+          ),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              "Showing cached data — couldn't reach the server for a fresh count. Numbers below may be incomplete.",
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
             ),
           ),
         ],
@@ -1249,7 +1285,15 @@ String _formatBarangayName(String text) {
 }
 
 Future<void> _logout(BuildContext context) async {
-  await AppDependenciesScope.of(context).authRepository.logout();
+  try {
+    await AppDependenciesScope.of(context).authRepository.logout();
+  } on AuthException catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(error.message)));
+    return;
+  }
   if (!context.mounted) return;
   Navigator.of(context).pushNamedAndRemoveUntil(AppRouter.login, (_) => false);
 }
@@ -1278,12 +1322,6 @@ Color _statusColor(RescueStatus status) {
     RescueStatus.resolved => AppTheme.safeGreen,
     RescueStatus.cancelled => AppTheme.textMuted,
   };
-}
-
-Color _severityColor(int people) {
-  if (people >= 5) return AppTheme.dangerRed;
-  if (people >= 2) return AppTheme.warningAmber;
-  return AppTheme.safeGreen;
 }
 
 IconData _hazardIcon(HazardType type) {

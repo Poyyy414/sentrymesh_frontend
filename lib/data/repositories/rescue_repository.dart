@@ -36,16 +36,27 @@ class RescueRepository {
   final SyncQueue _syncQueue;
 
   Future<List<RescueRequestModel>> fetchRequests() async {
-    final payload = await _remote.fetchRequests();
-    final items = payload['items'];
-    if (items is! List) {
-      return const [];
+    final status = await _connectivityService.currentStatus();
+    if (status == ConnectivityStatus.offline) {
+      return _offlineDataCache.getCachedRescueRequests();
     }
 
-    return items
-        .whereType<Map<String, Object?>>()
-        .map(RescueRequestModel.fromJson)
-        .toList();
+    try {
+      final payload = await _remote.fetchRequests();
+      final items = payload['items'];
+      if (items is! List) {
+        return const [];
+      }
+
+      final requests = items
+          .whereType<Map<String, Object?>>()
+          .map(RescueRequestModel.fromJson)
+          .toList();
+      await _offlineDataCache.cacheRescueRequests(requests);
+      return requests;
+    } catch (_) {
+      return _offlineDataCache.getCachedRescueRequests();
+    }
   }
 
   Future<RescueRequestModel> submitRequest(RescueRequestModel request) async {
@@ -96,7 +107,7 @@ class RescueRepository {
     }
   }
 
-  Future<RescueLocationModel?> updateRequestLocation({
+  Future<RescueLocationModel> updateRequestLocation({
     required String id,
     required RescueLocationModel location,
   }) async {
@@ -110,7 +121,7 @@ class RescueRepository {
         body: location.toJson(),
         createdAt: DateTime.now(),
       ));
-      return location;
+      throw const QueuedForSyncException();
     }
 
     try {
@@ -131,11 +142,11 @@ class RescueRepository {
         body: location.toJson(),
         createdAt: DateTime.now(),
       ));
-      return location;
+      throw const QueuedForSyncException();
     }
   }
 
-  Future<RescueRequestModel?> updateRequestStatus({
+  Future<RescueRequestModel> updateRequestStatus({
     required String id,
     required RescueStatus status,
   }) async {
@@ -149,15 +160,19 @@ class RescueRepository {
         body: {'status': status.name},
         createdAt: DateTime.now(),
       ));
-      return null;
+      throw const QueuedForSyncException();
     }
 
     try {
       final payload = await _remote.updateRequestStatus(id: id, status: status);
       if (payload.isEmpty) {
-        return null;
+        throw const QueuedForSyncException(
+          'Status change accepted but the server returned no confirmation.',
+        );
       }
       return RescueRequestModel.fromJson(payload);
+    } on QueuedForSyncException {
+      rethrow;
     } catch (_) {
       await _syncQueue.enqueue(SyncOperation(
         id: '${id}_status_${DateTime.now().millisecondsSinceEpoch}',
@@ -167,7 +182,7 @@ class RescueRepository {
         body: {'status': status.name},
         createdAt: DateTime.now(),
       ));
-      return null;
+      throw const QueuedForSyncException();
     }
   }
 
@@ -230,20 +245,56 @@ class RescueRepository {
     }
   }
 
-  Future<RescueRequestModel?> assignShelter({
+  Future<RescueRequestModel> assignShelter({
     required String requestId,
     required String shelterId,
     required String shelterName,
     String? shelterAddress,
   }) async {
-    final payload = await _remote.assignShelter(
-      id: requestId,
-      shelterId: shelterId,
-      shelterName: shelterName,
-      shelterAddress: shelterAddress,
-    );
-    if (payload.isEmpty) return null;
-    return RescueRequestModel.fromJson(payload);
+    final body = {
+      'shelter_id': shelterId,
+      'shelter_name': shelterName,
+      'shelter_address': shelterAddress,
+    };
+    final connectivity = await _connectivityService.currentStatus();
+    if (connectivity == ConnectivityStatus.offline) {
+      await _syncQueue.enqueue(SyncOperation(
+        id: '${requestId}_shelter_${DateTime.now().millisecondsSinceEpoch}',
+        type: 'shelter_assign',
+        endpoint: '/rescue-requests/$requestId/shelter',
+        method: 'PATCH',
+        body: body,
+        createdAt: DateTime.now(),
+      ));
+      throw const QueuedForSyncException();
+    }
+
+    try {
+      final payload = await _remote.assignShelter(
+        id: requestId,
+        shelterId: shelterId,
+        shelterName: shelterName,
+        shelterAddress: shelterAddress,
+      );
+      if (payload.isEmpty) {
+        throw const QueuedForSyncException(
+          'Shelter assignment accepted but the server returned no confirmation.',
+        );
+      }
+      return RescueRequestModel.fromJson(payload);
+    } on QueuedForSyncException {
+      rethrow;
+    } catch (_) {
+      await _syncQueue.enqueue(SyncOperation(
+        id: '${requestId}_shelter_${DateTime.now().millisecondsSinceEpoch}',
+        type: 'shelter_assign',
+        endpoint: '/rescue-requests/$requestId/shelter',
+        method: 'PATCH',
+        body: body,
+        createdAt: DateTime.now(),
+      ));
+      throw const QueuedForSyncException();
+    }
   }
 
   double _bearing(GeoPoint from, GeoPoint to) {
