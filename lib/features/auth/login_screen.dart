@@ -79,12 +79,16 @@ class _LoginScreenState extends State<LoginScreen> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  // Accepts either an email address or a phone number — the backend looks
+  // up whichever one this is by checking for "@" (see AuthService.login).
   String? _validateEmail(String? value) {
     final text = value?.trim() ?? '';
     if (text.isEmpty) {
-      return 'Email is required';
+      return 'Email or phone number is required';
     }
-    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(text)) {
+    final looksLikeEmail = text.contains('@');
+    if (looksLikeEmail &&
+        !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(text)) {
       return 'Enter a valid email';
     }
     return null;
@@ -535,7 +539,7 @@ class _SignInContent extends StatelessWidget {
                       textInputAction: TextInputAction.next,
                       validator: validateEmail,
                       decoration: _fieldDecoration(
-                        label: 'Email address',
+                        label: 'Email or phone number',
                         icon: Icons.mail_outline_rounded,
                       ),
                     ),

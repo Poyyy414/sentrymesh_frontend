@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -8,8 +9,10 @@ import '../../../app/theme.dart';
 import '../../../core/config/map_tile_config.dart';
 import '../../../core/services/location_service.dart';
 import '../../../data/models/evacuation_center_model.dart';
+import '../../../data/models/hazard_zone_model.dart';
 import '../../../data/models/route_model.dart';
 import '../../../data/models/team_model.dart';
+import '../../../shared/severity_colors.dart';
 import '../state/asean_country.dart';
 
 class MapLayerVisibility {
@@ -62,8 +65,10 @@ class MapView extends StatefulWidget {
     this.rainfallMmPh = 0.0,
     this.evacuationCenters = const [],
     this.teamLocations = const [],
+    this.hazardZones = const [],
     this.selectedCenterId,
     this.onEvacuationCenterTap,
+    this.onCenteredChanged,
     super.key,
   });
 
@@ -75,8 +80,14 @@ class MapView extends StatefulWidget {
   final double rainfallMmPh;
   final List<EvacuationCenterModel> evacuationCenters;
   final List<TeamModel> teamLocations;
+  final List<HazardZone> hazardZones;
   final String? selectedCenterId;
   final ValueChanged<EvacuationCenterModel>? onEvacuationCenterTap;
+  // Fires whenever the map transitions between "centered on the resident's
+  // location" and "panned away from it" (by gesture or programmatically) -
+  // lets the recenter FAB dim/brighten the way Google Maps' does, instead
+  // of always looking active regardless of where the camera actually is.
+  final ValueChanged<bool>? onCenteredChanged;
 
   @override
   State<MapView> createState() => _MapViewState();
@@ -85,6 +96,33 @@ class MapView extends StatefulWidget {
 class _MapViewState extends State<MapView> {
   final _mapController = MapController();
   bool _mapReady = false;
+  StreamSubscription<MapEvent>? _mapEventSub;
+  bool? _lastReportedCentered;
+
+  @override
+  void initState() {
+    super.initState();
+    _mapEventSub = _mapController.mapEventStream.listen(_onMapEvent);
+  }
+
+  @override
+  void dispose() {
+    _mapEventSub?.cancel();
+    super.dispose();
+  }
+
+  void _onMapEvent(MapEvent event) {
+    final userPoint = _userPoint;
+    final isCentered = userPoint == null ||
+        (event.camera.projectAtZoom(event.camera.center) -
+                    event.camera.projectAtZoom(userPoint))
+                .distance <
+            40;
+    if (isCentered != _lastReportedCentered) {
+      _lastReportedCentered = isCentered;
+      widget.onCenteredChanged?.call(isCentered);
+    }
+  }
 
   @override
   void didUpdateWidget(covariant MapView oldWidget) {
@@ -142,6 +180,44 @@ class _MapViewState extends State<MapView> {
     return LatLng(location.latitude, location.longitude);
   }
 
+  // The zoom threshold in _EvacuationCenterMarker handles "too far out to
+  // read anything," but nearby real-world shelters (a couple hundred
+  // meters apart - common for barangay halls in the same cluster) can
+  // still land within a pill-width of each other even when reasonably
+  // zoomed in. This projects each (non-selected) center to its actual
+  // screen position and hides the label on whichever of a colliding pair
+  // comes later in the list - the selected center is never hidden since
+  // that's the one place name the resident actually needs.
+  static const _centerLabelCollisionPx = 90.0;
+
+  Set<String> _collidingCenterLabelIds(MapCamera camera) {
+    final centers = widget.evacuationCenters;
+    if (centers.length < 2) return const {};
+
+    final offsets = {
+      for (final c in centers)
+        c.id: camera.latLngToScreenOffset(LatLng(c.latitude, c.longitude)),
+    };
+    final suppressed = <String>{};
+    for (var i = 0; i < centers.length; i++) {
+      final a = centers[i];
+      if (a.id == widget.selectedCenterId || suppressed.contains(a.id)) {
+        continue;
+      }
+      for (var j = i + 1; j < centers.length; j++) {
+        final b = centers[j];
+        if (b.id == widget.selectedCenterId || suppressed.contains(b.id)) {
+          continue;
+        }
+        if ((offsets[a.id]! - offsets[b.id]!).distance <
+            _centerLabelCollisionPx) {
+          suppressed.add(b.id);
+        }
+      }
+    }
+    return suppressed;
+  }
+
   @override
   Widget build(BuildContext context) {
     final userPoint = _userPoint;
@@ -186,12 +262,35 @@ class _MapViewState extends State<MapView> {
                   ),
                 ],
               ),
+            if (widget.layers.hazards && widget.hazardZones.isNotEmpty)
+              CircleLayer(
+                circles: [
+                  for (final zone in widget.hazardZones)
+                    CircleMarker(
+                      point: LatLng(zone.latitude, zone.longitude),
+                      radius: 600,
+                      useRadiusInMeter: true,
+                      color: riskTierColor(
+                        zone.alertLevel,
+                      ).withValues(alpha: 0.16),
+                      borderColor: riskTierColor(zone.alertLevel),
+                      borderStrokeWidth: 2,
+                    ),
+                ],
+              ),
             if (widget.layers.location && userPoint != null)
               CircleLayer(
                 circles: [
                   CircleMarker(
                     point: userPoint,
-                    radius: 120,
+                    // GPS accuracy varies a lot (dense buildings, indoors,
+                    // cold fix) - showing the real radius instead of a
+                    // fixed one tells residents how much to trust the pin,
+                    // same idea as Google Maps' accuracy halo. Clamped so
+                    // a great fix isn't an invisible speck and a terrible
+                    // one doesn't blot out the whole neighborhood.
+                    radius: (widget.userLocation?.accuracyMeters ?? 30)
+                        .clamp(15, 150),
                     useRadiusInMeter: true,
                     color: AppTheme.signalBlue.withValues(alpha: 0.18),
                     borderColor: AppTheme.signalBlue.withValues(alpha: 0.45),
@@ -199,8 +298,32 @@ class _MapViewState extends State<MapView> {
                   ),
                 ],
               ),
-            MarkerLayer(
-              markers: [
+            Builder(
+              // A Builder (not just inlining this in _MapViewState.build)
+              // so MapCamera.of(context) here is a real descendant of
+              // FlutterMap - that's what makes this rebuild live on every
+              // pinch/pan/zoom gesture, not just when SafeRouteMapScreen
+              // happens to rebuild this widget for an unrelated reason.
+              builder: (context) {
+                final camera = MapCamera.of(context);
+                final suppressedCenterIds = _collidingCenterLabelIds(camera);
+                return MarkerLayer(
+                  markers: [
+                if (widget.layers.hazards)
+                  for (final zone in widget.hazardZones)
+                    Marker(
+                      point: LatLng(zone.latitude, zone.longitude),
+                      width: 80,
+                      height: 50,
+                      // A hazard zone shares its coordinate with the
+                      // evacuation center it's monitoring, whose own marker
+                      // (name + slots pill) is also anchored there -
+                      // anchoring this box's bottom edge (not center) at the
+                      // point, with the label pinned to the box's top, lifts
+                      // it clear of that stack instead of drawing on top.
+                      alignment: Alignment.bottomCenter,
+                      child: _HazardZoneLabel(zone: zone),
+                    ),
                 if (widget.layers.evacuationCenters)
                   for (final center in widget.evacuationCenters)
                     Marker(
@@ -210,6 +333,7 @@ class _MapViewState extends State<MapView> {
                       child: _EvacuationCenterMarker(
                         center: center,
                         isSelected: center.id == widget.selectedCenterId,
+                        forceHideLabel: suppressedCenterIds.contains(center.id),
                         onTap: () => widget.onEvacuationCenterTap?.call(center),
                       ),
                     ),
@@ -233,7 +357,10 @@ class _MapViewState extends State<MapView> {
                       point: userPoint,
                       width: 44,
                       height: 44,
-                      child: const _UserLocationMarker(),
+                      child: _UserLocationMarker(
+                        heading: widget.userLocation?.heading,
+                        speedMps: widget.userLocation?.speedMps,
+                      ),
                     )
                   else
                     Marker(
@@ -244,7 +371,9 @@ class _MapViewState extends State<MapView> {
                         countryCode: widget.country.code,
                       ),
                     ),
-              ],
+                  ],
+                );
+              },
             ),
             const RichAttributionWidget(
               showFlutterMapAttribution: false,
@@ -436,32 +565,59 @@ class _RainPainter extends CustomPainter {
 
 // ── Standard map markers ───────────────────────────────────────────────────
 
+// Below this, course-over-ground is GPS noise, not a real direction -
+// Geolocator derives heading from successive fixes rather than a
+// compass, so it's meaningless while standing still or walking slowly.
+const kMovingSpeedThresholdMps = 0.8;
+
 class _UserLocationMarker extends StatelessWidget {
-  const _UserLocationMarker();
+  const _UserLocationMarker({this.heading, this.speedMps});
+
+  final double? heading;
+  final double? speedMps;
 
   @override
   Widget build(BuildContext context) {
+    final isMoving = (speedMps ?? 0) >= kMovingSpeedThresholdMps;
+    final showHeading = isMoving && heading != null;
+
     return DecoratedBox(
       decoration: BoxDecoration(
         color: AppTheme.signalBlue.withValues(alpha: 0.18),
         shape: BoxShape.circle,
       ),
       child: Center(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: AppTheme.signalBlue,
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 4),
-            boxShadow: [
-              BoxShadow(
-                color: AppTheme.signalBlue.withValues(alpha: 0.35),
-                blurRadius: 10,
-                spreadRadius: 2,
+        child: showHeading
+            ? Transform.rotate(
+                angle: heading! * math.pi / 180,
+                child: Icon(
+                  Icons.navigation_rounded,
+                  color: AppTheme.signalBlue,
+                  size: 30,
+                  shadows: [
+                    Shadow(
+                      color: Colors.white.withValues(alpha: 0.9),
+                      blurRadius: 1,
+                    ),
+                    const Shadow(color: Colors.white, blurRadius: 4),
+                  ],
+                ),
+              )
+            : DecoratedBox(
+                decoration: BoxDecoration(
+                  color: AppTheme.signalBlue,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 4),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.signalBlue.withValues(alpha: 0.35),
+                      blurRadius: 10,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: const SizedBox(width: 24, height: 24),
               ),
-            ],
-          ),
-          child: const SizedBox(width: 24, height: 24),
-        ),
       ),
     );
   }
@@ -491,6 +647,67 @@ class _CountryCenterMarker extends StatelessWidget {
   }
 }
 
+// ── Hazard zone label ──────────────────────────────────────────────────────
+
+// flutter_map's MarkerLayer has no built-in label collision avoidance (the
+// way Mapbox's native symbol layers do) - below this zoom, nearby shelter/
+// hazard/team pills draw right on top of each other and turn into an
+// unreadable stack. Collapsing to icon-only below the threshold keeps
+// positions visible without the mess; zooming in far enough to tell
+// markers apart also brings the names back.
+const kMarkerLabelZoomThreshold = 14.0;
+
+class _HazardZoneLabel extends StatelessWidget {
+  const _HazardZoneLabel({required this.zone});
+
+  final HazardZone zone;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = riskTierColor(zone.alertLevel);
+    final showLabel = MapCamera.of(context).zoom >= kMarkerLabelZoomThreshold;
+    return IgnorePointer(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: showLabel ? 8 : 4,
+            vertical: 3,
+          ),
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.4),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.warning_amber_rounded, size: 12, color: Colors.white),
+              if (showLabel) ...[
+                const SizedBox(width: 3),
+                Text(
+                  zone.alertLevel,
+                  style: const TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ── Evacuation center marker ──────────────────────────────────────────────
 
 class _EvacuationCenterMarker extends StatelessWidget {
@@ -498,11 +715,16 @@ class _EvacuationCenterMarker extends StatelessWidget {
     required this.center,
     required this.isSelected,
     required this.onTap,
+    this.forceHideLabel = false,
   });
 
   final EvacuationCenterModel center;
   final bool isSelected;
   final VoidCallback onTap;
+  // Set when this center's pill collides on-screen with a nearby one (see
+  // _MapViewState._collidingCenterLabelIds) - distinct from the zoom
+  // threshold below, which is about being too far out to read anything.
+  final bool forceHideLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -511,6 +733,11 @@ class _EvacuationCenterMarker extends StatelessWidget {
         : center.isOpen
             ? AppTheme.safeGreen
             : Colors.grey;
+    // A selected center is the one the resident is actually headed to -
+    // always naming it (even zoomed out) matters more than decluttering.
+    final showLabel = isSelected ||
+        (!forceHideLabel &&
+            MapCamera.of(context).zoom >= kMarkerLabelZoomThreshold);
 
     return GestureDetector(
       onTap: onTap,
@@ -518,7 +745,10 @@ class _EvacuationCenterMarker extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            padding: EdgeInsets.symmetric(
+              horizontal: showLabel ? 6 : 4,
+              vertical: 3,
+            ),
             decoration: BoxDecoration(
               color: bgColor,
               borderRadius: BorderRadius.circular(8),
@@ -534,40 +764,43 @@ class _EvacuationCenterMarker extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Icon(Icons.home_rounded, size: 13, color: Colors.white),
-                const SizedBox(width: 3),
-                Flexible(
-                  child: Text(
-                    center.name,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white,
+                if (showLabel) ...[
+                  const SizedBox(width: 3),
+                  Flexible(
+                    child: Text(
+                      center.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              center.availableSlots > 0
-                  ? '${center.availableSlots} slots'
-                  : 'FULL',
-              style: TextStyle(
-                fontSize: 8,
-                fontWeight: FontWeight.w700,
-                color: center.availableSlots > 0
-                    ? AppTheme.safeGreen
-                    : AppTheme.dangerRed,
+          if (showLabel)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                center.availableSlots > 0
+                    ? '${center.availableSlots} slots'
+                    : 'FULL',
+                style: TextStyle(
+                  fontSize: 8,
+                  fontWeight: FontWeight.w700,
+                  color: center.availableSlots > 0
+                      ? AppTheme.safeGreen
+                      : AppTheme.dangerRed,
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
@@ -592,12 +825,16 @@ class _TeamMemberMapMarker extends StatelessWidget {
     final color = status == 'active'
         ? AppTheme.safeGreen
         : const Color(0xFFE8A317);
+    final showLabel = MapCamera.of(context).zoom >= kMarkerLabelZoomThreshold;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+          padding: EdgeInsets.symmetric(
+            horizontal: showLabel ? 5 : 3,
+            vertical: 2,
+          ),
           decoration: BoxDecoration(
             color: color,
             borderRadius: BorderRadius.circular(6),
@@ -613,33 +850,36 @@ class _TeamMemberMapMarker extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               const Icon(Icons.shield_rounded, size: 11, color: Colors.white),
-              const SizedBox(width: 2),
-              Text(
-                teamName,
-                style: const TextStyle(
-                  fontSize: 8,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white,
+              if (showLabel) ...[
+                const SizedBox(width: 2),
+                Text(
+                  teamName,
+                  style: const TextStyle(
+                    fontSize: 8,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text(
-            memberName,
-            style: TextStyle(
-              fontSize: 7,
-              fontWeight: FontWeight.w700,
-              color: color,
+        if (showLabel)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              memberName,
+              style: TextStyle(
+                fontSize: 7,
+                fontWeight: FontWeight.w700,
+                color: color,
+              ),
             ),
           ),
-        ),
       ],
     );
   }

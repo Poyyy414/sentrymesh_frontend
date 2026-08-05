@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../app/router.dart';
 import '../../app/theme.dart';
 import '../../core/di/injection.dart';
 import '../../core/services/location_service.dart';
@@ -24,12 +27,31 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
   String _myStatus = 'safe';
   DateTime _statusUpdatedAt = DateTime.now();
 
+  StreamSubscription<Map<String, Object?>>? _familyStatusSub;
+  StreamSubscription<void>? _reconnectSub;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_isLoading && _members.isEmpty && _error == null) {
       _loadMembers();
+      final socket = AppDependenciesScope.of(context).towerSocket;
+      _familyStatusSub ??= socket.onFamilyStatusUpdate.listen(
+        (_) => _loadMembers(),
+      );
+      // The socket disconnects and reconnects periodically (Render resets
+      // idle connections roughly every minute) - anything broadcast during
+      // that few-second gap is otherwise lost, so refetch on every
+      // reconnect rather than trusting push events alone.
+      _reconnectSub ??= socket.onConnected.listen((_) => _loadMembers());
     }
+  }
+
+  @override
+  void dispose() {
+    _familyStatusSub?.cancel();
+    _reconnectSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadMembers() async {
@@ -97,7 +119,8 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
   }
 
   Future<void> _showAddMemberDialog() async {
-    final result = await showDialog<({String name, String relationship})>(
+    final result = await showDialog<
+        ({String name, String relationship, String? phoneNumber})>(
       context: context,
       builder: (ctx) => const _AddMemberDialog(),
     );
@@ -108,6 +131,7 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
         name: result.name,
         relationship: result.relationship,
         status: 'waiting',
+        phoneNumber: result.phoneNumber,
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -127,6 +151,51 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to add member: $e')),
       );
+    }
+  }
+
+  Future<bool> _confirmDeleteMember(FamilyMemberModel member) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove Family Member'),
+        content: Text('Remove ${member.name} from your family list?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.dangerRed,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
+  }
+
+  Future<void> _deleteMember(FamilyMemberModel member) async {
+    try {
+      await AppDependenciesScope.of(
+        context,
+      ).familyRepository.removeMember(member.id);
+      if (!mounted) return;
+      setState(() {
+        _members = _members.where((m) => m.id != member.id).toList();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${member.name} removed')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to remove ${member.name}: $e')),
+      );
+      _loadMembers();
     }
   }
 
@@ -178,7 +247,8 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Check-in All Family'),
         content: Text(
-          'Send a check-in request to all ${_members.length} family member(s)?',
+          'Send a check-in request to all ${_members.length} family member(s)? '
+          'They will receive a message asking them to update their own status.',
         ),
         actions: [
           TextButton(
@@ -195,54 +265,49 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
     if (confirmed != true || !mounted) return;
 
     final deps = AppDependenciesScope.of(context);
-    int successCount = 0;
+    final userName = deps.authRepository.currentUser?.name ?? 'Resident';
+    int sentCount = 0;
     int queuedCount = 0;
+    int skippedCount = 0;
 
     for (final member in _members) {
+      final phoneNumber = member.phoneNumber;
+      if (phoneNumber == null || phoneNumber.isEmpty) {
+        skippedCount++;
+        continue;
+      }
       try {
-        await deps.familyRepository.updateMemberStatus(
-          id: member.id,
-          status: 'safe',
+        await deps.familyRepository.sendMessage(
+          toNumber: phoneNumber,
+          body:
+              '$userName wants to know if you\'re safe. Please open SentryMesh '
+              'and update your status.',
+          toName: member.name,
+          fromName: userName,
         );
-        successCount++;
+        sentCount++;
       } on QueuedForSyncException {
         queuedCount++;
       } catch (_) {
-        // Genuinely failed for this member — continue with the rest.
+        skippedCount++;
       }
     }
 
     if (!mounted) return;
-
-    // Also update own status to safe. Reflect it locally either way (it's
-    // either confirmed or will sync), but don't blur the two in the summary.
-    try {
-      await deps.familyRepository.updateMyStatus(status: 'safe');
-    } on QueuedForSyncException {
-      // Still queued — counted separately below via queuedCount/successCount.
-    } catch (_) {
-      // Own-status failure doesn't block reporting the members' results.
-    }
-    setState(() {
-      _myStatus = 'safe';
-      _statusUpdatedAt = DateTime.now();
-    });
-
-    if (!mounted) return;
     final parts = [
-      if (successCount > 0) '$successCount sent',
+      if (sentCount > 0) '$sentCount sent',
       if (queuedCount > 0) '$queuedCount queued (offline)',
+      if (skippedCount > 0) '$skippedCount skipped (no phone number)',
     ];
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           parts.isEmpty
-              ? 'Check-in failed for all ${_members.length} member(s)'
-              : 'Check-in: ${parts.join(', ')} of ${_members.length} member(s)',
+              ? 'No check-in requests could be sent'
+              : 'Check-in request: ${parts.join(', ')}',
         ),
       ),
     );
-    _loadMembers();
   }
 
   Future<void> _emergencyMessage() async {
@@ -308,6 +373,12 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
     var sentCount = 0;
     var queuedCount = 0;
     var skippedCount = 0;
+    var smsSentCount = 0;
+
+    // Best-effort - this is an emergency alert, so a denied SMS permission
+    // shouldn't block the backend/sync-queue path below, only skip the
+    // direct-SMS fallback on top of it.
+    final smsAllowed = await deps.smsService.requestPermission();
 
     for (final member in _members) {
       final phoneNumber = member.phoneNumber;
@@ -328,11 +399,25 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
       } catch (_) {
         skippedCount++;
       }
+
+      // Sent independently of the backend result above - real SMS over
+      // cellular signal reaches this family member even if they don't have
+      // the app installed, or if this phone has no internet right now.
+      if (smsAllowed) {
+        try {
+          await deps.smsService.sendSms(to: phoneNumber, message: messageBody);
+          smsSentCount++;
+        } catch (_) {
+          // Ignore - the backend/queue path above is still the primary
+          // delivery mechanism for anyone who has the app.
+        }
+      }
     }
 
     if (!mounted) return;
     final parts = [
       if (sentCount > 0) '$sentCount sent',
+      if (smsSentCount > 0) '$smsSentCount via SMS',
       if (queuedCount > 0) '$queuedCount queued (offline)',
       if (skippedCount > 0) '$skippedCount could not be reached',
     ];
@@ -419,7 +504,30 @@ class _FamilySafetyScreenState extends State<FamilySafetyScreen> {
                                 )
                               else
                                 for (final member in _members) ...[
-                                  _MemberTile(member: member),
+                                  Dismissible(
+                                    key: ValueKey('dismiss_${member.id}'),
+                                    direction: DismissDirection.endToStart,
+                                    confirmDismiss: (_) =>
+                                        _confirmDeleteMember(member),
+                                    onDismissed: (_) => _deleteMember(member),
+                                    background: Container(
+                                      alignment: Alignment.centerRight,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 20,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.dangerRed,
+                                        borderRadius: BorderRadius.circular(
+                                          11,
+                                        ),
+                                      ),
+                                      child: const Icon(
+                                        Icons.delete_rounded,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                    child: _MemberTile(member: member),
+                                  ),
                                   const SizedBox(height: 8),
                                 ],
                               const SizedBox(height: 16),
@@ -486,10 +594,10 @@ class _FamilySafetyHeader extends StatelessWidget {
         ),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: const Row(
+      child: Row(
         children: [
-          SizedBox(width: 48),
-          Expanded(
+          const SizedBox(width: 48),
+          const Expanded(
             child: Text(
               'Family Safety Check',
               textAlign: TextAlign.center,
@@ -500,7 +608,15 @@ class _FamilySafetyHeader extends StatelessWidget {
               ),
             ),
           ),
-          SizedBox(width: 48),
+          SizedBox(
+            width: 48,
+            child: IconButton(
+              tooltip: 'Account',
+              onPressed: () =>
+                  Navigator.pushNamed(context, AppRouter.profile),
+              icon: const Icon(Icons.account_circle_rounded, color: Colors.white),
+            ),
+          ),
         ],
       ),
     );
@@ -786,12 +902,14 @@ class _AddMemberDialog extends StatefulWidget {
 class _AddMemberDialogState extends State<_AddMemberDialog> {
   final _nameCtrl = TextEditingController();
   final _relationshipCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
   final _formKey = GlobalKey<FormState>();
 
   @override
   void dispose() {
     _nameCtrl.dispose();
     _relationshipCtrl.dispose();
+    _phoneCtrl.dispose();
     super.dispose();
   }
 
@@ -825,6 +943,19 @@ class _AddMemberDialogState extends State<_AddMemberDialog> {
               validator: (v) =>
                   (v == null || v.trim().isEmpty) ? 'Required' : null,
             ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _phoneCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Phone Number (optional)',
+                helperText:
+                    'If they use SentryMesh with this number, you\'ll be '
+                    'notified when they mark themselves safe.',
+                helperMaxLines: 2,
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.phone,
+            ),
           ],
         ),
       ),
@@ -841,6 +972,9 @@ class _AddMemberDialogState extends State<_AddMemberDialog> {
                 (
                   name: _nameCtrl.text.trim(),
                   relationship: _relationshipCtrl.text.trim(),
+                  phoneNumber: _phoneCtrl.text.trim().isEmpty
+                      ? null
+                      : _phoneCtrl.text.trim(),
                 ),
               );
             }

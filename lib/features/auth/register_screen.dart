@@ -21,9 +21,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _emailController = TextEditingController();
   final _addressController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _phoneController = TextEditingController();
   final _responderCodeController = TextEditingController();
   bool _isLoading = false;
   bool _obscurePassword = true;
+
+  // Tracks exactly which phone number was last verified by SMS round-trip —
+  // if the user edits the phone field afterwards, this no longer matches
+  // and verification must happen again before submitting.
+  String? _verifiedPhoneNumber;
+  bool _isSendingCode = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _phoneController.addListener(() {
+      if (_verifiedPhoneNumber != null &&
+          _verifiedPhoneNumber != _phoneController.text.trim()) {
+        setState(() => _verifiedPhoneNumber = null);
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -32,12 +50,82 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _emailController.dispose();
     _addressController.dispose();
     _passwordController.dispose();
+    _phoneController.dispose();
     _responderCodeController.dispose();
     super.dispose();
   }
 
+  Future<void> _sendVerificationCode() async {
+    final phone = _phoneController.text.trim();
+    if (phone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Enter a phone number first'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isSendingCode = true);
+    try {
+      final deps = AppDependenciesScope.of(context);
+      final granted = await deps.smsService.requestPermission();
+      if (!granted) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('SMS permission is required to verify this number'),
+          ),
+        );
+        return;
+      }
+
+      final code = (100000 + math.Random().nextInt(900000)).toString();
+      await deps.smsService.sendSms(
+        to: phone,
+        message: 'Your SentryMesh verification code is $code',
+      );
+
+      if (!mounted) return;
+      final entered = await showDialog<String>(
+        context: context,
+        builder: (ctx) => _VerificationCodeDialog(phoneNumber: phone),
+      );
+
+      if (entered == code) {
+        setState(() => _verifiedPhoneNumber = phone);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Phone number verified')),
+        );
+      } else if (entered != null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Incorrect code, try again')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not send verification SMS: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _isSendingCode = false);
+    }
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate() || _isLoading) {
+      return;
+    }
+
+    final phoneText = _phoneController.text.trim();
+    if (phoneText.isNotEmpty && _verifiedPhoneNumber != phoneText) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please verify your phone number or clear the field to skip'),
+        ),
+      );
       return;
     }
 
@@ -51,6 +139,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
             email: _emailController.text,
             address: _addressController.text,
             password: _passwordController.text,
+            phoneNumber: _phoneController.text.trim().isEmpty
+                ? null
+                : _phoneController.text.trim(),
             responderCode: _responderCodeController.text.trim().isEmpty
                 ? null
                 : _responderCodeController.text.trim(),
@@ -151,9 +242,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 emailController: _emailController,
                 addressController: _addressController,
                 passwordController: _passwordController,
+                phoneController: _phoneController,
                 responderCodeController: _responderCodeController,
                 obscurePassword: _obscurePassword,
                 isLoading: _isLoading,
+                isPhoneVerified:
+                    _verifiedPhoneNumber == _phoneController.text.trim() &&
+                    _phoneController.text.trim().isNotEmpty,
+                isSendingCode: _isSendingCode,
                 requiredValidator: _required,
                 validateEmail: _validateEmail,
                 validatePassword: _validatePassword,
@@ -164,6 +260,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   });
                 },
                 onBack: _goBack,
+                onVerifyPhone: _sendVerificationCode,
               );
               final card = isWide
                   ? SizedBox(
@@ -506,15 +603,19 @@ class _RegisterContent extends StatelessWidget {
     required this.emailController,
     required this.addressController,
     required this.passwordController,
+    required this.phoneController,
     required this.responderCodeController,
     required this.obscurePassword,
     required this.isLoading,
+    required this.isPhoneVerified,
+    required this.isSendingCode,
     required this.requiredValidator,
     required this.validateEmail,
     required this.validatePassword,
     required this.onSubmit,
     required this.onTogglePassword,
     required this.onBack,
+    required this.onVerifyPhone,
   });
 
   final bool compact;
@@ -524,15 +625,19 @@ class _RegisterContent extends StatelessWidget {
   final TextEditingController emailController;
   final TextEditingController addressController;
   final TextEditingController passwordController;
+  final TextEditingController phoneController;
   final TextEditingController responderCodeController;
   final bool obscurePassword;
   final bool isLoading;
+  final bool isPhoneVerified;
+  final bool isSendingCode;
   final RequiredValidator requiredValidator;
   final FormFieldValidator<String> validateEmail;
   final FormFieldValidator<String> validatePassword;
   final VoidCallback onSubmit;
   final VoidCallback onTogglePassword;
   final VoidCallback onBack;
+  final VoidCallback onVerifyPhone;
 
   @override
   Widget build(BuildContext context) {
@@ -632,6 +737,42 @@ class _RegisterContent extends StatelessWidget {
                         label: 'Address',
                         hint: 'Enter your address',
                         icon: Icons.location_on_outlined,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      key: const Key('register_phone_field'),
+                      controller: phoneController,
+                      style: const TextStyle(color: AppTheme.textPrimary),
+                      cursorColor: AppTheme.signalBlue,
+                      keyboardType: TextInputType.phone,
+                      textInputAction: TextInputAction.next,
+                      validator: null,
+                      decoration: _fieldDecoration(
+                        label: 'Phone number (optional)',
+                        hint: 'e.g. 09171234567',
+                        icon: Icons.phone_outlined,
+                      ).copyWith(
+                        suffixIcon: isPhoneVerified
+                            ? const Icon(
+                                Icons.check_circle_rounded,
+                                color: AppTheme.safeGreen,
+                              )
+                            : isSendingCode
+                            ? const Padding(
+                                padding: EdgeInsets.all(12),
+                                child: SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                              )
+                            : TextButton(
+                                onPressed: onVerifyPhone,
+                                child: const Text('Verify'),
+                              ),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -1074,6 +1215,61 @@ class _RegisterFooter extends StatelessWidget {
             fontSize: 11,
             fontWeight: FontWeight.w500,
           ),
+        ),
+      ],
+    );
+  }
+}
+
+class _VerificationCodeDialog extends StatefulWidget {
+  const _VerificationCodeDialog({required this.phoneNumber});
+
+  final String phoneNumber;
+
+  @override
+  State<_VerificationCodeDialog> createState() =>
+      _VerificationCodeDialogState();
+}
+
+class _VerificationCodeDialogState extends State<_VerificationCodeDialog> {
+  final _codeController = TextEditingController();
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Verify Phone Number'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('We sent a code by SMS to ${widget.phoneNumber}.'),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _codeController,
+            style: const TextStyle(color: AppTheme.textPrimary),
+            keyboardType: TextInputType.number,
+            maxLength: 6,
+            decoration: const InputDecoration(
+              labelText: 'Verification code',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _codeController.text.trim()),
+          child: const Text('Confirm'),
         ),
       ],
     );

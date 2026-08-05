@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sentrymesh_frontend/app/app.dart';
-import 'package:sentrymesh_frontend/core/di/injection.dart';
+
+import 'helpers/test_app.dart';
 
 void main() {
   testWidgets('registration keeps validation and backend error flow', (
     tester,
   ) async {
-    final dependencies = await configureDependencies();
+    final dependencies = await configureTestDependencies();
     await tester.pumpWidget(SentryMeshApp(dependencies: dependencies));
     await tester.pumpAndSettle();
 
@@ -43,7 +44,7 @@ void main() {
     );
     await tester.enterText(
       find.byKey(const Key('register_password_field')),
-      '12345678',
+      'test1234',
     );
 
     await tester.ensureVisible(find.byTooltip('Show password'));
@@ -72,7 +73,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    final dependencies = await configureDependencies();
+    final dependencies = await configureTestDependencies();
     await tester.pumpWidget(SentryMeshApp(dependencies: dependencies));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const Key('create_account_button')));
@@ -99,7 +100,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    final dependencies = await configureDependencies();
+    final dependencies = await configureTestDependencies();
     await tester.pumpWidget(SentryMeshApp(dependencies: dependencies));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const Key('create_account_button')));
@@ -122,7 +123,7 @@ void main() {
   testWidgets('back to sign in keeps existing navigation behavior', (
     tester,
   ) async {
-    final dependencies = await configureDependencies();
+    final dependencies = await configureTestDependencies();
     await tester.pumpWidget(SentryMeshApp(dependencies: dependencies));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const Key('create_account_button')));

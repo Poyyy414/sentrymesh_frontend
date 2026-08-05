@@ -7,11 +7,20 @@ class GeoPoint {
     required this.latitude,
     required this.longitude,
     this.accuracyMeters,
+    this.heading,
+    this.speedMps,
   });
 
   final double latitude;
   final double longitude;
   final double? accuracyMeters;
+  // Course-over-ground in degrees (0 = north), and current speed - both
+  // straight from the platform's Position. Heading is only meaningful
+  // while actually moving (GPS derives it from successive fixes, not a
+  // compass), so callers should gate on speed before rotating anything
+  // to it - see kMovingSpeedThresholdMps in map_view.dart.
+  final double? heading;
+  final double? speedMps;
 
   Map<String, Object?> toJson() {
     return {
@@ -56,19 +65,11 @@ class LocationService {
         ),
       );
 
-      return GeoPoint(
-        latitude: position.latitude,
-        longitude: position.longitude,
-        accuracyMeters: position.accuracy,
-      );
+      return _toGeoPoint(position);
     } on TimeoutException {
       final lastKnownPosition = await Geolocator.getLastKnownPosition();
       if (lastKnownPosition != null) {
-        return GeoPoint(
-          latitude: lastKnownPosition.latitude,
-          longitude: lastKnownPosition.longitude,
-          accuracyMeters: lastKnownPosition.accuracy,
-        );
+        return _toGeoPoint(lastKnownPosition);
       }
 
       final position = await Geolocator.getCurrentPosition(
@@ -78,19 +79,11 @@ class LocationService {
         ),
       );
 
-      return GeoPoint(
-        latitude: position.latitude,
-        longitude: position.longitude,
-        accuracyMeters: position.accuracy,
-      );
+      return _toGeoPoint(position);
     } catch (_) {
       final lastKnownPosition = await Geolocator.getLastKnownPosition();
       if (lastKnownPosition != null) {
-        return GeoPoint(
-          latitude: lastKnownPosition.latitude,
-          longitude: lastKnownPosition.longitude,
-          accuracyMeters: lastKnownPosition.accuracy,
-        );
+        return _toGeoPoint(lastKnownPosition);
       }
 
       rethrow;
@@ -105,12 +98,16 @@ class LocationService {
         accuracy: LocationAccuracy.high,
         distanceFilter: 10,
       ),
-    ).map(
-      (position) => GeoPoint(
-        latitude: position.latitude,
-        longitude: position.longitude,
-        accuracyMeters: position.accuracy,
-      ),
+    ).map(_toGeoPoint);
+  }
+
+  GeoPoint _toGeoPoint(Position position) {
+    return GeoPoint(
+      latitude: position.latitude,
+      longitude: position.longitude,
+      accuracyMeters: position.accuracy,
+      heading: position.heading,
+      speedMps: position.speed,
     );
   }
 

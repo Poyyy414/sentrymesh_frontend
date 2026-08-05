@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import '../config/env.dart';
+import 'backend_health_check.dart';
 import 'tower_discovery.dart';
 
 enum ConnectivityStatus { online, limited, offline }
@@ -32,7 +33,13 @@ class ConnectivityService {
   // — that status is true whenever the tower is reachable too, and an
   // account created against the tower's backend would only ever exist in
   // the tower's own local database, never reaching the cloud on its own.
-  Future<bool> isCloudReachable() => _canReach(Env.cloudApiUrl);
+  // Use a longer timeout than the poll check — the Render free-tier backend
+  // can take up to 50 s to cold-start, and we don't want a sleeping server
+  // to look like "no internet" on the login screen.
+  Future<bool> isCloudReachable() => isSentryMeshBackend(
+        Env.cloudApiUrl,
+        timeout: const Duration(seconds: 20),
+      );
 
   Future<ConnectivityStatus> currentStatus() async {
     final previousBackend = _activeBackend;
@@ -108,20 +115,14 @@ class ConnectivityService {
     return ConnectivityStatus.offline;
   }
 
-  Future<bool> _canReach(String url) async {
-    try {
-      final uri = Uri.parse(url);
-      final host = uri.host;
-      final port = uri.hasPort ? uri.port : (uri.scheme == 'https' ? 443 : 80);
-
-      final socket = await Socket.connect(host, port,
-          timeout: const Duration(seconds: 3));
-      socket.destroy();
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
+  // A bare TCP connect here used to be enough to call a host "reachable",
+  // but that's a false-positive risk for the tower specifically: its
+  // candidate address is a network's ".1" gateway, which on plenty of
+  // WiFi networks is a router that happens to answer on the same port for
+  // something completely unrelated (an admin UI, another dev server,
+  // etc). Verifying the actual /health response body confirms this is
+  // really the SentryMesh backend, not just something occupying the port.
+  Future<bool> _canReach(String url) => isSentryMeshBackend(url);
 
   Future<bool> _hasNetworkInterface() async {
     try {

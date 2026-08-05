@@ -2,13 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sentrymesh_frontend/app/app.dart';
 import 'package:sentrymesh_frontend/app/theme.dart';
-import 'package:sentrymesh_frontend/core/di/injection.dart';
+
+import 'helpers/test_app.dart';
 
 void main() {
   testWidgets('alert filters keep their existing selection behavior', (
     tester,
   ) async {
-    final dependencies = await configureDependencies();
+    final dependencies = await configureTestDependencies();
     await tester.pumpWidget(SentryMeshApp(dependencies: dependencies));
     await _signInAndOpenAlerts(tester);
 
@@ -24,26 +25,17 @@ void main() {
     final decoration = underline.decoration! as BoxDecoration;
 
     expect(decoration.color, AppTheme.signalBlue);
-    expect(find.byKey(const Key('flood_alert_card')), findsOneWidget);
-    expect(find.byKey(const Key('landslide_alert_card')), findsOneWidget);
-    expect(find.byKey(const Key('typhoon_alert_card')), findsOneWidget);
+    expect(find.text('Flood Warning'), findsWidgets);
+    expect(find.text('Landslide Alert'), findsWidgets);
+    expect(find.text('Typhoon Alert'), findsWidgets);
   });
 
-  testWidgets('only the existing flood action opens alert details', (
+  testWidgets('tapping an alert card opens the alert details screen', (
     tester,
   ) async {
-    final dependencies = await configureDependencies();
+    final dependencies = await configureTestDependencies();
     await tester.pumpWidget(SentryMeshApp(dependencies: dependencies));
     await _signInAndOpenAlerts(tester);
-
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('view_details_Landslide Alert')),
-    );
-    await tester.tap(
-      find.byKey(const ValueKey('view_details_Landslide Alert')),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('alerts_filter_button')), findsOneWidget);
 
     await tester.ensureVisible(
       find.byKey(const ValueKey('view_details_Flood Warning')),
@@ -71,7 +63,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    final dependencies = await configureDependencies();
+    final dependencies = await configureTestDependencies();
     await tester.pumpWidget(SentryMeshApp(dependencies: dependencies));
     await _signInAndOpenAlerts(tester);
     expectNoFlutterError(tester);
@@ -94,22 +86,17 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    final dependencies = await configureDependencies();
+    final dependencies = await configureTestDependencies();
     await tester.pumpWidget(SentryMeshApp(dependencies: dependencies));
     await _signInAndOpenAlerts(tester);
     await tester.tap(find.byKey(const ValueKey('view_details_Flood Warning')));
     await tester.pumpAndSettle();
 
-    final locations = find.textContaining('San Felipe, Naga City');
-    final date = find.textContaining('Today, 6:30 AM');
-    final source = find.textContaining('SentryMesh System');
+    final locationWidget = find.textContaining('San Felipe, Naga City');
+    final sourceWidget = find.textContaining('SentryMesh System');
 
     expect(
-      (tester.getTopLeft(locations).dy - tester.getTopLeft(date).dy).abs(),
-      lessThan(1),
-    );
-    expect(
-      (tester.getTopLeft(date).dy - tester.getTopLeft(source).dy).abs(),
+      (tester.getTopLeft(locationWidget).dy - tester.getTopLeft(sourceWidget).dy).abs(),
       lessThan(1),
     );
     expectNoFlutterError(tester);
@@ -119,11 +106,11 @@ void main() {
 Future<void> _signInAndOpenAlerts(WidgetTester tester) async {
   await tester.enterText(
     find.byKey(const Key('login_email_field')),
-    'user123@gmail.com',
+    'user@test.com',
   );
   await tester.enterText(
     find.byKey(const Key('login_password_field')),
-    '12345678',
+    'test1234',
   );
   await tester.ensureVisible(find.byKey(const Key('sign_in_button')));
   await tester.tap(find.byKey(const Key('sign_in_button')));

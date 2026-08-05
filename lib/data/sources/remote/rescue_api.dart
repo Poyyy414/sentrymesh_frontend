@@ -69,6 +69,18 @@ class RescueApi {
     return _client.get(ApiEndpoints.evacuationCenters);
   }
 
+  Future<Map<String, Object?>> updateEvacuationCenterOccupancy({
+    required String id,
+    required int currentOccupancy,
+    String? status,
+  }) {
+    final body = <String, Object?>{'current_occupancy': currentOccupancy};
+    if (status != null) {
+      body['status'] = status;
+    }
+    return _client.patch(ApiEndpoints.evacuationCenterOccupancy(id), body: body);
+  }
+
   Future<Map<String, Object?>> assignShelter({
     required String id,
     required String shelterId,

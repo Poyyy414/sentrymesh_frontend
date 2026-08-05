@@ -389,6 +389,7 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
   StreamSubscription<JsonMap>? _sosNewSub;
   StreamSubscription<JsonMap>? _teamAssignmentSub;
   StreamSubscription<JsonMap>? _sosAssignedSub;
+  StreamSubscription<void>? _reconnectSub;
 
   String? get _userId =>
       AppDependenciesScope.of(context).authRepository.currentUser?.id;
@@ -402,6 +403,11 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
         _subscribeToSosNew();
         _subscribeToTeamAssignment();
         _subscribeToSosAssigned();
+        _reconnectSub ??= AppDependenciesScope.of(
+          context,
+        ).towerSocket.onConnected.listen((_) {
+          if (mounted) _load();
+        });
       }
     });
   }
@@ -411,6 +417,7 @@ class _ResponderDashboardScreenState extends State<ResponderDashboardScreen> {
     _sosNewSub?.cancel();
     _teamAssignmentSub?.cancel();
     _sosAssignedSub?.cancel();
+    _reconnectSub?.cancel();
     super.dispose();
   }
 
@@ -921,6 +928,7 @@ class _ActiveIncidentsScreenState extends State<ActiveIncidentsScreen> {
   String? _error;
   String _selectedFilter = 'All';
   StreamSubscription<JsonMap>? _sosNewSub;
+  StreamSubscription<void>? _reconnectSub;
 
   @override
   void initState() {
@@ -929,6 +937,11 @@ class _ActiveIncidentsScreenState extends State<ActiveIncidentsScreen> {
       if (mounted) {
         _load();
         _subscribeToSosNew();
+        _reconnectSub ??= AppDependenciesScope.of(
+          context,
+        ).towerSocket.onConnected.listen((_) {
+          if (mounted) _load();
+        });
       }
     });
   }
@@ -936,6 +949,7 @@ class _ActiveIncidentsScreenState extends State<ActiveIncidentsScreen> {
   @override
   void dispose() {
     _sosNewSub?.cancel();
+    _reconnectSub?.cancel();
     super.dispose();
   }
 
@@ -1754,7 +1768,20 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => _ShelterInfoSheet(shelter: shelter),
+      builder: (_) => _ShelterInfoSheet(
+        shelter: shelter,
+        onUpdate: (occupancy, status) async {
+          final repo = AppDependenciesScope.of(context).rescueRepository;
+          await repo.updateEvacuationCenterOccupancy(
+            id: shelter.id,
+            currentOccupancy: occupancy,
+            status: status,
+          );
+          if (!context.mounted) return;
+          Navigator.of(context).pop();
+          _loadMapData();
+        },
+      ),
     );
   }
 
@@ -2076,6 +2103,7 @@ class _ResponderTeamsScreenState extends State<ResponderTeamsScreen> {
   StreamSubscription<Map<String, Object?>>? _locationSub;
   StreamSubscription<Map<String, Object?>>? _joinedSub;
   StreamSubscription<Map<String, Object?>>? _leftSub;
+  StreamSubscription<void>? _reconnectSub;
 
   String? get _userId =>
       AppDependenciesScope.of(context).authRepository.currentUser?.id;
@@ -2087,6 +2115,11 @@ class _ResponderTeamsScreenState extends State<ResponderTeamsScreen> {
       if (mounted) {
         _load();
         _listenToSocket();
+        _reconnectSub ??= AppDependenciesScope.of(
+          context,
+        ).towerSocket.onConnected.listen((_) {
+          if (mounted) _load();
+        });
       }
     });
   }
@@ -2097,6 +2130,7 @@ class _ResponderTeamsScreenState extends State<ResponderTeamsScreen> {
     _locationSub?.cancel();
     _joinedSub?.cancel();
     _leftSub?.cancel();
+    _reconnectSub?.cancel();
     super.dispose();
   }
 
@@ -3089,11 +3123,12 @@ class _AiReasoningCardState extends State<_AiReasoningCard> {
             longitude: lon,
             hazardType: widget.incident.hazardType,
           );
-      if (mounted)
+      if (mounted) {
         setState(() {
           _node = node;
           _loading = false;
         });
+      }
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -5313,13 +5348,97 @@ class _ShelterPickerView extends StatelessWidget {
 
 // ── Shelter info bottom sheet ─────────────────────────────────────────────────
 
-class _ShelterInfoSheet extends StatelessWidget {
-  const _ShelterInfoSheet({required this.shelter});
+class _ShelterInfoSheet extends StatefulWidget {
+  const _ShelterInfoSheet({required this.shelter, required this.onUpdate});
 
   final EvacuationCenterModel shelter;
+  final Future<void> Function(int occupancy, String? status) onUpdate;
+
+  @override
+  State<_ShelterInfoSheet> createState() => _ShelterInfoSheetState();
+}
+
+class _ShelterInfoSheetState extends State<_ShelterInfoSheet> {
+  bool _isSaving = false;
+
+  Future<void> _openUpdateDialog() async {
+    final shelter = widget.shelter;
+    final occupancyController = TextEditingController(
+      text: '${shelter.currentOccupancy}',
+    );
+    var status = shelter.status;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Update Headcount'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: occupancyController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Current occupancy',
+                  helperText: 'Capacity: ${shelter.capacity}',
+                ),
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: status,
+                decoration: const InputDecoration(labelText: 'Status'),
+                items: const [
+                  DropdownMenuItem(value: 'open', child: Text('Open')),
+                  DropdownMenuItem(value: 'full', child: Text('Full')),
+                  DropdownMenuItem(value: 'closed', child: Text('Closed')),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => status = value);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final occupancy = int.tryParse(occupancyController.text.trim());
+    if (occupancy == null || occupancy < 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid occupancy number')),
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      await widget.onUpdate(occupancy, status);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update: $e')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final shelter = widget.shelter;
     final isFull = shelter.availableSlots <= 0;
     final color = isFull ? const Color(0xFFE65100) : const Color(0xFF2E7D32);
 
@@ -5399,6 +5518,21 @@ class _ShelterInfoSheet extends StatelessWidget {
                 fontSize: 11,
                 fontWeight: FontWeight.w800,
               ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _isSaving ? null : _openUpdateDialog,
+              icon: _isSaving
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.edit_rounded, size: 18),
+              label: const Text('Update Headcount'),
             ),
           ),
         ],

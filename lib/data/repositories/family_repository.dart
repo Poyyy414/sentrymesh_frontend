@@ -1,6 +1,7 @@
 import '../../core/services/connectivity_service.dart';
 import '../../core/services/offline/offline_data_cache.dart';
 import '../../core/services/offline/sync_queue.dart';
+import '../models/family_invite_model.dart';
 import '../models/family_member_model.dart';
 import '../sources/remote/family_api.dart';
 
@@ -122,6 +123,26 @@ class FamilyRepository {
       body: {'status': status},
       send: () => _remote.updateMemberStatus(id: id, status: status),
     );
+  }
+
+  Future<List<FamilyInviteModel>> fetchInvites() async {
+    final payload = await _remote.fetchInvites();
+    final items = payload['items'];
+    if (items is! List) {
+      return const [];
+    }
+    return items
+        .whereType<Map<String, Object?>>()
+        .map(FamilyInviteModel.fromJson)
+        .toList();
+  }
+
+  Future<void> acceptInvite(String id) async {
+    await _remote.acceptInvite(id);
+  }
+
+  Future<void> declineInvite(String id) async {
+    await _remote.declineInvite(id);
   }
 
   /// Shared write path for every family mutation: send immediately while

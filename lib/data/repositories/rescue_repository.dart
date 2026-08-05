@@ -245,6 +245,19 @@ class RescueRepository {
     }
   }
 
+  Future<EvacuationCenterModel> updateEvacuationCenterOccupancy({
+    required String id,
+    required int currentOccupancy,
+    String? status,
+  }) async {
+    final payload = await _remote.updateEvacuationCenterOccupancy(
+      id: id,
+      currentOccupancy: currentOccupancy,
+      status: status,
+    );
+    return EvacuationCenterModel.fromJson(payload);
+  }
+
   Future<RescueRequestModel> assignShelter({
     required String requestId,
     required String shelterId,

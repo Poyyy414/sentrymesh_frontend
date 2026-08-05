@@ -41,8 +41,10 @@ dependencies:
   web_socket_channel: ^3.0.2
   socket_io_client: ^3.0.2
   flutter_map_tile_caching: ^10.1.1
-  mapbox_maps_flutter: ^2.26.0
+  mapbox_maps_flutter: ^2.27.0
   connectivity_plus: ^6.1.5
+  flutter_local_notifications: ^18.0.1
+  another_telephony: ^0.4.1
 
 dev_dependencies:
   flutter_test:
@@ -94,3 +96,4 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+  # build: 2026-08-04

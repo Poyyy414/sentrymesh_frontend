@@ -3,7 +3,7 @@ class ApiEndpoints {
 
   static const authLogin = '/auth/login';
   static const authMe = '/auth/me';
-  static const authRegister = '/api/v1/auth/register';
+  static const authRegister = '/auth/register';
   static const alerts = '/alerts';
   static const rescueRequests = '/rescue-requests';
   static const safeRoutes = '/safe-routes';
@@ -19,12 +19,24 @@ class ApiEndpoints {
   static const weatherCurrent = '/weather/current';
   static const evacuationCenters = '/evacuation-centers';
   static const familyMessages = '/family/messages';
+  static const familyInvites = '/family/invites';
+  static const notifications = '/notifications';
+
+  static String notificationRead(String id) => '/notifications/$id/read';
 
   static String familyMemberById(String id) => '/family/members/$id';
 
   static String familyMemberStatus(String id) => '/family/members/$id/status';
 
+  static String familyInviteAccept(String id) => '/family/invites/$id/accept';
+
+  static String familyInviteDecline(String id) =>
+      '/family/invites/$id/decline';
+
   static String evacuationCenterById(String id) => '/evacuation-centers/$id';
+
+  static String evacuationCenterOccupancy(String id) =>
+      '/evacuation-centers/$id/occupancy';
 
   static String rescueRequestResponder(String id) =>
       '/rescue-requests/$id/responder';

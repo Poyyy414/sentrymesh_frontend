@@ -48,6 +48,13 @@ Future<({Uint8List rgba, int width, int height})> renderCircleIcon({
   );
 
   final image = await recorder.endRecording().toImage(size, size);
-  final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+  // mapbox_maps_flutter's MbxImage.data is documented (and always was, on
+  // every other Mapbox SDK) as raw pixel bytes - but the Android native
+  // addStyleImage in 2.27.0 runs it through BitmapFactory.decodeByteArray,
+  // which only understands encoded formats and returns null for raw RGBA,
+  // NPEing right after. PNG-encoding here is a workaround for that
+  // regression, not what the documented contract actually calls for -
+  // revisit if a later mapbox_maps_flutter fixes decodeByteArray's input.
+  final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
   return (rgba: byteData!.buffer.asUint8List(), width: size, height: size);
 }

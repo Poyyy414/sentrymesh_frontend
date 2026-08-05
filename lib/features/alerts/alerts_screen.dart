@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/router.dart';
@@ -23,6 +25,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
   bool _isLoading = true;
   String? _error;
   Set<AlertSeverity> _severityFilter = {...AlertSeverity.values};
+  StreamSubscription<void>? _reconnectSub;
 
   @override
   void didChangeDependencies() {
@@ -30,6 +33,17 @@ class _AlertsScreenState extends State<AlertsScreen> {
     if (_isLoading && _alerts.isEmpty && _error == null) {
       _loadAlerts();
     }
+    _reconnectSub ??= AppDependenciesScope.of(
+      context,
+    ).towerSocket.onConnected.listen((_) {
+      if (mounted) _loadAlerts();
+    });
+  }
+
+  @override
+  void dispose() {
+    _reconnectSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadAlerts() async {

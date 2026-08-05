@@ -30,6 +30,7 @@ class AuthApi {
     required String email,
     required String address,
     required String password,
+    String? phoneNumber,
     String? responderCode,
   }) {
     return _client.post(
@@ -40,6 +41,8 @@ class AuthApi {
         'email': email,
         'address': address,
         'password': password,
+        if (phoneNumber != null && phoneNumber.trim().isNotEmpty)
+          'phone_number': phoneNumber.trim(),
         if (responderCode != null && responderCode.trim().isNotEmpty)
           'responder_code': responderCode.trim(),
       },

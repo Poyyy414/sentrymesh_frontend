@@ -228,6 +228,20 @@ class AppTheme {
           fontWeight: FontWeight.w700,
           letterSpacing: 0,
         ),
+        // Explicitly set because this TextTheme fully replaces (rather than
+        // merges with) the default one via copyWith below - without this,
+        // bodyLarge is null, which is what TextField/TextFormField uses by
+        // default for the text you actually type. Every screen up to now
+        // has worked around that by setting its own `style:` on every
+        // field individually (see login_screen.dart) - this fixes it once,
+        // for any field that doesn't already do that.
+        bodyLarge: TextStyle(
+          color: textPrimary,
+          fontSize: 16,
+          height: 1.5,
+          fontWeight: FontWeight.w400,
+          letterSpacing: 0,
+        ),
         bodyMedium: TextStyle(
           color: textPrimary,
           fontSize: 14,

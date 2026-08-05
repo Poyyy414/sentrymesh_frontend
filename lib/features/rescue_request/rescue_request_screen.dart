@@ -9,7 +9,6 @@ import '../../shared/enums/rescue_status.dart';
 import 'widgets/emergency_contacts_list.dart';
 import 'widgets/emergency_type_dropdown.dart';
 import 'widgets/people_counter.dart';
-import 'widgets/photo_upload_box.dart';
 
 class RescueRequestScreen extends StatefulWidget {
   const RescueRequestScreen({super.key});
@@ -118,8 +117,6 @@ class _RescueRequestScreenState extends State<RescueRequestScreen> {
                     'Elderly person with high fever and difficulty breathing. Need immediate medical assistance.',
               ),
             ),
-            const SizedBox(height: 8),
-            const PhotoUploadBox(),
             const SizedBox(height: 18),
             SentryButton(
               label: _isSubmitting ? 'Submitting...' : 'Submit Request',

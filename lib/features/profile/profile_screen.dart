@@ -17,9 +17,11 @@ class ProfileScreen extends StatelessWidget {
         ? user.name.trim().split(' ').map((w) => w[0]).take(2).join()
         : '?';
 
-    return SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.all(16),
+    return ColoredBox(
+      color: const Color(0xFFF3F7FC),
+      child: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(16),
         children: [
           Text(
             'Profile',
@@ -123,6 +125,7 @@ class ProfileScreen extends StatelessWidget {
           ),
         ],
       ),
+    ),
     );
   }
 }

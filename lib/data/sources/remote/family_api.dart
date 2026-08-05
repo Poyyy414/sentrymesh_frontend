@@ -37,5 +37,17 @@ class FamilyApi {
   Future<Map<String, Object?>> sendMessage(Map<String, Object?> data) async {
     return _client.post(ApiEndpoints.familyMessages, body: data);
   }
+
+  Future<Map<String, Object?>> fetchInvites() async {
+    return _client.get(ApiEndpoints.familyInvites);
+  }
+
+  Future<Map<String, Object?>> acceptInvite(String id) async {
+    return _client.patch(ApiEndpoints.familyInviteAccept(id));
+  }
+
+  Future<Map<String, Object?>> declineInvite(String id) async {
+    return _client.patch(ApiEndpoints.familyInviteDecline(id));
+  }
 }
 

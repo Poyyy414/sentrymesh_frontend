@@ -2,14 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../app/router.dart';
 import '../../app/theme.dart';
 import '../../core/config/map_tile_config.dart';
 import '../../core/di/injection.dart';
 import '../../core/services/connectivity_service.dart';
 import '../../core/widgets/bottom_nav_bar.dart';
 import '../../core/widgets/connectivity_banner.dart';
-import '../../data/repositories/auth_repository.dart';
 import '../alerts/alerts_screen.dart';
 import '../family_safety/family_safety_screen.dart';
 import '../home/home_screen.dart';
@@ -186,25 +184,6 @@ class _SentryMeshShellState extends State<SentryMeshShell> {
     if (mounted) setState(() => _pendingQueueCount = count);
   }
 
-  Future<void> _logout() async {
-    try {
-      await AppDependenciesScope.of(context).authRepository.logout();
-    } on AuthException catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message)));
-      return;
-    }
-    if (!mounted) {
-      return;
-    }
-
-    Navigator.of(
-      context,
-    ).pushNamedAndRemoveUntil(AppRouter.login, (_) => false);
-  }
-
   @override
   Widget build(BuildContext context) {
     final screens = [
@@ -212,16 +191,7 @@ class _SentryMeshShellState extends State<SentryMeshShell> {
       const AlertsScreen(),
       _mapTabCreated ? const SafeRouteMapScreen() : const SizedBox.shrink(),
       const MessagesScreen(),
-      Stack(
-        children: [
-          const FamilySafetyScreen(),
-          Positioned(
-            top: MediaQuery.paddingOf(context).top + 8,
-            right: 12,
-            child: _ResidentLogoutButton(onPressed: _logout),
-          ),
-        ],
-      ),
+      const FamilySafetyScreen(),
     ];
 
     return Scaffold(
@@ -243,31 +213,6 @@ class _SentryMeshShellState extends State<SentryMeshShell> {
           _currentIndex = index;
           if (index == 2) _mapTabCreated = true;
         }),
-      ),
-    );
-  }
-}
-
-
-class _ResidentLogoutButton extends StatelessWidget {
-  const _ResidentLogoutButton({required this.onPressed});
-
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      shape: const CircleBorder(),
-      elevation: 3,
-      child: IconButton(
-        tooltip: 'Logout',
-        onPressed: onPressed,
-        icon: const Icon(
-          Icons.logout_rounded,
-          color: AppTheme.dangerRed,
-          size: 25,
-        ),
       ),
     );
   }

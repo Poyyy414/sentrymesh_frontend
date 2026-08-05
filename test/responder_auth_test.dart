@@ -1,20 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sentrymesh_frontend/app/app.dart';
-import 'package:sentrymesh_frontend/core/di/injection.dart';
+
+import 'helpers/test_app.dart';
 
 void main() {
   testWidgets('responder login opens responder dashboard', (tester) async {
-    final dependencies = await configureDependencies();
+    final dependencies = await configureTestDependencies();
 
     await tester.pumpWidget(SentryMeshApp(dependencies: dependencies));
     await tester.enterText(
       find.byKey(const Key('login_email_field')),
-      'responder123@gmail.com',
+      'responder@test.com',
     );
     await tester.enterText(
       find.byKey(const Key('login_password_field')),
-      '12345678',
+      'test1234',
     );
     await tester.ensureVisible(find.byKey(const Key('sign_in_button')));
     await tester.tap(find.byKey(const Key('sign_in_button')));
@@ -41,16 +42,16 @@ void main() {
   testWidgets('responder incident queue shows backend fetch state', (
     tester,
   ) async {
-    final dependencies = await configureDependencies();
+    final dependencies = await configureTestDependencies();
 
     await tester.pumpWidget(SentryMeshApp(dependencies: dependencies));
     await tester.enterText(
       find.byKey(const Key('login_email_field')),
-      'user123@gmail.com',
+      'user@test.com',
     );
     await tester.enterText(
       find.byKey(const Key('login_password_field')),
-      '12345678',
+      'test1234',
     );
     await tester.ensureVisible(find.byKey(const Key('sign_in_button')));
     await tester.tap(find.byKey(const Key('sign_in_button')));
@@ -69,11 +70,11 @@ void main() {
 
     await tester.enterText(
       find.byKey(const Key('login_email_field')),
-      'responder123@gmail.com',
+      'responder@test.com',
     );
     await tester.enterText(
       find.byKey(const Key('login_password_field')),
-      '12345678',
+      'test1234',
     );
     await tester.ensureVisible(find.byKey(const Key('sign_in_button')));
     await tester.tap(find.byKey(const Key('sign_in_button')));

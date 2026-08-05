@@ -14,11 +14,11 @@ import '../../core/services/location_service.dart';
 import '../../core/services/tower_socket_service.dart';
 import '../../data/models/alert_model.dart';
 import '../../data/models/evacuation_center_model.dart';
-import '../../data/models/family_member_model.dart';
 import '../../data/models/prediction_model.dart';
 import '../../data/models/rescue_location_model.dart';
 import '../../data/models/rescue_request_model.dart';
 import '../../data/repositories/prediction_repository.dart';
+import '../safe_route/safe_route_map_screen.dart';
 import '../../shared/enums/alert_severity.dart';
 import '../../shared/enums/hazard_type.dart';
 import '../../shared/enums/rescue_status.dart';
@@ -34,9 +34,9 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _distressSent = false;
   Future<PredictionBundle>? _predictionFuture;
   Future<List<AlertModel>>? _alertsFuture;
-  Future<List<FamilyMemberModel>>? _familyFuture;
   StreamSubscription<JsonMap>? _hazardWarningSub;
   StreamSubscription<JsonMap>? _sosStatusSub;
+  StreamSubscription<void>? _reconnectSub;
   Timer? _locationUpdateTimer;
   String? _lastSosRequestId;
 
@@ -47,6 +47,9 @@ class _HomeScreenState extends State<HomeScreen> {
       _loadAllData();
       _subscribeToHazardWarnings();
       _subscribeToSosStatus();
+      _reconnectSub ??= AppDependenciesScope.of(
+        context,
+      ).towerSocket.onConnected.listen((_) => _refreshData());
     }
   }
 
@@ -54,6 +57,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _hazardWarningSub?.cancel();
     _sosStatusSub?.cancel();
+    _reconnectSub?.cancel();
     _locationUpdateTimer?.cancel();
     super.dispose();
   }
@@ -220,7 +224,12 @@ class _HomeScreenState extends State<HomeScreen> {
           ElevatedButton.icon(
             onPressed: () {
               Navigator.of(dialogContext).pop();
-              Navigator.pushNamed(context, AppRouter.safeRoute);
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) =>
+                      const SafeRouteMapScreen(autoRouteToNearest: true),
+                ),
+              );
             },
             icon: const Icon(Icons.route, size: 18),
             label: const Text('View Evacuation Routes'),
@@ -236,7 +245,6 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _predictionFuture = _loadHomePredictions(deps);
       _alertsFuture = deps.alertRepository.fetchAlerts();
-      _familyFuture = deps.familyRepository.fetchMembers();
     });
   }
 
@@ -259,56 +267,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _refreshData() => _loadAllData();
 
-  Future<void> _addFamilyMember() async {
-    final nameController = TextEditingController();
-    final relationshipController = TextEditingController();
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add Family Member'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Full Name'),
-            ),
-            TextField(
-              controller: relationshipController,
-              decoration: const InputDecoration(labelText: 'Relationship'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true && mounted) {
-      try {
-        await AppDependenciesScope.of(context).familyRepository.addMember(
-          name: nameController.text,
-          relationship: relationshipController.text,
-          status: 'Safe',
-        );
-        _loadAllData();
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to add member: $e')),
-          );
-        }
-      }
-    }
+  // Home used to have its own bare-bones "Add Family Member" dialog (name +
+  // relationship only) that called familyRepository.addMember directly,
+  // completely bypassing the phone number + invite/consent flow the Family
+  // Safety tab actually implements. That created two different, inconsistent
+  // ways to add a family member depending on which button you tapped, with
+  // the Home shortcut producing members nobody could ever invite or notify.
+  // Routing to the real screen instead of duplicating a lesser version of it.
+  void _openFamilySafety() {
+    Navigator.pushNamed(context, AppRouter.familySafety);
   }
 
   Future<void> _openSosFlow() async {
@@ -471,7 +438,12 @@ class _HomeScreenState extends State<HomeScreen> {
           ElevatedButton.icon(
             onPressed: () {
               Navigator.of(dialogContext).pop();
-              Navigator.pushNamed(context, AppRouter.safeRoute);
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) =>
+                      const SafeRouteMapScreen(autoRouteToNearest: true),
+                ),
+              );
             },
             icon: const Icon(Icons.map_rounded, size: 18),
             label: const Text('View on Map'),
@@ -580,7 +552,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           _EmergencyActions(
                             isWide: isWide,
                             onSosPressed: _openSosFlow,
-                            onAddFamily: _addFamilyMember,
+                            onAddFamily: _openFamilySafety,
                           ),
                           const SizedBox(height: 14),
                           FutureBuilder<PredictionBundle>(
@@ -589,30 +561,25 @@ class _HomeScreenState extends State<HomeScreen> {
                               return FutureBuilder<List<AlertModel>>(
                                 future: _alertsFuture,
                                 builder: (context, alertSnapshot) {
-                                  return FutureBuilder<List<FamilyMemberModel>>(
-                                    future: _familyFuture,
-                                    builder: (context, familySnapshot) {
-                                      return Column(
-                                        children: [
-                                          _LocationAndStatus(
-                                            isWide: isWide,
-                                            distressSent: _distressSent,
-                                            predictionBundle: predictionSnapshot.data,
-                                          ),
-                                          const SizedBox(height: 14),
-                                          _FloodForecastCard(
-                                            snapshot: predictionSnapshot,
-                                            onRefresh: _refreshData,
-                                          ),
-                                          const SizedBox(height: 14),
-                                          _InformationGrid(
-                                            isWide: isWide,
-                                            bundle: predictionSnapshot.data,
-                                            alerts: alertSnapshot.data,
-                                          ),
-                                        ],
-                                      );
-                                    },
+                                  return Column(
+                                    children: [
+                                      _LocationAndStatus(
+                                        isWide: isWide,
+                                        distressSent: _distressSent,
+                                        predictionBundle: predictionSnapshot.data,
+                                      ),
+                                      const SizedBox(height: 14),
+                                      _FloodForecastCard(
+                                        snapshot: predictionSnapshot,
+                                        onRefresh: _refreshData,
+                                      ),
+                                      const SizedBox(height: 14),
+                                      _InformationGrid(
+                                        isWide: isWide,
+                                        bundle: predictionSnapshot.data,
+                                        alerts: alertSnapshot.data,
+                                      ),
+                                    ],
                                   );
                                 },
                               );
@@ -621,7 +588,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           const SizedBox(height: 14),
                           _QuickActions(
                             onSosPressed: _openSosFlow,
-                            onAddFamily: _addFamilyMember,
+                            onAddFamily: _openFamilySafety,
                           ),
                         ],
                       ),
@@ -1105,7 +1072,7 @@ class _EmergencySosCard extends StatelessWidget {
     return _ActionCardShell(
       key: const Key('home_sos_card'),
       gradient: const [Color(0xFFEF2736), Color(0xFFCC1023)],
-      onTap: onPressed,
+      onLongPress: onPressed,
       child: Row(
         children: [
           Container(
@@ -1129,7 +1096,7 @@ class _EmergencySosCard extends StatelessWidget {
           const Expanded(
             child: _ActionText(
               title: 'Emergency SOS',
-              subtitle: 'Send your emergency location to responders.',
+              subtitle: 'Hold to send your emergency location to responders.',
               titleSize: 20,
             ),
           ),
@@ -1177,12 +1144,14 @@ class _ActionCardShell extends StatelessWidget {
     required this.gradient,
     required this.child,
     this.onTap,
+    this.onLongPress,
     super.key,
   });
 
   final List<Color> gradient;
   final Widget child;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -1207,7 +1176,7 @@ class _ActionCardShell extends StatelessWidget {
       child: child,
     );
 
-    if (onTap == null) {
+    if (onTap == null && onLongPress == null) {
       return card;
     }
 
@@ -1216,6 +1185,7 @@ class _ActionCardShell extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
+        onLongPress: onLongPress,
         child: card,
       ),
     );

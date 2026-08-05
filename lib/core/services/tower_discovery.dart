@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'backend_health_check.dart';
+
 /// Finds the tower on the local network without relying on one hardcoded
 /// address. Hotspot hosts — regardless of implementation (Linux
 /// NetworkManager, Android tethering, iOS Personal Hotspot, Windows Mobile
@@ -15,7 +17,11 @@ class TowerDiscovery {
     Duration timeout = const Duration(seconds: 2),
   }) async {
     for (final host in await _candidateHosts()) {
-      if (await _canReach(host, port, timeout)) {
+      // ".1" is also just "the router" on plenty of WiFi networks, and
+      // routers commonly answer on arbitrary ports for their own admin UI
+      // or other unrelated services — a bare TCP connect used to be
+      // enough to falsely "discover" one of those as the tower.
+      if (await isSentryMeshBackend('http://$host:$port', timeout: timeout)) {
         return host;
       }
     }
@@ -42,19 +48,5 @@ class TowerDiscovery {
       // Best-effort — no usable interfaces found.
     }
     return hosts.toList();
-  }
-
-  static Future<bool> _canReach(
-    String host,
-    int port,
-    Duration timeout,
-  ) async {
-    try {
-      final socket = await Socket.connect(host, port, timeout: timeout);
-      socket.destroy();
-      return true;
-    } catch (_) {
-      return false;
-    }
   }
 }

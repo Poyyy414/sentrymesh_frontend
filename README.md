@@ -46,6 +46,11 @@ Override the backend URL for local development with:
 flutter run --dart-define=SENTRYMESH_API_BASE_URL=http://your-nestjs-host:3000
 ```
 
+For the laptop hotspot tower, keep the cloud URLs unchanged and set the
+separate tower endpoints in the APK build. `start-tower.sh` prints the exact
+command for the laptop's current IP. If automatic address detection picks the
+wrong interface, launch it with `SENTRYMESH_TOWER_HOST=<laptop-hotspot-ip>`.
+
 AI hazard prediction uses the FastAPI model service separately:
 
 ```sh

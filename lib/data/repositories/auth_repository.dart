@@ -29,7 +29,9 @@ class AuthRepository {
     final reachable = await _connectivity.isCloudReachable();
     if (!reachable) {
       throw AuthException(
-        'Please connect to the internet to $action. This is not possible while only connected to a tower.',
+        'Cannot reach the SentryMesh server to $action. '
+        'The server may be starting up — please wait a moment and try again. '
+        'If you are only connected to a local tower, use that account instead.',
       );
     }
   }
@@ -67,6 +69,7 @@ class AuthRepository {
     required String email,
     required String address,
     required String password,
+    String? phoneNumber,
     String? responderCode,
   }) async {
     await _requireCloud('register');
@@ -77,6 +80,7 @@ class AuthRepository {
         email: email.trim().toLowerCase(),
         address: address.trim(),
         password: password,
+        phoneNumber: phoneNumber,
         responderCode: responderCode,
       );
 
