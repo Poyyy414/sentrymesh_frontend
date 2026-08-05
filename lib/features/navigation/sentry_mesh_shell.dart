@@ -9,9 +9,9 @@ import '../../core/services/connectivity_service.dart';
 import '../../core/widgets/bottom_nav_bar.dart';
 import '../../core/widgets/connectivity_banner.dart';
 import '../alerts/alerts_screen.dart';
-import '../family_safety/family_safety_screen.dart';
 import '../home/home_screen.dart';
 import '../messages/messages_screen.dart';
+import '../profile/profile_screen.dart';
 import '../safe_route/safe_route_map_screen.dart';
 
 class SentryMeshShell extends StatefulWidget {
@@ -191,7 +191,7 @@ class _SentryMeshShellState extends State<SentryMeshShell> {
       const AlertsScreen(),
       _mapTabCreated ? const SafeRouteMapScreen() : const SizedBox.shrink(),
       const MessagesScreen(),
-      const FamilySafetyScreen(),
+      const ProfileScreen(),
     ];
 
     return Scaffold(

@@ -2675,9 +2675,9 @@ class _QuickActions extends StatelessWidget {
               key: const Key('quick_sos_action'),
               icon: Icons.sos_rounded,
               title: 'Emergency SOS',
-              subtitle: 'Get immediate help',
+              subtitle: 'Hold to send distress ping',
               color: AppTheme.dangerRed,
-              onTap: onSosPressed,
+              onLongPress: onSosPressed,
             ),
             _QuickActionTile(
               icon: Icons.call_rounded,
@@ -2755,6 +2755,7 @@ class _QuickActionTile extends StatelessWidget {
     required this.subtitle,
     required this.color,
     this.onTap,
+    this.onLongPress,
     super.key,
   });
 
@@ -2763,6 +2764,7 @@ class _QuickActionTile extends StatelessWidget {
   final String subtitle;
   final Color color;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -2821,7 +2823,7 @@ class _QuickActionTile extends StatelessWidget {
       ),
     );
 
-    if (onTap == null) {
+    if (onTap == null && onLongPress == null) {
       return child;
     }
 
@@ -2830,6 +2832,7 @@ class _QuickActionTile extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(9),
         onTap: onTap,
+        onLongPress: onLongPress,
         child: child,
       ),
     );

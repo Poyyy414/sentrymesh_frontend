@@ -10,7 +10,7 @@ import 'dart:io';
 /// server, etc).
 Future<bool> isSentryMeshBackend(
   String baseUrl, {
-  Duration timeout = const Duration(seconds: 3),
+  Duration timeout = const Duration(seconds: 8),
 }) async {
   final client = HttpClient()..connectionTimeout = timeout;
   try {
