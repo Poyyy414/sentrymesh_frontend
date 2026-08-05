@@ -24,7 +24,9 @@ import '../../shared/enums/hazard_type.dart';
 import '../../shared/enums/rescue_status.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, this.onNavigateToFamily});
+
+  final VoidCallback? onNavigateToFamily;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -275,7 +277,11 @@ class _HomeScreenState extends State<HomeScreen> {
   // the Home shortcut producing members nobody could ever invite or notify.
   // Routing to the real screen instead of duplicating a lesser version of it.
   void _openFamilySafety() {
-    Navigator.pushNamed(context, AppRouter.familySafety);
+    if (widget.onNavigateToFamily != null) {
+      widget.onNavigateToFamily!();
+    } else {
+      Navigator.pushNamed(context, AppRouter.familySafety);
+    }
   }
 
   Future<void> _openSosFlow() async {

@@ -44,9 +44,9 @@ class SentryBottomNavBar extends StatelessWidget {
             label: 'Messages',
           ),
           NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Profile',
+            icon: Icon(Icons.groups_outlined),
+            selectedIcon: Icon(Icons.groups),
+            label: 'Family',
           ),
         ],
       ),
