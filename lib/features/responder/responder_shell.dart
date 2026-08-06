@@ -1567,6 +1567,13 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
   bool _showHazardZonesLayer = true;
   bool _has3DPackReady = false;
 
+  // On-map navigation state (route drawn on live map, like resident side)
+  RescueRequestModel? _selectedSosRequest;
+  RouteModel? _routeToSos;
+  bool _isCalculatingRoute = false;
+  bool _guidanceActive = false;
+  StreamSubscription<GeoPoint>? _guidanceLocationSub;
+
   @override
   void initState() {
     super.initState();
@@ -1636,6 +1643,7 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
     _locationSubscription?.cancel();
     _teamLocationSub?.cancel();
     _hazardWarningSub?.cancel();
+    _guidanceLocationSub?.cancel();
     _refreshTimer?.cancel();
     super.dispose();
   }
@@ -1747,13 +1755,7 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
         },
         onNavigate: () {
           Navigator.of(context).pop();
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => _ResponderNavigationScreen(
-                incident: _Incident.fromRescueRequest(request),
-              ),
-            ),
-          );
+          _calculateRouteToSos(request);
         },
       ),
     );
@@ -1783,6 +1785,81 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
         },
       ),
     );
+  }
+
+  Future<void> _calculateRouteToSos(RescueRequestModel request) async {
+    final sosLat = request.latitude;
+    final sosLon = request.longitude;
+    if (sosLat == null || sosLon == null) return;
+
+    // Ensure we have responder location first.
+    if (_responderLocation == null) await _locateResponder();
+    final origin = _responderLocation;
+    if (origin == null || !mounted) return;
+
+    setState(() {
+      _selectedSosRequest = request;
+      _isCalculatingRoute = true;
+    });
+
+    try {
+      final deps = AppDependenciesScope.of(context);
+      final route = await deps.mapRepository.fetchSafeRoute(
+        origin: origin,
+        destination: GeoPoint(latitude: sosLat, longitude: sosLon),
+      );
+      if (!mounted) return;
+      setState(() {
+        _routeToSos = route;
+        _isCalculatingRoute = false;
+      });
+      // Pan map to show both points.
+      if (route != null && route.waypoints.length > 1) {
+        final points = route.waypoints
+            .map((p) => LatLng(p.latitude, p.longitude))
+            .toList();
+        _mapController.fitCamera(
+          CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(points),
+            padding: const EdgeInsets.all(60),
+          ),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isCalculatingRoute = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not calculate route')),
+      );
+    }
+  }
+
+  void _startGuidance() {
+    setState(() => _guidanceActive = true);
+    _guidanceLocationSub?.cancel();
+    _guidanceLocationSub = AppDependenciesScope.of(
+      context,
+    ).locationService.watchLocation().listen((location) {
+      if (!mounted) return;
+      setState(() {
+        _responderLocation = location;
+        _isTracking = true;
+      });
+    });
+  }
+
+  void _stopGuidance() {
+    _guidanceLocationSub?.cancel();
+    _guidanceLocationSub = null;
+    if (mounted) setState(() => _guidanceActive = false);
+  }
+
+  void _clearRoute() {
+    _stopGuidance();
+    setState(() {
+      _selectedSosRequest = null;
+      _routeToSos = null;
+    });
   }
 
   Future<void> _locateResponder() async {
@@ -1909,77 +1986,16 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      bottom: false,
-      child: Column(
-        children: [
-          Container(
-            height: 60,
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [AppTheme.deepNavy, AppTheme.navy],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              children: [
-                const SizedBox(width: 44),
-                Expanded(
-                  child: Text(
-                    'Live Map',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      color: Colors.white,
-                      fontSize: 18,
-                    ),
-                  ),
-                ),
-                IconButton(
-                  tooltip: _can3D
-                      ? (_use3D ? 'Switch to 2D map' : 'Switch to 3D map')
-                      : '3D view needs a connection or an offline 3D map',
-                  onPressed: _can3D
-                      ? () => setState(() => _use3D = !_use3D)
-                      : null,
-                  icon: Icon(
-                    _use3D ? Icons.map_rounded : Icons.view_in_ar_rounded,
-                    color: _can3D ? Colors.white : Colors.white38,
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Layers',
-                  onPressed: () =>
-                      setState(() => _showLayerMenu = !_showLayerMenu),
-                  icon: const Icon(Icons.layers, color: Colors.white),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Stack(
-              children: [
-                if (_use3D && _can3D)
-                  ResponderMap3DView(
-                    responderLocation: _responderLocation,
-                    sosRequests: _showIncidentsLayer ? _sosRequests : const [],
-                    shelters: _showSheltersLayer ? _shelters : const [],
-                    teamMembers: _showTeamsLayer
-                        ? _teamMembers.values.toList()
-                        : const [],
-                    hazardZones: _showHazardZonesLayer
-                        ? _hazardWarningNodes
-                        : const [],
-                    onSosRequestTap: (request) =>
-                        _showSosBottomSheet(context, request),
-                    onShelterTap: (shelter) =>
-                        _showShelterInfoSheet(context, shelter),
-                  )
-                else
-                  _ResponderMapPreview(
-                  height: double.infinity,
-                  mapController: _mapController,
+    final topPad = MediaQuery.paddingOf(context).top;
+    final botPad = MediaQuery.paddingOf(context).bottom;
+    final hasRoute = _routeToSos != null && _selectedSosRequest != null;
+
+    return Stack(
+      children: [
+        // ── Full-screen map ─────────────────────────────────────────────
+        Positioned.fill(
+          child: _use3D && _can3D
+              ? ResponderMap3DView(
                   responderLocation: _responderLocation,
                   sosRequests: _showIncidentsLayer ? _sosRequests : const [],
                   shelters: _showSheltersLayer ? _shelters : const [],
@@ -1993,59 +2009,128 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
                       _showSosBottomSheet(context, request),
                   onShelterTap: (shelter) =>
                       _showShelterInfoSheet(context, shelter),
+                )
+              : _ResponderMapPreview(
+                  height: double.infinity,
+                  mapController: _mapController,
+                  responderLocation: _responderLocation,
+                  route: _routeToSos,
+                  sosRequests: _showIncidentsLayer ? _sosRequests : const [],
+                  shelters: _showSheltersLayer ? _shelters : const [],
+                  teamMembers: _showTeamsLayer
+                      ? _teamMembers.values.toList()
+                      : const [],
+                  hazardZones: _showHazardZonesLayer
+                      ? _hazardWarningNodes
+                      : const [],
+                  onSosRequestTap: (request) =>
+                      _showSosBottomSheet(context, request),
+                  onShelterTap: (shelter) =>
+                      _showShelterInfoSheet(context, shelter),
                 ),
-                if (_showLayerMenu)
-                  Positioned(
-                    top: 12,
-                    left: 12,
-                    child: _MapLayerMenu(
-                      showIncidents: _showIncidentsLayer,
-                      showTeams: _showTeamsLayer,
-                      showShelters: _showSheltersLayer,
-                      showHazardZones: _showHazardZonesLayer,
-                      onToggleIncidents: () => setState(
-                        () => _showIncidentsLayer = !_showIncidentsLayer,
-                      ),
-                      onToggleTeams: () =>
-                          setState(() => _showTeamsLayer = !_showTeamsLayer),
-                      onToggleShelters: () => setState(
-                        () => _showSheltersLayer = !_showSheltersLayer,
-                      ),
-                      onToggleHazardZones: () => setState(
-                        () => _showHazardZonesLayer = !_showHazardZonesLayer,
-                      ),
-                    ),
-                  ),
-                Positioned(
-                  top: 12,
-                  right: 12,
-                  child: _ResponderGpsBadge(
-                    location: _responderLocation,
-                    isTracking: _isTracking,
-                  ),
-                ),
-                Positioned(
-                  right: 16,
-                  bottom: 24,
-                  child: _ResponderLocateButton(
-                    isLoading: _isLocating,
-                    hasLocation: _responderLocation != null,
-                    onPressed: _locateResponder,
-                  ),
-                ),
-                Positioned(
-                  left: 16,
-                  bottom: 24,
-                  child: OfflineMapDownloadButton(
-                    heroTag: 'responder_offline_map_fab',
-                    center: _responderLocation ?? kDefaultMapCenter,
-                  ),
-                ),
-              ],
+        ),
+
+        // ── Floating top bar ────────────────────────────────────────────
+        Positioned(
+          top: topPad + 8,
+          left: 12,
+          right: 12,
+          child: _ResponderMapTopBar(
+            use3D: _use3D,
+            can3D: _can3D,
+            showLayers: _showLayerMenu,
+            location: _responderLocation,
+            isTracking: _isTracking,
+            onToggle3D: _can3D
+                ? () => setState(() => _use3D = !_use3D)
+                : null,
+            onToggleLayers: () =>
+                setState(() => _showLayerMenu = !_showLayerMenu),
+          ),
+        ),
+
+        // ── Chip-style layer panel ───────────────────────────────────────
+        if (_showLayerMenu)
+          Positioned(
+            top: topPad + 64,
+            left: 12,
+            right: 12,
+            child: _ResponderLayerPanel(
+              showIncidents: _showIncidentsLayer,
+              showTeams: _showTeamsLayer,
+              showShelters: _showSheltersLayer,
+              showHazardZones: _showHazardZonesLayer,
+              onToggleIncidents: () =>
+                  setState(() => _showIncidentsLayer = !_showIncidentsLayer),
+              onToggleTeams: () =>
+                  setState(() => _showTeamsLayer = !_showTeamsLayer),
+              onToggleShelters: () =>
+                  setState(() => _showSheltersLayer = !_showSheltersLayer),
+              onToggleHazardZones: () =>
+                  setState(() => _showHazardZonesLayer = !_showHazardZonesLayer),
             ),
           ),
-        ],
-      ),
+
+        // ── Locate / Recenter FAB (bottom-right) ────────────────────────
+        Positioned(
+          right: 14,
+          bottom: botPad + (hasRoute ? 120 : 24),
+          child: FloatingActionButton.small(
+            heroTag: 'responder_locate_fab',
+            onPressed: _isLocating ? null : _locateResponder,
+            backgroundColor: (_responderLocation != null && _isTracking)
+                ? AppTheme.safeGreen
+                : Colors.white,
+            elevation: 3,
+            tooltip: _responderLocation != null
+                ? 'Re-center'
+                : 'Find my location',
+            child: _isLocating
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(
+                    _responderLocation != null
+                        ? Icons.my_location_rounded
+                        : Icons.location_searching_rounded,
+                    size: 20,
+                    color: (_responderLocation != null && _isTracking)
+                        ? Colors.white
+                        : AppTheme.signalBlue,
+                  ),
+          ),
+        ),
+
+        // ── Offline map download FAB (bottom-left) ──────────────────────
+        if (!hasRoute)
+          Positioned(
+            left: 14,
+            bottom: botPad + 24,
+            child: OfflineMapDownloadButton(
+              heroTag: 'responder_offline_map_fab',
+              center: _responderLocation ?? kDefaultMapCenter,
+            ),
+          ),
+
+        // ── Route summary card (bottom, when navigating to SOS) ─────────
+        if (hasRoute)
+          Positioned(
+            left: 14,
+            right: 80,
+            bottom: botPad + 24,
+            child: _SosRouteSummaryCard(
+              request: _selectedSosRequest!,
+              route: _routeToSos!,
+              isCalculating: _isCalculatingRoute,
+              guidanceActive: _guidanceActive,
+              onStartGuidance: _startGuidance,
+              onStopGuidance: _stopGuidance,
+              onClear: _clearRoute,
+            ),
+          ),
+      ],
     );
   }
 }
@@ -4414,8 +4499,117 @@ class _LivePill extends StatelessWidget {
   }
 }
 
-class _MapLayerMenu extends StatelessWidget {
-  const _MapLayerMenu({
+// ── Floating top bar ────────────────────────────────────────────────────────
+
+class _ResponderMapTopBar extends StatelessWidget {
+  const _ResponderMapTopBar({
+    required this.use3D,
+    required this.can3D,
+    required this.showLayers,
+    required this.location,
+    required this.isTracking,
+    required this.onToggle3D,
+    required this.onToggleLayers,
+  });
+
+  final bool use3D;
+  final bool can3D;
+  final bool showLayers;
+  final GeoPoint? location;
+  final bool isTracking;
+  final VoidCallback? onToggle3D;
+  final VoidCallback onToggleLayers;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasLocation = location != null;
+    return Row(
+      children: [
+        // GPS status pill
+        Expanded(
+          child: Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(28),
+            elevation: 3,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              child: Row(
+                children: [
+                  Icon(
+                    hasLocation
+                        ? (isTracking
+                              ? Icons.gps_fixed
+                              : Icons.gps_not_fixed)
+                        : Icons.gps_off,
+                    size: 18,
+                    color: hasLocation ? AppTheme.safeGreen : AppTheme.textMuted,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      hasLocation
+                          ? (isTracking ? 'GPS live' : 'GPS locked')
+                          : 'Live Map',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.navy,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        // 3D toggle
+        Material(
+          color: use3D ? AppTheme.signalBlue : Colors.white,
+          shape: const CircleBorder(),
+          elevation: 3,
+          child: IconButton(
+            tooltip: can3D
+                ? (use3D ? 'Switch to 2D map' : 'Switch to 3D map')
+                : '3D view needs a connection or an offline 3D map',
+            onPressed: onToggle3D,
+            icon: Icon(
+              use3D ? Icons.map_rounded : Icons.view_in_ar_rounded,
+              color: onToggle3D == null
+                  ? Theme.of(context).disabledColor
+                  : use3D
+                      ? Colors.white
+                      : AppTheme.navy,
+              size: 22,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        // Layers toggle
+        Material(
+          color: showLayers ? AppTheme.signalBlue : Colors.white,
+          shape: const CircleBorder(),
+          elevation: 3,
+          child: IconButton(
+            tooltip: 'Map layers',
+            onPressed: onToggleLayers,
+            icon: Icon(
+              Icons.layers_rounded,
+              color: showLayers ? Colors.white : AppTheme.navy,
+              size: 22,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Chip-style layer panel ───────────────────────────────────────────────────
+
+class _ResponderLayerPanel extends StatelessWidget {
+  const _ResponderLayerPanel({
     required this.showIncidents,
     required this.showTeams,
     required this.showShelters,
@@ -4437,184 +4631,241 @@ class _MapLayerMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        _LayerButton(
-          icon: Icons.crisis_alert,
-          label: 'Incidents',
-          color: AppTheme.dangerRed,
-          active: showIncidents,
-          onTap: onToggleIncidents,
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      elevation: 4,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            _ResponderChip(
+              label: 'Incidents',
+              icon: Icons.crisis_alert_rounded,
+              selected: showIncidents,
+              color: AppTheme.dangerRed,
+              onTap: onToggleIncidents,
+            ),
+            _ResponderChip(
+              label: 'Teams',
+              icon: Icons.shield_rounded,
+              selected: showTeams,
+              color: AppTheme.violet,
+              onTap: onToggleTeams,
+            ),
+            _ResponderChip(
+              label: 'Shelters',
+              icon: Icons.home_rounded,
+              selected: showShelters,
+              color: AppTheme.signalBlue,
+              onTap: onToggleShelters,
+            ),
+            _ResponderChip(
+              label: 'Hazard Zones',
+              icon: Icons.flood_rounded,
+              selected: showHazardZones,
+              color: const Color(0xFFE65100),
+              onTap: onToggleHazardZones,
+            ),
+          ],
         ),
-        _LayerButton(
-          icon: Icons.groups,
-          label: 'Teams',
-          color: AppTheme.signalBlue,
-          active: showTeams,
-          onTap: onToggleTeams,
-        ),
-        _LayerButton(
-          icon: Icons.home,
-          label: 'Shelters',
-          color: AppTheme.signalBlue,
-          active: showShelters,
-          onTap: onToggleShelters,
-        ),
-        _LayerButton(
-          icon: Icons.route,
-          label: 'Hazard Zones',
-          color: AppTheme.safeGreen,
-          active: showHazardZones,
-          onTap: onToggleHazardZones,
-        ),
-      ],
+      ),
     );
   }
 }
 
-class _LayerButton extends StatelessWidget {
-  const _LayerButton({
-    required this.icon,
+class _ResponderChip extends StatelessWidget {
+  const _ResponderChip({
     required this.label,
+    required this.icon,
+    required this.selected,
     required this.color,
-    required this.active,
     required this.onTap,
   });
 
-  final IconData icon;
   final String label;
+  final IconData icon;
+  final bool selected;
   final Color color;
-  final bool active;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 112,
-        margin: const EdgeInsets.only(bottom: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-        decoration: BoxDecoration(
-          color: active ? Colors.white : Colors.white.withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(6),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.12),
-              blurRadius: 8,
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: active ? color : AppTheme.textMuted, size: 18),
-            const SizedBox(width: 7),
-            Expanded(
-              child: Text(
+    return Material(
+      color: selected ? color : const Color(0xFFF3F7FE),
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 15, color: selected ? Colors.white : color),
+              const SizedBox(width: 5),
+              Text(
                 label,
-                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: active ? AppTheme.textPrimary : AppTheme.textMuted,
+                  fontWeight: FontWeight.w800,
+                  color: selected ? Colors.white : AppTheme.textPrimary,
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _ResponderGpsBadge extends StatelessWidget {
-  const _ResponderGpsBadge({required this.location, required this.isTracking});
+// ── SOS route summary card ───────────────────────────────────────────────────
 
-  final GeoPoint? location;
-  final bool isTracking;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasLocation = location != null;
-    final title = hasLocation
-        ? isTracking
-              ? 'GPS live'
-              : 'GPS locked'
-        : 'GPS off';
-    final subtitle = hasLocation
-        ? '${location!.latitude.toStringAsFixed(4)}, ${location!.longitude.toStringAsFixed(4)}'
-        : 'Tap locate';
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.border),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 8),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              hasLocation ? Icons.gps_fixed : Icons.gps_off,
-              color: hasLocation ? AppTheme.safeGreen : AppTheme.textMuted,
-              size: 18,
-            ),
-            const SizedBox(width: 7),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                Text(subtitle, style: Theme.of(context).textTheme.labelSmall),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ResponderLocateButton extends StatelessWidget {
-  const _ResponderLocateButton({
-    required this.isLoading,
-    required this.hasLocation,
-    required this.onPressed,
+class _SosRouteSummaryCard extends StatelessWidget {
+  const _SosRouteSummaryCard({
+    required this.request,
+    required this.route,
+    required this.isCalculating,
+    required this.guidanceActive,
+    required this.onStartGuidance,
+    required this.onStopGuidance,
+    required this.onClear,
   });
 
-  final bool isLoading;
-  final bool hasLocation;
-  final VoidCallback onPressed;
+  final RescueRequestModel request;
+  final RouteModel route;
+  final bool isCalculating;
+  final bool guidanceActive;
+  final VoidCallback onStartGuidance;
+  final VoidCallback onStopGuidance;
+  final VoidCallback onClear;
 
   @override
   Widget build(BuildContext context) {
+    final label = request.locationLabel?.isNotEmpty == true
+        ? request.locationLabel!
+        : 'SOS Request';
     return Material(
       color: Colors.white,
-      shape: const CircleBorder(),
-      elevation: 3,
-      child: IconButton(
-        onPressed: isLoading ? null : onPressed,
-        tooltip: hasLocation ? 'Recenter responder GPS' : 'Find responder GPS',
-        icon: isLoading
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : Icon(
-                hasLocation ? Icons.gps_fixed : Icons.my_location,
-                color: AppTheme.signalBlue,
+      borderRadius: BorderRadius.circular(14),
+      elevation: 4,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.sos_rounded,
+                  size: 16,
+                  color: AppTheme.dangerRed,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    label,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.navy,
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: onClear,
+                  child: const Icon(Icons.close, size: 16, color: Colors.grey),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                _SosChip(
+                  icon: Icons.straighten_rounded,
+                  label: '${route.distanceKm.toStringAsFixed(1)} km',
+                ),
+                const SizedBox(width: 8),
+                _SosChip(
+                  icon: Icons.schedule_rounded,
+                  label: '${route.estimatedMinutes} min',
+                ),
+                const SizedBox(width: 8),
+                _SosChip(
+                  icon: Icons.shield_rounded,
+                  label: route.riskLevel,
+                  color: route.riskLevel == 'LOW'
+                      ? AppTheme.safeGreen
+                      : route.riskLevel == 'HIGH'
+                          ? AppTheme.dangerRed
+                          : const Color(0xFFE8A317),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              height: 34,
+              child: FilledButton.icon(
+                onPressed: isCalculating
+                    ? null
+                    : (guidanceActive ? onStopGuidance : onStartGuidance),
+                icon: Icon(
+                  guidanceActive
+                      ? Icons.stop_rounded
+                      : Icons.navigation_rounded,
+                  size: 15,
+                ),
+                label: Text(
+                  guidanceActive ? 'Stop' : 'Start Guidance',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                style: FilledButton.styleFrom(
+                  backgroundColor:
+                      guidanceActive ? AppTheme.dangerRed : AppTheme.signalBlue,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
               ),
+            ),
+          ],
+        ),
       ),
+    );
+  }
+}
+
+class _SosChip extends StatelessWidget {
+  const _SosChip({required this.icon, required this.label, this.color});
+
+  final IconData icon;
+  final String label;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = color ?? AppTheme.navy;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 12, color: c),
+        const SizedBox(width: 3),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            color: c,
+          ),
+        ),
+      ],
     );
   }
 }
