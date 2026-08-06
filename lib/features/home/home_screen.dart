@@ -593,7 +593,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           const SizedBox(height: 14),
                           _QuickActions(
-                            onSosPressed: _openSosFlow,
                             onAddFamily: _openFamilySafety,
                           ),
                         ],
@@ -2662,11 +2661,9 @@ class _AlertRow extends StatelessWidget {
 
 class _QuickActions extends StatelessWidget {
   const _QuickActions({
-    required this.onSosPressed,
     required this.onAddFamily,
   });
 
-  final VoidCallback onSosPressed;
   final VoidCallback onAddFamily;
 
   @override
@@ -2677,14 +2674,6 @@ class _QuickActions extends StatelessWidget {
         builder: (context, constraints) {
           final wide = constraints.maxWidth >= 850;
           final actions = [
-            _QuickActionTile(
-              key: const Key('quick_sos_action'),
-              icon: Icons.sos_rounded,
-              title: 'Emergency SOS',
-              subtitle: 'Hold to send distress ping',
-              color: AppTheme.dangerRed,
-              onLongPress: onSosPressed,
-            ),
             _QuickActionTile(
               icon: Icons.call_rounded,
               title: 'Rescue Path',
@@ -2705,6 +2694,13 @@ class _QuickActions extends StatelessWidget {
               subtitle: 'Real-time updates',
               color: AppTheme.violet,
               onTap: () => Navigator.pushNamed(context, AppRouter.alerts),
+            ),
+            _QuickActionTile(
+              icon: Icons.person_outline_rounded,
+              title: 'My Profile',
+              subtitle: 'Account & settings',
+              color: AppTheme.signalBlue,
+              onTap: () => Navigator.pushNamed(context, AppRouter.profile),
             ),
           ];
 
