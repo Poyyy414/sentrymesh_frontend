@@ -58,12 +58,17 @@ class ResponderMap3DView extends StatefulWidget {
   State<ResponderMap3DView> createState() => _ResponderMap3DViewState();
 }
 
-class _ResponderMap3DViewState extends State<ResponderMap3DView> {
+class _ResponderMap3DViewState extends State<ResponderMap3DView>
+    implements OnPointAnnotationClickListener {
   MapboxMap? _mapboxMap;
   PointAnnotationManager? _pointAnnotations;
   CircleAnnotationManager? _circleAnnotations;
   PolylineAnnotationManager? _polylineAnnotations;
   bool _iconsReady = false;
+
+  // Maps annotation ID → model, populated each time _refreshAnnotations runs.
+  final Map<String, RescueRequestModel> _sosAnnotationMap = {};
+  final Map<String, EvacuationCenterModel> _shelterAnnotationMap = {};
 
   @override
   void didUpdateWidget(covariant ResponderMap3DView oldWidget) {
@@ -93,6 +98,7 @@ class _ResponderMap3DViewState extends State<ResponderMap3DView> {
 
     _pointAnnotations = await mapboxMap.annotations
         .createPointAnnotationManager();
+    _pointAnnotations!.addOnPointAnnotationClickListener(this);
     _circleAnnotations = await mapboxMap.annotations
         .createCircleAnnotationManager();
     _polylineAnnotations = await mapboxMap.annotations
@@ -157,11 +163,27 @@ class _ResponderMap3DViewState extends State<ResponderMap3DView> {
     }
   }
 
+  @override
+  void onPointAnnotationClick(PointAnnotation annotation) {
+    final sos = _sosAnnotationMap[annotation.id];
+    if (sos != null) {
+      widget.onSosRequestTap?.call(sos);
+      return;
+    }
+    final shelter = _shelterAnnotationMap[annotation.id];
+    if (shelter != null) {
+      widget.onShelterTap?.call(shelter);
+    }
+  }
+
   Future<void> _refreshAnnotations() async {
     final points = _pointAnnotations;
     final circles = _circleAnnotations;
     final polylines = _polylineAnnotations;
     if (points == null || circles == null || polylines == null) return;
+
+    _sosAnnotationMap.clear();
+    _shelterAnnotationMap.clear();
 
     await Future.wait([
       points.deleteAll(),
@@ -207,11 +229,10 @@ class _ResponderMap3DViewState extends State<ResponderMap3DView> {
       );
     }
 
-    // Point markers: shelters, SOS requests, team members, responder/resident.
-    final pointOptions = <PointAnnotationOptions>[];
+    // Shelters — created individually so we can map annotation IDs for tap handling.
     for (final shelter in widget.shelters) {
       final isFull = shelter.availableSlots <= 0;
-      pointOptions.add(
+      final ann = await points.create(
         PointAnnotationOptions(
           geometry: Point(
             coordinates: Position(shelter.longitude, shelter.latitude),
@@ -223,10 +244,13 @@ class _ResponderMap3DViewState extends State<ResponderMap3DView> {
           textSize: 11,
         ),
       );
+      _shelterAnnotationMap[ann.id] = shelter;
     }
+
+    // SOS requests — created individually so taps can be matched to models.
     for (final request in widget.sosRequests) {
       if (request.latitude == null || request.longitude == null) continue;
-      pointOptions.add(
+      final ann = await points.create(
         PointAnnotationOptions(
           geometry: Point(
             coordinates: Position(request.longitude!, request.latitude!),
@@ -238,10 +262,14 @@ class _ResponderMap3DViewState extends State<ResponderMap3DView> {
           textSize: 11,
         ),
       );
+      _sosAnnotationMap[ann.id] = request;
     }
+
+    // Non-tappable markers (team, responder, resident) batched for performance.
+    final nonTappable = <PointAnnotationOptions>[];
     for (final member in widget.teamMembers) {
       if (!member.hasLocation) continue;
-      pointOptions.add(
+      nonTappable.add(
         PointAnnotationOptions(
           geometry: Point(
             coordinates: Position(member.longitude!, member.latitude!),
@@ -256,7 +284,7 @@ class _ResponderMap3DViewState extends State<ResponderMap3DView> {
     }
     final responderLocation = widget.responderLocation;
     if (responderLocation != null) {
-      pointOptions.add(
+      nonTappable.add(
         PointAnnotationOptions(
           geometry: Point(
             coordinates: Position(
@@ -275,7 +303,7 @@ class _ResponderMap3DViewState extends State<ResponderMap3DView> {
     }
     final residentLocation = widget.residentLocation;
     if (residentLocation != null) {
-      pointOptions.add(
+      nonTappable.add(
         PointAnnotationOptions(
           geometry: Point(
             coordinates: Position(
@@ -292,7 +320,7 @@ class _ResponderMap3DViewState extends State<ResponderMap3DView> {
         ),
       );
     }
-    if (pointOptions.isNotEmpty) await points.createMulti(pointOptions);
+    if (nonTappable.isNotEmpty) await points.createMulti(nonTappable);
   }
 
   double? _asDouble(Object? value) {

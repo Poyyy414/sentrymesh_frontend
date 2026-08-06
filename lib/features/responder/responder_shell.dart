@@ -1786,7 +1786,11 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
   }
 
   Future<void> _locateResponder() async {
-    if (_isLocating) {
+    if (_isLocating) return;
+
+    // Already have GPS — just re-center the map without fetching again.
+    if (_responderLocation != null) {
+      _centerMap(_responderLocation!);
       return;
     }
 
@@ -3721,6 +3725,7 @@ class _ResponderMapPreview extends StatelessWidget {
                   width: 72,
                   height: 76,
                   child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
                     onTap: () => onShelterTap?.call(shelter),
                     child: _ShelterMarker(shelter: shelter),
                   ),
@@ -3733,6 +3738,7 @@ class _ResponderMapPreview extends StatelessWidget {
                     width: 68,
                     height: 76,
                     child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onTap: () => onSosRequestTap?.call(request),
                       child: _SosRequestMarker(request: request),
                     ),
