@@ -2026,7 +2026,7 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
                 ),
                 Positioned(
                   right: 16,
-                  bottom: 168,
+                  bottom: 24,
                   child: _ResponderLocateButton(
                     isLoading: _isLocating,
                     hasLocation: _responderLocation != null,
@@ -2035,20 +2035,10 @@ class _ResponderLiveMapScreenState extends State<ResponderLiveMapScreen> {
                 ),
                 Positioned(
                   left: 16,
-                  bottom: 168,
+                  bottom: 24,
                   child: OfflineMapDownloadButton(
                     heroTag: 'responder_offline_map_fab',
                     center: _responderLocation ?? kDefaultMapCenter,
-                  ),
-                ),
-                Positioned(
-                  left: 16,
-                  right: 16,
-                  bottom: 16,
-                  child: _NavigationPanel(
-                    hasLiveLocation: _responderLocation != null,
-                    isTracking: _isTracking,
-                    onLocate: _locateResponder,
                   ),
                 ),
               ],
@@ -4624,108 +4614,6 @@ class _ResponderLocateButton extends StatelessWidget {
                 hasLocation ? Icons.gps_fixed : Icons.my_location,
                 color: AppTheme.signalBlue,
               ),
-      ),
-    );
-  }
-}
-
-class _NavigationPanel extends StatelessWidget {
-  const _NavigationPanel({
-    required this.hasLiveLocation,
-    required this.isTracking,
-    required this.onLocate,
-  });
-
-  final bool hasLiveLocation;
-  final bool isTracking;
-  final VoidCallback onLocate;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Route Guidance',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color:
-                    (hasLiveLocation ? AppTheme.safeGreen : AppTheme.signalBlue)
-                        .withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color:
-                      (hasLiveLocation
-                              ? AppTheme.safeGreen
-                              : AppTheme.signalBlue)
-                          .withValues(alpha: 0.22),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    hasLiveLocation ? Icons.gps_fixed : Icons.my_location,
-                    color: hasLiveLocation
-                        ? AppTheme.safeGreen
-                        : AppTheme.signalBlue,
-                    size: 18,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      hasLiveLocation
-                          ? isTracking
-                                ? 'Your responder position is updating live.'
-                                : 'Your responder position is shown on the map.'
-                          : 'Tap locate so the map shows where you are.',
-                      style: Theme.of(context).textTheme.labelMedium,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                const Icon(Icons.chevron_right, color: AppTheme.textMuted),
-                Expanded(
-                  child: Text(
-                    hasLiveLocation
-                        ? 'Responder position active'
-                        : 'No route selected',
-                  ),
-                ),
-                Text('—', style: Theme.of(context).textTheme.titleSmall),
-              ],
-            ),
-            const Divider(height: 20),
-            Row(
-              children: [
-                const Expanded(
-                  child: _MiniMetric(value: '—', label: 'Est. time'),
-                ),
-                const Expanded(
-                  child: _MiniMetric(value: '—', label: 'Distance'),
-                ),
-                SizedBox(
-                  width: 126,
-                  child: SentryButton(
-                    label: hasLiveLocation ? 'Recenter' : 'Locate',
-                    icon: hasLiveLocation ? Icons.gps_fixed : Icons.my_location,
-                    onPressed: onLocate,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
       ),
     );
   }
